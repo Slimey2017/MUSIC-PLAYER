@@ -1,6 +1,6 @@
 /**
  * FREQ — Universal Music Player
- * server.js  ·  v3.0
+ * server.js  ·  v3.1
  *
  * © 2025 FREQ / Slimey2017. All rights reserved.
  *
@@ -12,6 +12,11 @@
  * Supported platforms:
  *   YouTube · YT Music · Spotify · Tidal · SoundCloud · Apple Music
  *   Amazon Music · Qobuz
+ *
+ * v3.1 fixes:
+ *   - Apple Music: playlist embed now uses /playlist/ path (not /album/)
+ *   - Apple Music: pl.xxxxxxx curator playlist IDs now parsed correctly
+ *   - Apple Music: broader regex covers song URLs and no-slug variants
  */
 
 const express     = require('express');
@@ -156,23 +161,36 @@ function resolveSoundCloud(url) {
 
 function resolveAppleMusic(url) {
   const u = new URL(url);
-  const match = u.pathname.match(/^\/([a-z]{2})\/(album|playlist|song)\/[^/]*\/([^/?]+)/);
-  if (!match) return null;
-  const [, country, rawType, id] = match;
-  const trackId = u.searchParams.get('i');
-  let type, embedUrl;
-  if (rawType === 'song' || trackId) {
-    type = 'track';
-    const trackParam = trackId ? `?i=${trackId}` : '';
-    embedUrl = `https://embed.music.apple.com/${country}/album/${id}${trackParam}`;
-  } else if (rawType === 'playlist') {
-    type = 'playlist';
-    embedUrl = `https://embed.music.apple.com/${country}/playlist/${id}`;
-  } else {
-    type = 'album';
-    embedUrl = `https://embed.music.apple.com/${country}/album/${id}`;
+
+  // Playlist: /us/playlist/name/pl.xxxxxxxxxxxxxxxx  OR  /us/playlist/pl.xxx (no slug)
+  const playlistMatch = u.pathname.match(/^\/([a-z]{2})\/playlist\/(?:[^/]*\/)?(pl\.[A-Za-z0-9]+)/);
+  if (playlistMatch) {
+    const [, country, id] = playlistMatch;
+    return {
+      type:     'playlist',
+      embedUrl: `https://embed.music.apple.com/${country}/playlist/${id}`,
+      id,
+    };
   }
-  return { type, embedUrl, id };
+
+  // Album / Song: /us/album/name/123456789 or /us/song/name/123456789
+  const albumMatch = u.pathname.match(/^\/([a-z]{2})\/(?:album|song)\/(?:[^/]*\/)?([\d]+)/);
+  if (!albumMatch) return null;
+  const [, country, id] = albumMatch;
+  const trackId = u.searchParams.get('i');
+
+  if (trackId) {
+    return {
+      type:     'track',
+      embedUrl: `https://embed.music.apple.com/${country}/album/${id}?i=${trackId}`,
+      id,
+    };
+  }
+  return {
+    type:     'album',
+    embedUrl: `https://embed.music.apple.com/${country}/album/${id}`,
+    id,
+  };
 }
 
 /**
@@ -329,7 +347,7 @@ app.get('/redirect', (req, res) => {
 app.get('/health', (req, res) => {
   res.json({
     status:   'ok',
-    version:  '3.0',
+    version:  '3.1',
     uptime:   Math.floor(process.uptime()),
     platform: process.platform,
   });
@@ -411,7 +429,7 @@ app.get('*', (req, res) => {
 
 // ─── Start ────────────────────────────────────────────────────────────────────
 const server = app.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n🎵  FREQ v3.0 is running`);
+  console.log(`\n🎵  FREQ v3.1 is running`);
   console.log(`    Local:  http://localhost:${PORT}`);
   console.log(`    Health: http://localhost:${PORT}/health`);
   console.log(`    © 2025 FREQ / Slimey2017. All rights reserved.\n`);
