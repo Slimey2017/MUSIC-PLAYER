@@ -1,0 +1,1028 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FREQ — Universal Music Player</title>
+  <link rel="icon" type="image/x-icon" href="Geometric Frequency Logo Emphasizing Modernity.ico" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400&family=Unbounded:wght@300;400;700;900&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #0a0a0a;
+      --surface: #111111;
+      --surface2: #1a1a1a;
+      --surface3: #222222;
+      --border: #2a2a2a;
+      --accent: #e8ff47;
+      --accent2: #ff4757;
+      --accent3: #00d4ff;
+      --text: #f0f0f0;
+      --text-dim: #666;
+      --text-muted: #444;
+
+      --yt: #ff0000;
+      --ytm: #ff4e9a;
+      --sp: #1db954;
+      --td: #3999ff;
+      --sc: #ff5500;
+      --am: #fc3c44;
+
+      --radius: 4px;
+      --glow: 0 0 20px rgba(232, 255, 71, 0.15);
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Space Mono', monospace;
+      min-height: 100vh;
+      overflow-x: hidden;
+      position: relative;
+    }
+
+    /* Grain texture */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
+      pointer-events: none;
+      z-index: 1000;
+      opacity: 0.5;
+    }
+
+    /* Scanlines */
+    body::after {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 2px,
+        rgba(0,0,0,0.03) 2px,
+        rgba(0,0,0,0.03) 4px
+      );
+      pointer-events: none;
+      z-index: 999;
+    }
+
+    /* Header */
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 20px 32px;
+      border-bottom: 1px solid var(--border);
+      position: relative;
+    }
+
+    .logo {
+      font-family: 'Unbounded', sans-serif;
+      font-weight: 900;
+      font-size: 1.8rem;
+      letter-spacing: -0.02em;
+      color: var(--accent);
+      text-shadow: 0 0 30px rgba(232, 255, 71, 0.4);
+      position: relative;
+    }
+
+    .logo span {
+      color: var(--text-dim);
+      font-weight: 300;
+      font-size: 0.6rem;
+      letter-spacing: 0.3em;
+      display: block;
+      margin-top: -4px;
+      text-transform: uppercase;
+    }
+
+    .header-tag {
+      font-size: 0.65rem;
+      color: var(--text-muted);
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      border: 1px solid var(--border);
+      padding: 4px 10px;
+      border-radius: var(--radius);
+    }
+
+    /* Layout */
+    .app {
+      display: grid;
+      grid-template-columns: 340px 1fr;
+      height: calc(100vh - 73px);
+    }
+
+    /* Sidebar */
+    .sidebar {
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .sidebar-inner {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px;
+      scrollbar-width: thin;
+      scrollbar-color: var(--border) transparent;
+    }
+
+    .sidebar-inner::-webkit-scrollbar { width: 4px; }
+    .sidebar-inner::-webkit-scrollbar-track { background: transparent; }
+    .sidebar-inner::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+    /* URL Input area */
+    .input-section {
+      padding: 20px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+    }
+
+    .input-label {
+      font-size: 0.6rem;
+      letter-spacing: 0.25em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      margin-bottom: 10px;
+      display: block;
+    }
+
+    .url-input-wrap {
+      display: flex;
+      gap: 8px;
+      align-items: stretch;
+    }
+
+    .url-input {
+      flex: 1;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-family: 'Space Mono', monospace;
+      font-size: 0.75rem;
+      padding: 10px 14px;
+      border-radius: var(--radius);
+      outline: none;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    .url-input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px rgba(232, 255, 71, 0.1);
+    }
+
+    .url-input::placeholder { color: var(--text-muted); }
+
+    .add-btn {
+      background: var(--accent);
+      color: #000;
+      border: none;
+      border-radius: var(--radius);
+      padding: 10px 16px;
+      font-family: 'Unbounded', sans-serif;
+      font-size: 0.65rem;
+      font-weight: 700;
+      cursor: pointer;
+      white-space: nowrap;
+      letter-spacing: 0.05em;
+      transition: transform 0.1s, opacity 0.2s;
+    }
+
+    .add-btn:hover { opacity: 0.85; }
+    .add-btn:active { transform: scale(0.97); }
+    .add-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* Platform chips */
+    .platform-hints {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 12px;
+    }
+
+    .chip {
+      font-size: 0.55rem;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      padding: 3px 8px;
+      border-radius: 2px;
+      font-weight: 700;
+      border: 1px solid;
+    }
+
+    .chip-yt  { color: var(--yt);  border-color: rgba(255,0,0,0.3);   background: rgba(255,0,0,0.06); }
+    .chip-ytm { color: var(--ytm); border-color: rgba(255,78,154,0.3); background: rgba(255,78,154,0.06); }
+    .chip-sp  { color: var(--sp);  border-color: rgba(29,185,84,0.3);  background: rgba(29,185,84,0.06); }
+    .chip-td  { color: var(--td);  border-color: rgba(57,153,255,0.3); background: rgba(57,153,255,0.06); }
+    .chip-sc  { color: var(--sc);  border-color: rgba(255,85,0,0.3);   background: rgba(255,85,0,0.06); }
+    .chip-am  { color: var(--am);  border-color: rgba(252,60,68,0.3);  background: rgba(252,60,68,0.06); }
+
+    /* Queue section */
+    .queue-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 14px;
+    }
+
+    .section-title {
+      font-size: 0.6rem;
+      letter-spacing: 0.25em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+    }
+
+    .clear-btn {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      font-family: 'Space Mono', monospace;
+      font-size: 0.55rem;
+      padding: 3px 8px;
+      border-radius: var(--radius);
+      cursor: pointer;
+      transition: color 0.2s, border-color 0.2s;
+    }
+
+    .clear-btn:hover { color: var(--accent2); border-color: var(--accent2); }
+
+    /* Playlist cards */
+    .queue-empty {
+      text-align: center;
+      padding: 40px 20px;
+      color: var(--text-muted);
+      font-size: 0.7rem;
+      line-height: 2;
+    }
+
+    .queue-empty .big-icon {
+      font-size: 2.5rem;
+      display: block;
+      margin-bottom: 12px;
+      opacity: 0.3;
+    }
+
+    .playlist-card {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px 14px;
+      margin-bottom: 8px;
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s, transform 0.15s;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .playlist-card::before {
+      content: '';
+      position: absolute;
+      left: 0; top: 0; bottom: 0;
+      width: 3px;
+      background: var(--platform-color, var(--border));
+      transition: opacity 0.2s;
+    }
+
+    .playlist-card:hover {
+      border-color: var(--platform-color, var(--border));
+      background: var(--surface3);
+      transform: translateX(2px);
+    }
+
+    .playlist-card.active {
+      border-color: var(--accent);
+      background: rgba(232, 255, 71, 0.04);
+    }
+
+    .playlist-card.active::before {
+      background: var(--accent);
+    }
+
+    .card-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 6px;
+    }
+
+    .card-platform {
+      font-size: 0.55rem;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      font-weight: 700;
+      color: var(--platform-color, var(--text-dim));
+    }
+
+    .card-actions {
+      display: flex;
+      gap: 6px;
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+
+    .playlist-card:hover .card-actions { opacity: 1; }
+
+    .card-action-btn {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 0.8rem;
+      padding: 0 2px;
+      transition: color 0.15s;
+      line-height: 1;
+    }
+
+    .card-action-btn:hover { color: var(--accent2); }
+
+    .card-url {
+      font-size: 0.62rem;
+      color: var(--text-dim);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 240px;
+    }
+
+    .card-type-badge {
+      font-size: 0.5rem;
+      background: var(--surface3);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      padding: 1px 5px;
+      border-radius: 2px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    /* Playing indicator */
+    .playing-bars {
+      display: none;
+      gap: 2px;
+      align-items: flex-end;
+      height: 12px;
+      margin-right: 6px;
+    }
+
+    .playlist-card.active .playing-bars { display: flex; }
+
+    .bar {
+      width: 3px;
+      background: var(--accent);
+      border-radius: 1px;
+      animation: bounce 0.8s ease-in-out infinite;
+    }
+
+    .bar:nth-child(2) { animation-delay: 0.1s; }
+    .bar:nth-child(3) { animation-delay: 0.2s; }
+
+    @keyframes bounce {
+      0%, 100% { height: 3px; }
+      50% { height: 12px; }
+    }
+
+    /* Main player area */
+    .player-area {
+      display: flex;
+      flex-direction: column;
+      background: var(--surface);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .player-topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 24px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      z-index: 10;
+    }
+
+    .now-playing-info {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .now-playing-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 8px var(--accent);
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+
+    .now-playing-label {
+      font-size: 0.6rem;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+    }
+
+    .now-playing-platform {
+      font-size: 0.65rem;
+      letter-spacing: 0.1em;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .player-controls {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .ctrl-btn {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+      border-radius: var(--radius);
+      width: 34px;
+      height: 34px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      font-size: 0.9rem;
+      transition: color 0.15s, border-color 0.15s, background 0.15s;
+    }
+
+    .ctrl-btn:hover {
+      color: var(--text);
+      border-color: var(--accent);
+      background: rgba(232, 255, 71, 0.05);
+    }
+
+    /* Embed frame */
+    .embed-container {
+      flex: 1;
+      position: relative;
+      background: var(--bg);
+      overflow: hidden;
+    }
+
+    .embed-frame {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      border: none;
+      display: none;
+    }
+
+    .embed-frame.visible { display: block; }
+
+    /* Welcome screen */
+    .welcome-screen {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 24px;
+      padding: 40px;
+    }
+
+    .welcome-title {
+      font-family: 'Unbounded', sans-serif;
+      font-size: clamp(2rem, 5vw, 4rem);
+      font-weight: 900;
+      color: var(--text);
+      letter-spacing: -0.04em;
+      text-align: center;
+      line-height: 0.95;
+    }
+
+    .welcome-title em {
+      color: var(--accent);
+      font-style: normal;
+      display: block;
+    }
+
+    .welcome-sub {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      text-align: center;
+      letter-spacing: 0.05em;
+      line-height: 1.8;
+      max-width: 380px;
+    }
+
+    .welcome-platforms {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    .welcome-chip {
+      font-family: 'Unbounded', sans-serif;
+      font-size: 0.6rem;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      padding: 8px 14px;
+      border-radius: var(--radius);
+      border: 1px solid;
+    }
+
+    .wc-yt  { color: var(--yt);  border-color: rgba(255,0,0,0.4);   background: rgba(255,0,0,0.08); }
+    .wc-ytm { color: var(--ytm); border-color: rgba(255,78,154,0.4); background: rgba(255,78,154,0.08); }
+    .wc-sp  { color: var(--sp);  border-color: rgba(29,185,84,0.4);  background: rgba(29,185,84,0.08); }
+    .wc-td  { color: var(--td);  border-color: rgba(57,153,255,0.4); background: rgba(57,153,255,0.08); }
+    .wc-sc  { color: var(--sc);  border-color: rgba(255,85,0,0.4);   background: rgba(255,85,0,0.08); }
+    .wc-am  { color: var(--am);  border-color: rgba(252,60,68,0.4);  background: rgba(252,60,68,0.08); }
+
+    /* Big decorative line */
+    .deco-line {
+      position: absolute;
+      bottom: 0; left: 0; right: 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, var(--accent), transparent);
+      opacity: 0.3;
+    }
+
+    /* Error toast */
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      background: var(--surface3);
+      border: 1px solid var(--accent2);
+      color: var(--text);
+      font-size: 0.7rem;
+      padding: 12px 18px;
+      border-radius: var(--radius);
+      box-shadow: 0 4px 24px rgba(0,0,0,0.5);
+      transform: translateY(80px);
+      opacity: 0;
+      transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+      z-index: 9000;
+      max-width: 300px;
+    }
+
+    .toast.show {
+      transform: translateY(0);
+      opacity: 1;
+    }
+
+    .toast-title {
+      font-family: 'Unbounded', sans-serif;
+      font-size: 0.6rem;
+      color: var(--accent2);
+      margin-bottom: 4px;
+      letter-spacing: 0.1em;
+    }
+
+    /* Loading spinner on embed */
+    .embed-loading {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--bg);
+      z-index: 2;
+      transition: opacity 0.4s;
+    }
+
+    .embed-loading.hidden { opacity: 0; pointer-events: none; }
+
+    .spinner {
+      width: 40px;
+      height: 40px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Scrollbar for list */
+    .sidebar-inner::-webkit-scrollbar { width: 3px; }
+
+    /* Platform URL note below input */
+    .url-note {
+      font-size: 0.58rem;
+      color: var(--text-muted);
+      margin-top: 8px;
+      letter-spacing: 0.05em;
+    }
+
+    /* Count badge */
+    .count-badge {
+      font-size: 0.55rem;
+      background: var(--accent);
+      color: #000;
+      border-radius: 2px;
+      padding: 1px 5px;
+      font-weight: 700;
+      font-family: 'Unbounded', sans-serif;
+    }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+      .app {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto 1fr;
+      }
+
+      .sidebar {
+        border-right: none;
+        border-bottom: 1px solid var(--border);
+        max-height: 50vh;
+      }
+
+      header { padding: 14px 18px; }
+      .logo { font-size: 1.3rem; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div style="display:flex;align-items:center;gap:12px;">
+    <img src="Geometric Frequency Logo Emphasizing Modernity.ico" alt="FREQ Logo" style="width:32px;height:32px;" />
+    <div class="logo">
+      FREQ
+      <span>Universal Music Player</span>
+    </div>
+  </div>
+  <div class="header-tag">v1.1 · Multi-Platform</div>
+</header>
+
+<div class="app">
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="input-section">
+      <span class="input-label">Paste Playlist / Track URL</span>
+      <div class="url-input-wrap">
+        <input
+          type="text"
+          class="url-input"
+          id="urlInput"
+          placeholder="https://open.spotify.com/playlist/..."
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <button class="add-btn" id="addBtn">ADD</button>
+      </div>
+      <div class="platform-hints">
+        <span class="chip chip-yt">YouTube</span>
+        <span class="chip chip-ytm">YT Music</span>
+        <span class="chip chip-sp">Spotify</span>
+        <span class="chip chip-td">Tidal</span>
+        <span class="chip chip-sc">SoundCloud</span>
+        <span class="chip chip-am">Apple Music</span>
+      </div>
+      <div class="url-note">Supports playlists, albums, tracks & artists</div>
+    </div>
+
+    <div class="sidebar-inner">
+      <div class="queue-header">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span class="section-title">Queue</span>
+          <span class="count-badge" id="countBadge">0</span>
+        </div>
+        <button class="clear-btn" id="clearBtn">Clear All</button>
+      </div>
+
+      <div id="queueList">
+        <div class="queue-empty">
+          <span class="big-icon">🎵</span>
+          No sources yet.<br />Paste a URL above to get started.
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Main Player -->
+  <main class="player-area">
+    <div class="player-topbar">
+      <div class="now-playing-info">
+        <div class="now-playing-dot" id="nowDot" style="display:none;"></div>
+        <div>
+          <div class="now-playing-label">Now Playing</div>
+          <div class="now-playing-platform" id="nowPlatform">— Select a source —</div>
+        </div>
+      </div>
+      <div class="player-controls">
+        <button class="ctrl-btn" id="prevBtn" title="Previous">⏮</button>
+        <button class="ctrl-btn" id="nextBtn" title="Next">⏭</button>
+        <button class="ctrl-btn" id="openBtn" title="Open in browser">↗</button>
+      </div>
+    </div>
+
+    <div class="embed-container">
+      <!-- Welcome screen -->
+      <div class="welcome-screen" id="welcomeScreen">
+        <div class="welcome-title">
+          All your music,<br /><em>one place.</em>
+        </div>
+        <div class="welcome-sub">
+          Paste any playlist, album, or track URL from your favorite platform to start listening instantly.
+        </div>
+        <div class="welcome-platforms">
+          <span class="welcome-chip wc-yt">YouTube</span>
+          <span class="welcome-chip wc-ytm">YT Music</span>
+          <span class="welcome-chip wc-sp">Spotify</span>
+          <span class="welcome-chip wc-td">Tidal</span>
+          <span class="welcome-chip wc-sc">SoundCloud</span>
+          <span class="welcome-chip wc-am">Apple Music</span>
+        </div>
+        <div class="deco-line"></div>
+      </div>
+
+      <!-- Loading -->
+      <div class="embed-loading hidden" id="embedLoading">
+        <div class="spinner"></div>
+      </div>
+
+      <!-- Embed frame -->
+      <iframe
+        class="embed-frame"
+        id="embedFrame"
+        allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture; web-share"
+        allowfullscreen
+        sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-presentation allow-top-navigation-by-user-activation"
+      ></iframe>
+    </div>
+  </main>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast">
+  <div class="toast-title" id="toastTitle">Error</div>
+  <div id="toastMsg">Something went wrong.</div>
+</div>
+
+<script>
+  // ─── State ───────────────────────────────────────────────────────────────────
+  const state = {
+    queue: JSON.parse(localStorage.getItem('freq_queue') || '[]'),
+    activeIndex: -1,
+    currentUrl: null,
+  };
+
+  // ─── Platform config ─────────────────────────────────────────────────────────
+  const PLATFORM_CONFIG = {
+    youtube:    { label: 'YouTube',      color: '#ff0000', icon: '▶' },
+    ytmusic:    { label: 'YT Music',     color: '#ff4e9a', icon: '♪' },
+    spotify:    { label: 'Spotify',      color: '#1db954', icon: '◎' },
+    tidal:      { label: 'Tidal',        color: '#3999ff', icon: '∿' },
+    soundcloud: { label: 'SoundCloud',   color: '#ff5500', icon: '☁' },
+    applemusic: { label: 'Apple Music',  color: '#fc3c44', icon: '♫' },
+  };
+
+  // ─── DOM refs ─────────────────────────────────────────────────────────────────
+  const urlInput    = document.getElementById('urlInput');
+  const addBtn      = document.getElementById('addBtn');
+  const clearBtn    = document.getElementById('clearBtn');
+  const queueList   = document.getElementById('queueList');
+  const countBadge  = document.getElementById('countBadge');
+  const embedFrame  = document.getElementById('embedFrame');
+  const embedLoading= document.getElementById('embedLoading');
+  const welcomeScreen= document.getElementById('welcomeScreen');
+  const nowPlatform = document.getElementById('nowPlatform');
+  const nowDot      = document.getElementById('nowDot');
+  const prevBtn     = document.getElementById('prevBtn');
+  const nextBtn     = document.getElementById('nextBtn');
+  const openBtn     = document.getElementById('openBtn');
+  const toast       = document.getElementById('toast');
+  const toastTitle  = document.getElementById('toastTitle');
+  const toastMsg    = document.getElementById('toastMsg');
+
+  // ─── Toast ───────────────────────────────────────────────────────────────────
+  let toastTimer;
+  function showToast(title, msg, type = 'error') {
+    toastTitle.textContent = title;
+    toastMsg.textContent = msg;
+    toastTitle.style.color = type === 'error' ? 'var(--accent2)' : 'var(--accent)';
+    toast.style.borderColor = type === 'error' ? 'var(--accent2)' : 'var(--accent)';
+    toast.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toast.classList.remove('show'), 3500);
+  }
+
+  // ─── Save ─────────────────────────────────────────────────────────────────────
+  function save() {
+    localStorage.setItem('freq_queue', JSON.stringify(state.queue));
+  }
+
+  // ─── Render queue ─────────────────────────────────────────────────────────────
+  function renderQueue() {
+    countBadge.textContent = state.queue.length;
+
+    if (state.queue.length === 0) {
+      queueList.innerHTML = `
+        <div class="queue-empty">
+          <span class="big-icon">🎵</span>
+          No sources yet.<br />Paste a URL above to get started.
+        </div>`;
+      return;
+    }
+
+    queueList.innerHTML = state.queue.map((item, i) => {
+      const cfg = PLATFORM_CONFIG[item.platform] || { label: 'Unknown', color: '#666', icon: '?' };
+      const isActive = i === state.activeIndex;
+      return `
+        <div
+          class="playlist-card ${isActive ? 'active' : ''}"
+          style="--platform-color: ${cfg.color}"
+          data-index="${i}"
+          onclick="playItem(${i})"
+        >
+          <div class="card-top">
+            <div style="display:flex;align-items:center;gap:6px;">
+              <div class="playing-bars">
+                <div class="bar"></div>
+                <div class="bar"></div>
+                <div class="bar"></div>
+              </div>
+              <span class="card-platform" style="color:${cfg.color}">${cfg.icon} ${cfg.label}</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;">
+              <span class="card-type-badge">${item.type || 'link'}</span>
+              <div class="card-actions">
+                <button class="card-action-btn" onclick="event.stopPropagation();removeItem(${i})" title="Remove">✕</button>
+              </div>
+            </div>
+          </div>
+          <div class="card-url" title="${item.originalUrl}">${item.originalUrl}</div>
+        </div>`;
+    }).join('');
+  }
+
+  // ─── Play item ─────────────────────────────────────────────────────────────────
+  function playItem(index) {
+    if (index < 0 || index >= state.queue.length) return;
+    state.activeIndex = index;
+    const item = state.queue[index];
+    const cfg = PLATFORM_CONFIG[item.platform] || { label: 'Unknown' };
+
+    state.currentUrl = item.originalUrl;
+
+    // Show loading
+    embedLoading.classList.remove('hidden');
+    welcomeScreen.style.display = 'none';
+    embedFrame.classList.remove('visible');
+
+    // Set iframe src
+    embedFrame.src = item.embedUrl;
+    nowPlatform.textContent = `${cfg.label} · ${item.type}`;
+    nowDot.style.display = 'block';
+
+    embedFrame.onload = () => {
+      embedLoading.classList.add('hidden');
+      embedFrame.classList.add('visible');
+    };
+
+    // Fallback timeout
+    setTimeout(() => {
+      embedLoading.classList.add('hidden');
+      embedFrame.classList.add('visible');
+    }, 3500);
+
+    renderQueue();
+  }
+
+  // ─── Remove item ──────────────────────────────────────────────────────────────
+  function removeItem(index) {
+    state.queue.splice(index, 1);
+    if (state.activeIndex === index) {
+      state.activeIndex = -1;
+      embedFrame.src = '';
+      embedFrame.classList.remove('visible');
+      welcomeScreen.style.display = 'flex';
+      nowPlatform.textContent = '— Select a source —';
+      nowDot.style.display = 'none';
+      state.currentUrl = null;
+    } else if (state.activeIndex > index) {
+      state.activeIndex--;
+    }
+    save();
+    renderQueue();
+  }
+
+  // ─── Add URL ──────────────────────────────────────────────────────────────────
+  async function addUrl(rawUrl) {
+    const url = rawUrl.trim();
+    if (!url) return;
+
+    // Detect YT Music separately
+    let normalized = url;
+    if (url.includes('music.youtube.com')) {
+      normalized = url; // keep as is, server handles it
+    }
+
+    addBtn.disabled = true;
+    addBtn.textContent = '...';
+
+    try {
+      const res = await fetch('/api/resolve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: normalized })
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        showToast('Unsupported URL', data.error || 'Could not parse this link.');
+        return;
+      }
+
+      // Check for duplicate
+      if (state.queue.some(q => q.originalUrl === data.originalUrl)) {
+        showToast('Already in queue', 'This URL is already in your queue.', 'info');
+        return;
+      }
+
+      state.queue.push(data);
+      save();
+      renderQueue();
+      urlInput.value = '';
+
+      // Auto-play first item
+      if (state.activeIndex === -1) playItem(0);
+
+      showToast('Added!', `${PLATFORM_CONFIG[data.platform]?.label || data.platform} · ${data.type}`, 'success');
+    } catch (err) {
+      showToast('Network Error', 'Could not connect to server. Is it running?');
+      console.error(err);
+    } finally {
+      addBtn.disabled = false;
+      addBtn.textContent = 'ADD';
+    }
+  }
+
+  // ─── Controls ─────────────────────────────────────────────────────────────────
+  prevBtn.addEventListener('click', () => {
+    if (state.queue.length === 0) return;
+    const prev = state.activeIndex <= 0 ? state.queue.length - 1 : state.activeIndex - 1;
+    playItem(prev);
+  });
+
+  nextBtn.addEventListener('click', () => {
+    if (state.queue.length === 0) return;
+    const next = (state.activeIndex + 1) % state.queue.length;
+    playItem(next);
+  });
+
+  openBtn.addEventListener('click', () => {
+    if (state.currentUrl) window.open(state.currentUrl, '_blank');
+  });
+
+  // ─── Events ───────────────────────────────────────────────────────────────────
+  addBtn.addEventListener('click', () => addUrl(urlInput.value));
+
+  urlInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter') addUrl(urlInput.value);
+  });
+
+  clearBtn.addEventListener('click', () => {
+    if (state.queue.length === 0) return;
+    if (!confirm('Clear the entire queue?')) return;
+    state.queue = [];
+    state.activeIndex = -1;
+    state.currentUrl = null;
+    embedFrame.src = '';
+    embedFrame.classList.remove('visible');
+    welcomeScreen.style.display = 'flex';
+    nowPlatform.textContent = '— Select a source —';
+    nowDot.style.display = 'none';
+    save();
+    renderQueue();
+  });
+
+  // Keyboard shortcuts
+  document.addEventListener('keydown', e => {
+    if (document.activeElement === urlInput) return;
+    if (e.key === 'ArrowLeft') prevBtn.click();
+    if (e.key === 'ArrowRight') nextBtn.click();
+  });
+
+  // ─── Init ─────────────────────────────────────────────────────────────────────
+  renderQueue();
+  // Restore last active (play first if queue has items)
+  if (state.queue.length > 0) {
+    welcomeScreen.style.display = 'none';
+  }
+</script>
+</body>
+</html>
