@@ -1,30 +1,22 @@
 /**
  * FREQ — Universal Music Player
- * server.js  ·  v2.0
+ * server.js  ·  v3.0
  *
  * © 2025 FREQ / Slimey2017. All rights reserved.
  *
- * Serves the frontend and exposes one API endpoint:
- *   POST /api/resolve  { url: string }
- *   → { platform, type, embedUrl, id, originalUrl }
+ * POST /api/resolve        { url: string }
+ * POST /api/import         { urls: string[] }  — batch resolve
+ * GET  /health             — uptime check
+ * GET  /redirect           — ?url=<encoded> served as real HTML page (Amazon/Qobuz fix)
  *
  * Supported platforms:
- *   YouTube          youtube.com / youtu.be
- *   YouTube Music    music.youtube.com
- *   Spotify          open.spotify.com
- *   Tidal            tidal.com
- *   SoundCloud       soundcloud.com
- *   Apple Music      music.apple.com
- *   Amazon Music     music.amazon.com / amazon.com/music
- *   Qobuz            open.qobuz.com / play.qobuz.com
- *
- * Run:  node server.js
- * Then: http://localhost:3000
+ *   YouTube · YT Music · Spotify · Tidal · SoundCloud · Apple Music
+ *   Amazon Music · Qobuz
  */
 
-const express = require('express');
-const cors    = require('cors');
-const path    = require('path');
+const express     = require('express');
+const cors        = require('cors');
+const path        = require('path');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -32,20 +24,49 @@ const PORT = process.env.PORT || 3000;
 // ─── Middleware ───────────────────────────────────────────────────────────────
 app.use(cors());
 app.use(express.json());
-app.use(express.static(__dirname));  // serves index.html from same folder as server.js
+app.use(express.static(__dirname));
+
+// ─── Rate limiting (manual, no extra dep) ────────────────────────────────────
+const rateLimitMap = new Map();
+function rateLimit(req, res, next) {
+  const ip  = req.ip || req.connection.remoteAddress || 'unknown';
+  const now = Date.now();
+  const window = 60_000;
+  const max    = 120;
+
+  if (!rateLimitMap.has(ip)) rateLimitMap.set(ip, []);
+  const hits = rateLimitMap.get(ip).filter(t => now - t < window);
+  hits.push(now);
+  rateLimitMap.set(ip, hits);
+
+  if (hits.length > max) {
+    return res.status(429).json({ error: 'Rate limit exceeded. Please slow down.' });
+  }
+  next();
+}
+
+// Clean map every 5 min
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, hits] of rateLimitMap) {
+    const fresh = hits.filter(t => now - t < 60_000);
+    if (fresh.length === 0) rateLimitMap.delete(ip);
+    else rateLimitMap.set(ip, fresh);
+  }
+}, 300_000);
 
 // ─── Platform Detection ───────────────────────────────────────────────────────
 function detectPlatform(url) {
   try {
     const { hostname } = new URL(url);
     const h = hostname.replace(/^www\./, '');
-    if (h === 'music.youtube.com')                        return 'ytmusic';
-    if (h === 'youtube.com' || h === 'youtu.be')          return 'youtube';
-    if (h === 'open.spotify.com')                         return 'spotify';
-    if (h === 'tidal.com')                                return 'tidal';
-    if (h === 'soundcloud.com')                           return 'soundcloud';
-    if (h === 'music.apple.com')                          return 'applemusic';
-    if (h === 'music.amazon.com' || h === 'amazon.com')   return 'amazon';
+    if (h === 'music.youtube.com')         return 'ytmusic';
+    if (h === 'youtube.com' || h === 'youtu.be') return 'youtube';
+    if (h === 'open.spotify.com')          return 'spotify';
+    if (h === 'tidal.com')                 return 'tidal';
+    if (h === 'soundcloud.com')            return 'soundcloud';
+    if (h === 'music.apple.com')           return 'applemusic';
+    if (h === 'music.amazon.com')          return 'amazon';   // FIX: strict match, not amazon.com
     if (h === 'open.qobuz.com' || h === 'play.qobuz.com') return 'qobuz';
   } catch (_) { /* invalid URL */ }
   return null;
@@ -55,8 +76,21 @@ function detectPlatform(url) {
 
 function resolveYouTube(url) {
   const u = new URL(url);
+
+  // Browse-style YT Music playlists: music.youtube.com/browse/VL{listId}
+  const browsePath = u.pathname.match(/^\/browse\/(VL[A-Za-z0-9_-]+)/);
+  if (browsePath) {
+    const listId = browsePath[1].replace(/^VL/, '');
+    return {
+      type:     'playlist',
+      embedUrl: `https://www.youtube.com/embed/videoseries?list=${listId}&autoplay=1&controls=1`,
+      id:       listId,
+    };
+  }
+
   const listId  = u.searchParams.get('list');
-  const videoId = u.searchParams.get('v') || u.pathname.replace(/^\//, '');
+  const videoId = u.searchParams.get('v') ||
+    (u.hostname === 'youtu.be' ? u.pathname.replace(/^\//, '').split('?')[0] : null);
 
   if (listId) {
     return {
@@ -68,7 +102,7 @@ function resolveYouTube(url) {
   if (videoId && videoId.length >= 11) {
     return {
       type:     'video',
-      embedUrl: `https://www.youtube.com/embed/${videoId}?autoplay=1&controls=1`,
+      embedUrl: `https://www.youtube.com/embed/${videoId}?autoplay=1&controls=1&enablejsapi=1`,
       id:       videoId,
     };
   }
@@ -76,7 +110,9 @@ function resolveYouTube(url) {
 }
 
 function resolveSpotify(url) {
-  const match = new URL(url).pathname.match(/^\/(playlist|album|track|artist|show|episode)\/([A-Za-z0-9]+)/);
+  const match = new URL(url).pathname.match(
+    /^\/(playlist|album|track|artist|show|episode)\/([A-Za-z0-9]+)/
+  );
   if (!match) return null;
   const [, type, id] = match;
   return {
@@ -98,6 +134,8 @@ function resolveTidal(url) {
 }
 
 function resolveSoundCloud(url) {
+  // Support /likes/ and /sets/ as playlist, everything else as track
+  const type = (url.includes('/sets/') || url.includes('/likes/')) ? 'playlist' : 'track';
   const params = new URLSearchParams({
     url,
     color:         '%23ff5500',
@@ -109,7 +147,6 @@ function resolveSoundCloud(url) {
     show_teaser:   'true',
     visual:        'true',
   });
-  const type = url.includes('/sets/') ? 'playlist' : 'track';
   return {
     type,
     embedUrl: `https://w.soundcloud.com/player/?${params.toString()}`,
@@ -139,17 +176,10 @@ function resolveAppleMusic(url) {
 }
 
 /**
- * Amazon Music
- *
- * Amazon Music does not have a public embed API.
- * We generate a redirect-style deep-link and serve a branded
- * "Open in Amazon Music" card in the embed area via a data URI page.
- *
- * URL patterns:
- *   music.amazon.com/playlists/{id}
- *   music.amazon.com/albums/{id}
- *   music.amazon.com/tracks/{id}
- *   music.amazon.com/artists/{id}
+ * Amazon Music — FIX v3.0
+ * Amazon has no public embed API. We now serve a real HTML redirect
+ * page at GET /redirect?url=... instead of an inline data: URI.
+ * The iframe sandbox allows same-origin (our own server) just fine.
  */
 function resolveAmazon(url) {
   const u = new URL(url);
@@ -157,76 +187,27 @@ function resolveAmazon(url) {
   let type = 'link';
   let id   = url;
   if (match) {
-    type = match[1].replace(/s$/, '').toLowerCase(); // remove trailing 's'
+    type = match[1].replace(/s$/, '').toLowerCase();
     id   = match[2];
   }
-  // Build a simple redirect page as a data URI
-  const html = `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <meta http-equiv="refresh" content="2;url=${encodeURI(url)}">
-  <title>Amazon Music</title>
-  <style>
-    body {
-      margin: 0;
-      background: #0f0f0f;
-      font-family: 'Amazon Ember', Arial, sans-serif;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      height: 100vh;
-      flex-direction: column;
-      gap: 20px;
-      color: #fff;
-    }
-    .badge {
-      background: #00A8E1;
-      color: #000;
-      font-weight: 700;
-      font-size: 0.8rem;
-      padding: 4px 12px;
-      border-radius: 4px;
-      letter-spacing: 0.1em;
-    }
-    h2 { font-size: 1.4rem; margin: 0; }
-    p  { color: #888; font-size: 0.8rem; }
-    a  { color: #00A8E1; text-decoration: none; font-weight: 700; }
-  </style>
-</head>
-<body>
-  <div class="badge">AMAZON MUSIC</div>
-  <h2>Opening in Amazon Music…</h2>
-  <p>Redirecting automatically. <a href="${url}" target="_blank">Click here</a> if it doesn't open.</p>
-</body>
-</html>`;
-  const encoded = 'data:text/html;charset=utf-8,' + encodeURIComponent(html);
-  return { type, embedUrl: encoded, id };
+  // Point embedUrl at our own /redirect route — no more data: URI
+  const redirectUrl = `/redirect?url=${encodeURIComponent(url)}&platform=amazon`;
+  return { type, embedUrl: redirectUrl, id };
 }
 
 /**
- * Qobuz
- *
- * Qobuz has a public embed player.
- * URL patterns:
- *   open.qobuz.com/album/{id}
- *   open.qobuz.com/playlist/{id}
- *   open.qobuz.com/track/{id}
- *   play.qobuz.com/... (same structure)
- *
- * Embed: https://play.qobuz.com/playlist/{id}
- * (Qobuz embeds work via play.qobuz.com subdomain with /embed/ prefix)
+ * Qobuz — FIX v3.0
+ * Qobuz's cross-origin embed requires an app_id which is not public.
+ * Instead of a broken /embed/ path we serve the same /redirect route
+ * (styled for Qobuz) so the user can open the track in their browser.
  */
 function resolveQobuz(url) {
   const u = new URL(url);
   const match = u.pathname.match(/\/(album|playlist|track)\/([^/?]+)/);
   if (!match) return null;
   const [, type, id] = match;
-  return {
-    type,
-    embedUrl: `https://play.qobuz.com/embed/${type}/${id}`,
-    id,
-  };
+  const redirectUrl = `/redirect?url=${encodeURIComponent(url)}&platform=qobuz`;
+  return { type, embedUrl: redirectUrl, id };
 }
 
 // ─── Resolver Map ─────────────────────────────────────────────────────────────
@@ -241,15 +222,128 @@ const RESOLVERS = {
   qobuz:      resolveQobuz,
 };
 
+// ─── Redirect page (Amazon & Qobuz fix) ──────────────────────────────────────
+const REDIRECT_BRANDS = {
+  amazon: {
+    name:    'Amazon Music',
+    color:   '#00A8E1',
+    bgColor: '#0f1923',
+    emoji:   '◈',
+  },
+  qobuz: {
+    name:    'Qobuz',
+    color:   '#05b8cc',
+    bgColor: '#050f14',
+    emoji:   '◉',
+  },
+};
+
+app.get('/redirect', (req, res) => {
+  const targetUrl = req.query.url || '';
+  const platform  = req.query.platform || 'amazon';
+  const brand     = REDIRECT_BRANDS[platform] || REDIRECT_BRANDS.amazon;
+
+  if (!targetUrl) return res.status(400).send('Missing url parameter');
+
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="refresh" content="3;url=${encodeURI(decodeURIComponent(targetUrl))}">
+  <title>${brand.name}</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Unbounded:wght@700;900&display=swap');
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: ${brand.bgColor};
+      font-family: 'Space Mono', monospace;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      flex-direction: column;
+      gap: 22px;
+      color: #fff;
+      padding: 32px;
+    }
+    .icon { font-size: 3rem; }
+    .badge {
+      background: ${brand.color};
+      color: #000;
+      font-family: 'Unbounded', sans-serif;
+      font-weight: 900;
+      font-size: 0.65rem;
+      padding: 5px 14px;
+      border-radius: 3px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+    }
+    h2 {
+      font-family: 'Unbounded', sans-serif;
+      font-size: 1.1rem;
+      letter-spacing: -0.01em;
+      text-align: center;
+    }
+    p { color: #778; font-size: 0.75rem; text-align: center; line-height: 1.8; }
+    a { color: ${brand.color}; text-decoration: none; font-weight: 700; }
+    a:hover { text-decoration: underline; }
+    .bar-wrap {
+      width: 220px;
+      height: 3px;
+      background: rgba(255,255,255,0.08);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+    .bar-fill {
+      height: 100%;
+      background: ${brand.color};
+      border-radius: 2px;
+      animation: fill 3s linear forwards;
+    }
+    @keyframes fill { from { width: 0%; } to { width: 100%; } }
+    .note { font-size: 0.62rem; color: #444; margin-top: 8px; text-align: center; line-height: 1.9; }
+  </style>
+</head>
+<body>
+  <div class="icon">${brand.emoji}</div>
+  <div class="badge">${brand.name}</div>
+  <h2>Opening in ${brand.name}…</h2>
+  <div class="bar-wrap"><div class="bar-fill"></div></div>
+  <p>
+    Redirecting automatically.<br>
+    <a href="${decodeURIComponent(targetUrl)}" target="_blank">Click here</a> if it doesn't open.
+  </p>
+  <p class="note">
+    ${brand.name} doesn't support embedded playback in third-party apps.<br>
+    Your link will open in a new tab.
+  </p>
+</body>
+</html>`;
+
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(html);
+});
+
+// ─── API: GET /health ─────────────────────────────────────────────────────────
+app.get('/health', (req, res) => {
+  res.json({
+    status:   'ok',
+    version:  '3.0',
+    uptime:   Math.floor(process.uptime()),
+    platform: process.platform,
+  });
+});
+
 // ─── API: POST /api/resolve ───────────────────────────────────────────────────
-app.post('/api/resolve', (req, res) => {
+app.post('/api/resolve', rateLimit, (req, res) => {
   const { url } = req.body;
 
   if (!url || typeof url !== 'string') {
     return res.status(400).json({ error: 'Request body must include a "url" string.' });
   }
 
-  const trimmed = url.trim();
+  const trimmed  = url.trim();
   const platform = detectPlatform(trimmed);
 
   if (!platform) {
@@ -276,6 +370,40 @@ app.post('/api/resolve', (req, res) => {
   return res.json({ platform, originalUrl: trimmed, ...info });
 });
 
+// ─── API: POST /api/import (batch resolve) ────────────────────────────────────
+app.post('/api/import', rateLimit, async (req, res) => {
+  const { urls } = req.body;
+
+  if (!Array.isArray(urls) || urls.length === 0) {
+    return res.status(400).json({ error: 'Request body must include a "urls" array.' });
+  }
+
+  if (urls.length > 100) {
+    return res.status(400).json({ error: 'Maximum 100 URLs per import request.' });
+  }
+
+  const results = urls.map(rawUrl => {
+    if (typeof rawUrl !== 'string' || !rawUrl.trim()) {
+      return { error: 'Invalid URL', url: rawUrl };
+    }
+    const trimmed  = rawUrl.trim();
+    const platform = detectPlatform(trimmed);
+    if (!platform) return { error: 'Unsupported platform', url: trimmed };
+    try {
+      const info = RESOLVERS[platform](trimmed);
+      if (!info) return { error: 'Could not parse URL', url: trimmed };
+      return { platform, originalUrl: trimmed, ...info };
+    } catch (err) {
+      return { error: err.message, url: trimmed };
+    }
+  });
+
+  const succeeded = results.filter(r => !r.error);
+  const failed    = results.filter(r =>  r.error);
+
+  return res.json({ succeeded, failed, total: results.length });
+});
+
 // ─── Catch-all: serve index.html ──────────────────────────────────────────────
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
@@ -283,16 +411,16 @@ app.get('*', (req, res) => {
 
 // ─── Start ────────────────────────────────────────────────────────────────────
 const server = app.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n🎵  FREQ v2.0 is running`);
+  console.log(`\n🎵  FREQ v3.0 is running`);
   console.log(`    Local:  http://localhost:${PORT}`);
+  console.log(`    Health: http://localhost:${PORT}/health`);
   console.log(`    © 2025 FREQ / Slimey2017. All rights reserved.\n`);
 });
 
 server.on('error', err => {
   if (err.code === 'EADDRINUSE') {
     console.error(`\n⚠️  Port ${PORT} is already in use.\n` +
-      `   Close the app already using port ${PORT}, or run:\n` +
-      `   PORT=3001 node server.js\n`);
+      `   Run:  PORT=3001 node server.js\n`);
   } else {
     console.error(err);
   }
