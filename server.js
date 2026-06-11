@@ -1,12 +1,14 @@
 /**
  * FREQ — Universal Music Player
- * server.js  ·  v4.0  "The Sigma"
+ * server.js  ·  v4.1  "Sigma+"
  *
  * © 2025–2026 FREQ / Slimey2017. All rights reserved.
  *
  * ─── API Endpoints ────────────────────────────────────────────────────────────
  * POST /api/resolve              { url: string }
  * POST /api/import               { urls: string[] }
+ * GET  /api/yt/playlist          ?listId=<playlistId>[&pageToken=<token>]
+ * GET  /api/yt/search            ?q=<query>[&limit=<n>]
  * GET  /health
  * GET  /redirect                 ?url=<encoded>&platform=<name>
  *
@@ -17,14 +19,14 @@
  * GET  /api/auth/pull            ?token=<token>
  * DELETE /api/auth/account       { token }
  *
- * ─── New in v4.0 ─────────────────────────────────────────────────────────────
- *   - Deezer + Last.fm platform detection & embed resolvers
- *   - Full server-side account store (in-memory Map + JSON persistence)
- *   - Auth uses PBKDF2-SHA256 + per-user random salt (crypto built-in, no deps)
- *   - Session tokens: 128-bit random hex, TTL 30 days, stored server-side
- *   - POST /api/auth/token-refresh renews expiry by another 30 days
- *   - POST /api/auth/sync & GET /api/auth/pull for cross-device playlist sync
- *   - DELETE /api/auth/account purges account + all session tokens
+ * ─── New in v4.1 ─────────────────────────────────────────────────────────────
+ *   - GET /api/yt/playlist  — scrapes YouTube InnerTube API (no key) to expand
+ *     a playlist/album into individual track {id, title, artist} objects.
+ *     Supports continuation tokens for playlists > 100 tracks.
+ *   - GET /api/yt/search    — finds alternate YouTube videos by title query,
+ *     used as a fallback when a queued video is blocked/unavailable.
+ *   - resolveYouTube() now returns expandable:true for playlist/album types
+ *     so the client knows to call /api/yt/playlist to expand it.
  *
  * Supported platforms:
  *   YouTube · YT Music · Spotify · Tidal · SoundCloud · Apple Music
@@ -38,9 +40,154 @@ const cors     = require('cors');
 const path     = require('path');
 const crypto   = require('crypto');
 const fs       = require('fs');
+const https    = require('https');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
+
+// ─── InnerTube API Helpers ────────────────────────────────────────────────────
+// Uses YouTube's internal web API — no API key required.
+// client version spoofed as a standard web client.
+
+const INNERTUBE_CLIENT = {
+  clientName:    'WEB',
+  clientVersion: '2.20240304.00.00',
+  hl:            'en',
+  gl:            'US',
+};
+
+const INNERTUBE_HEADERS = {
+  'Content-Type':  'application/json',
+  'User-Agent':    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122.0.0.0 Safari/537.36',
+  'Accept':        '*/*',
+  'Origin':        'https://www.youtube.com',
+  'Referer':       'https://www.youtube.com/',
+  'X-YouTube-Client-Name':    '1',
+  'X-YouTube-Client-Version': INNERTUBE_CLIENT.clientVersion,
+};
+
+/**
+ * Generic InnerTube POST request.
+ * endpoint: e.g. 'browse', 'search'
+ * body:     additional fields merged into context wrapper
+ */
+function innerTubePost(endpoint, body) {
+  return new Promise((resolve, reject) => {
+    const payload = JSON.stringify({
+      context: { client: INNERTUBE_CLIENT },
+      ...body,
+    });
+
+    const opts = {
+      hostname: 'www.youtube.com',
+      path:     `/youtubei/v1/${endpoint}?prettyPrint=false`,
+      method:   'POST',
+      headers:  { ...INNERTUBE_HEADERS, 'Content-Length': Buffer.byteLength(payload) },
+    };
+
+    const req = https.request(opts, res => {
+      let raw = '';
+      res.setEncoding('utf8');
+      res.on('data', chunk => { raw += chunk; if (raw.length > 8_000_000) { req.destroy(); reject(new Error('Response too large')); } });
+      res.on('end', () => {
+        try { resolve(JSON.parse(raw)); }
+        catch (e) { reject(new Error('InnerTube JSON parse failed: ' + e.message)); }
+      });
+    });
+
+    req.setTimeout(12_000, () => { req.destroy(); reject(new Error('InnerTube timeout')); });
+    req.on('error', reject);
+    req.write(payload);
+    req.end();
+  });
+}
+
+/**
+ * Extract tracks from a playlist browse response.
+ * Handles both initial load and continuation pages.
+ */
+function extractPlaylistTracks(data) {
+  const tracks = [];
+
+  // Try initial browse structure
+  const tabs = data?.contents?.twoColumnBrowseResultsRenderer?.tabs;
+  if (tabs) {
+    for (const tab of tabs) {
+      const sections = tab?.tabRenderer?.content?.sectionListRenderer?.contents;
+      if (!sections) continue;
+      for (const sec of sections) {
+        const items = sec?.itemSectionRenderer?.contents;
+        if (!items) continue;
+        for (const item of items) {
+          const videos = item?.playlistVideoListRenderer?.contents;
+          if (!videos) continue;
+          for (const v of videos) {
+            const vr = v.playlistVideoRenderer;
+            if (!vr?.videoId) continue;
+            tracks.push({
+              id:     vr.videoId,
+              title:  vr.title?.runs?.[0]?.text || 'Unknown',
+              artist: vr.shortBylineText?.runs?.[0]?.text || '',
+            });
+          }
+          // Return continuation token if present
+          const contItem = videos.find(v => v.continuationItemRenderer);
+          const contToken = contItem?.continuationItemRenderer?.continuationEndpoint?.continuationCommand?.token || null;
+          return { tracks, continuationToken: contToken };
+        }
+      }
+    }
+  }
+
+  // Try continuation response structure
+  const onResponseReceived = data?.onResponseReceivedActions;
+  if (onResponseReceived) {
+    for (const action of onResponseReceived) {
+      const videos = action?.appendContinuationItemsAction?.continuationItems;
+      if (!videos) continue;
+      for (const v of videos) {
+        const vr = v.playlistVideoRenderer;
+        if (!vr?.videoId) continue;
+        tracks.push({
+          id:     vr.videoId,
+          title:  vr.title?.runs?.[0]?.text || 'Unknown',
+          artist: vr.shortBylineText?.runs?.[0]?.text || '',
+        });
+      }
+      const contItem = videos.find(v => v.continuationItemRenderer);
+      const contToken = contItem?.continuationItemRenderer?.continuationEndpoint?.continuationCommand?.token || null;
+      return { tracks, continuationToken: contToken };
+    }
+  }
+
+  return { tracks, continuationToken: null };
+}
+
+/**
+ * Extract video results from a search response.
+ */
+function extractSearchResults(data) {
+  const results = [];
+  const sections = data?.contents?.twoColumnSearchResultsRenderer?.primaryContents?.sectionListRenderer?.contents;
+  if (!sections) return results;
+  for (const sec of sections) {
+    const items = sec?.itemSectionRenderer?.contents;
+    if (!items) continue;
+    for (const item of items) {
+      const vr = item.videoRenderer;
+      if (!vr?.videoId) continue;
+      results.push({
+        id:      vr.videoId,
+        title:   vr.title?.runs?.[0]?.text || '',
+        channel: vr.ownerText?.runs?.[0]?.text || vr.longBylineText?.runs?.[0]?.text || '',
+        thumb:   vr.thumbnail?.thumbnails?.[0]?.url || '',
+      });
+      if (results.length >= 8) break;
+    }
+    if (results.length) break;
+  }
+  return results;
+}
 
 // Path for JSON persistence
 const DATA_PATH = path.join(__dirname, 'freq_data.json');
@@ -182,13 +329,27 @@ function resolveYouTube(url) {
   const browsePath = u.pathname.match(/^\/browse\/(VL[A-Za-z0-9_-]+)/);
   if (browsePath) {
     const listId = browsePath[1].replace(/^VL/, '');
-    return { type:'playlist', embedUrl:`https://www.youtube.com/embed/videoseries?list=${listId}&autoplay=1&controls=1`, id:listId };
+    return {
+      type: 'playlist',
+      embedUrl: `https://www.youtube.com/embed/videoseries?list=${listId}&autoplay=1&controls=1`,
+      id: listId,
+      expandable: true,   // v4.1: signal client to expand into individual tracks
+    };
   }
   const listId  = u.searchParams.get('list');
   const videoId = u.searchParams.get('v') ||
     (u.hostname === 'youtu.be' ? u.pathname.replace(/^\//, '').split('?')[0] : null);
-  if (listId) return { type:'playlist', embedUrl:`https://www.youtube.com/embed/videoseries?list=${listId}&autoplay=1&controls=1`, id:listId };
-  if (videoId && videoId.length >= 11) return { type:'video', embedUrl:`https://www.youtube.com/embed/${videoId}?autoplay=1&controls=1&enablejsapi=1`, id:videoId };
+  if (listId) return {
+    type: 'playlist',
+    embedUrl: `https://www.youtube.com/embed/videoseries?list=${listId}&autoplay=1&controls=1`,
+    id: listId,
+    expandable: true,   // v4.1: signal client to expand
+  };
+  if (videoId && videoId.length >= 11) return {
+    type: 'video',
+    embedUrl: `https://www.youtube.com/embed/${videoId}?autoplay=1&controls=1&enablejsapi=1`,
+    id: videoId,
+  };
   return null;
 }
 
@@ -375,7 +536,7 @@ app.get('/redirect', (req, res) => {
 app.get('/health', (req, res) => {
   res.json({
     status:   'ok',
-    version:  '4.0',
+    version:  '4.1',
     uptime:   Math.floor(process.uptime()),
     platform: process.platform,
     accounts: store.accounts.size,
@@ -558,6 +719,98 @@ app.delete('/api/auth/account', (req, res) => {
   return res.json({ ok: true, deleted: username });
 });
 
+// ─── GET /api/yt/playlist ─────────────────────────────────────────────────────
+// Expands a YouTube playlist/album into individual track objects.
+// Query params:
+//   listId     (required)  YouTube playlist ID, e.g. PLxxxxxx or OLAK5uy_xxx (album mix)
+//   pageToken  (optional)  Continuation token for page 2+
+//   maxPages   (optional)  Maximum continuation pages to follow (default 3, max 10)
+//
+// Returns: { tracks: [{id, title, artist}], continuationToken, total, listId }
+app.get('/api/yt/playlist', rateLimit, async (req, res) => {
+  const { listId, pageToken, maxPages } = req.query;
+  if (!listId || typeof listId !== 'string' || !/^[A-Za-z0-9_-]+$/.test(listId))
+    return res.status(400).json({ error: 'listId is required and must be a valid YouTube playlist ID.' });
+
+  const maxP = Math.min(parseInt(maxPages) || 3, 10);
+
+  try {
+    let allTracks = [];
+    let contToken = pageToken || null;
+    let isFirst   = true;
+
+    for (let page = 0; page < (pageToken ? 1 : maxP); page++) {
+      let data;
+      if (isFirst && !pageToken) {
+        // Initial browse request
+        data = await innerTubePost('browse', { browseId: `VL${listId}` });
+        isFirst = false;
+      } else {
+        // Continuation request
+        if (!contToken) break;
+        data = await innerTubePost('browse', { continuation: contToken });
+      }
+
+      const { tracks, continuationToken } = extractPlaylistTracks(data);
+
+      if (!tracks.length && page === 0) {
+        // InnerTube returned nothing — possibly a private/deleted list
+        return res.status(404).json({ error: 'Playlist not found or is private.' });
+      }
+
+      allTracks.push(...tracks);
+      contToken = continuationToken;
+
+      if (!contToken) break; // no more pages
+    }
+
+    return res.json({
+      listId,
+      tracks:            allTracks,
+      total:             allTracks.length,
+      continuationToken: contToken || null,
+      hasMore:           !!contToken,
+    });
+  } catch (err) {
+    console.error('[yt/playlist]', err.message);
+    return res.status(502).json({ error: 'Failed to fetch playlist from YouTube: ' + err.message });
+  }
+});
+
+// ─── GET /api/yt/search ───────────────────────────────────────────────────────
+// Searches YouTube for videos matching a query.
+// Used as a fallback when a video is blocked/unavailable.
+// Query params:
+//   q      (required)  Search query string
+//   limit  (optional)  Max results to return (default 5, max 8)
+//
+// Returns: { results: [{id, title, channel, thumb}], query }
+app.get('/api/yt/search', rateLimit, async (req, res) => {
+  const { q, limit } = req.query;
+  if (!q || typeof q !== 'string' || !q.trim())
+    return res.status(400).json({ error: 'Query parameter "q" is required.' });
+
+  const maxResults = Math.min(parseInt(limit) || 5, 8);
+  const query      = q.trim().slice(0, 200); // cap query length
+
+  try {
+    const data    = await innerTubePost('search', { query, params: 'EgIQAQ%3D%3D' }); // EgIQAQ== = videos only filter
+    const results = extractSearchResults(data).slice(0, maxResults);
+
+    if (!results.length) {
+      // Fallback: retry without videos-only filter
+      const data2 = await innerTubePost('search', { query });
+      const fallback = extractSearchResults(data2).slice(0, maxResults);
+      return res.json({ results: fallback, query, fallback: true });
+    }
+
+    return res.json({ results, query });
+  } catch (err) {
+    console.error('[yt/search]', err.message);
+    return res.status(502).json({ error: 'YouTube search failed: ' + err.message });
+  }
+});
+
 // ─── Catch-all ────────────────────────────────────────────────────────────────
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
@@ -567,10 +820,12 @@ app.get('*', (req, res) => {
 loadStore();
 
 const server = app.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n🎵  FREQ v4.0 "The Sigma" is running`);
-  console.log(`    Local:  http://localhost:${PORT}`);
-  console.log(`    Health: http://localhost:${PORT}/health`);
-  console.log(`    Data:   ${DATA_PATH}`);
+  console.log(`\n🎵  FREQ v4.1 "Sigma+" is running`);
+  console.log(`    Local:    http://localhost:${PORT}`);
+  console.log(`    Health:   http://localhost:${PORT}/health`);
+  console.log(`    YT API:   http://localhost:${PORT}/api/yt/playlist?listId=PLxxx`);
+  console.log(`    Search:   http://localhost:${PORT}/api/yt/search?q=track+name`);
+  console.log(`    Data:     ${DATA_PATH}`);
   console.log(`    © 2025–2026 FREQ / Slimey2017. All rights reserved.\n`);
 });
 
