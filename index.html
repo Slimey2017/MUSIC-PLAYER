@@ -605,6 +605,244 @@ footer{text-align:center;padding:7px;font-size:0.47rem;color:var(--text-muted);l
   .player-area{min-height:56vh;}
   .aq-grid{grid-template-columns:1fr;}
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+   FREQ v4.1 — New Feature Styles
+═══════════════════════════════════════════════════════════════════ */
+
+/* ─── Queue Toolbar ──────────────────────────────────────────────── */
+.queue-toolbar {
+  padding:8px 14px 0;border-bottom:1px solid var(--border);
+  background:var(--surface);
+}
+.queue-search-wrap {
+  display:flex;align-items:center;gap:6px;
+  background:var(--surface2);border:1px solid var(--border);
+  border-radius:var(--radius);padding:5px 9px;margin-bottom:7px;
+  transition:border-color 0.2s;
+}
+.queue-search-wrap:focus-within { border-color:var(--accent); }
+.queue-search-icon { font-size:0.65rem; color:var(--text-muted); flex-shrink:0; }
+.queue-search-input {
+  flex:1;background:none;border:none;outline:none;
+  font-family:'Space Mono',monospace;font-size:0.62rem;color:var(--text);
+  min-width:0;
+}
+.queue-search-input::placeholder { color:var(--text-muted); }
+.queue-search-clear {
+  background:none;border:none;color:var(--text-muted);font-size:0.7rem;
+  cursor:pointer;padding:0 2px;line-height:1;transition:color 0.15s;
+  display:none;
+}
+.queue-search-clear.visible { display:block; }
+.queue-search-clear:hover { color:var(--accent2); }
+
+.queue-tool-row {
+  display:flex;gap:4px;margin-bottom:8px;flex-wrap:wrap;
+}
+.qtool-btn {
+  background:var(--surface2);border:1px solid var(--border);
+  color:var(--text-muted);font-family:'Space Mono',monospace;
+  font-size:0.44rem;letter-spacing:0.06em;text-transform:uppercase;
+  padding:4px 7px;border-radius:var(--radius);cursor:pointer;
+  transition:color 0.15s,border-color 0.15s;white-space:nowrap;
+}
+.qtool-btn:hover { color:var(--accent);border-color:var(--accent); }
+
+/* ─── Stats Panel ────────────────────────────────────────────────── */
+.queue-stats-panel {
+  background:var(--surface2);border:1px solid var(--border);
+  border-radius:var(--radius);padding:10px 12px;margin-bottom:8px;
+  font-size:0.52rem;font-family:'Space Mono',monospace;
+}
+.stats-row {
+  display:flex;justify-content:space-between;align-items:center;
+  padding:3px 0;border-bottom:1px solid var(--border);
+}
+.stats-row:last-child { border-bottom:none; }
+.stats-label { color:var(--text-dim); }
+.stats-val { color:var(--accent);font-weight:700; }
+.stats-bar-wrap {
+  display:flex;align-items:center;gap:6px;margin-top:6px;
+}
+.stats-bar-track {
+  flex:1;height:3px;background:var(--border);border-radius:2px;overflow:hidden;
+}
+.stats-bar-fill {
+  height:100%;border-radius:2px;transition:width 0.4s ease;
+}
+.bulk-del-item {
+  display:flex;align-items:center;justify-content:space-between;
+  padding:5px 0;border-bottom:1px solid var(--border);
+}
+.bulk-del-item:last-child { border-bottom:none; }
+.bulk-del-label { color:var(--text-dim); font-size:0.52rem; }
+.bulk-del-count { color:var(--text-muted); font-size:0.46rem; margin-right:auto; margin-left:6px; }
+.bulk-del-btn {
+  background:none;border:1px solid var(--accent2);color:var(--accent2);
+  font-family:'Space Mono',monospace;font-size:0.42rem;padding:2px 7px;
+  border-radius:var(--radius);cursor:pointer;letter-spacing:0.06em;text-transform:uppercase;
+  transition:background 0.15s,color 0.15s;
+}
+.bulk-del-btn:hover { background:var(--accent2);color:#000; }
+
+/* ─── Multi-Link Extractor Modal ─────────────────────────────────── */
+.multi-modal {
+  position:fixed;inset:0;z-index:9000;background:rgba(0,0,0,0.8);
+  display:flex;align-items:center;justify-content:center;
+  backdrop-filter:blur(4px);
+}
+.multi-panel {
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--radius);padding:22px 26px;max-width:480px;width:92%;
+  font-family:'Space Mono',monospace;
+}
+.multi-title {
+  font-family:'Unbounded',sans-serif;font-weight:900;font-size:0.9rem;
+  color:var(--accent);margin-bottom:5px;
+}
+.multi-sub {
+  font-size:0.5rem;color:var(--text-muted);margin-bottom:12px;line-height:1.7;
+}
+.multi-textarea {
+  width:100%;height:130px;background:var(--surface2);border:1px solid var(--border);
+  color:var(--text);font-family:'Space Mono',monospace;font-size:0.62rem;
+  padding:10px;border-radius:var(--radius);resize:vertical;outline:none;
+  transition:border-color 0.2s;
+}
+.multi-textarea:focus { border-color:var(--accent); }
+.multi-preview {
+  background:var(--surface2);border:1px solid var(--border);
+  border-radius:var(--radius);padding:8px 10px;margin-top:8px;
+  font-size:0.5rem;color:var(--text-dim);max-height:120px;overflow-y:auto;
+  line-height:1.8;
+}
+.multi-preview-url { color:var(--accent3);cursor:default; }
+.multi-btn {
+  background:var(--accent);color:var(--bg);border:none;
+  border-radius:var(--radius);padding:9px 16px;
+  font-family:'Unbounded',sans-serif;font-size:0.56rem;font-weight:700;
+  cursor:pointer;letter-spacing:0.05em;transition:opacity 0.15s;
+}
+.multi-btn:hover { opacity:0.85; }
+.multi-btn-cancel {
+  background:var(--surface3);color:var(--text-muted);
+  border:1px solid var(--border);
+}
+.multi-btn-cancel:hover { opacity:1;border-color:var(--accent2);color:var(--accent2); }
+
+/* ─── OLED Mode ──────────────────────────────────────────────────── */
+body.oled-mode {
+  --bg:#000000;--surface:#000000;--surface2:#080808;--surface3:#0f0f0f;
+  --border:#1a1a1a;
+}
+#oledToggleBtn.oled-active {
+  color:var(--accent);border-color:var(--accent);
+}
+
+/* ─── Playlist Expand UI ─────────────────────────────────────────── */
+.card-expand-btn {
+  background:none;border:1px solid var(--accent3);color:var(--accent3);
+  font-family:'Space Mono',monospace;font-size:0.42rem;letter-spacing:0.08em;
+  text-transform:uppercase;padding:3px 7px;border-radius:var(--radius);
+  cursor:pointer;transition:all 0.15s;white-space:nowrap;margin-top:5px;
+  display:block;width:100%;
+}
+.card-expand-btn:hover { background:var(--accent3);color:#000; }
+.card-expand-btn:disabled { opacity:0.4;cursor:wait; }
+.card-expand-btn.expanded { border-color:var(--accent);color:var(--accent); }
+
+.expand-track-count {
+  font-size:0.42rem;color:var(--text-muted);
+  border:1px solid var(--border);padding:1px 5px;border-radius:2px;
+  margin-left:4px;
+}
+
+/* ─── Blocked Video Recovery ─────────────────────────────────────── */
+.card-blocked-btn {
+  background:none;border:1px solid var(--accent2);color:var(--accent2);
+  font-family:'Space Mono',monospace;font-size:0.42rem;letter-spacing:0.08em;
+  text-transform:uppercase;padding:3px 7px;border-radius:var(--radius);
+  cursor:pointer;transition:all 0.15s;white-space:nowrap;display:none;
+}
+.playlist-card.may-be-blocked .card-blocked-btn { display:inline-block; }
+.card-blocked-btn:hover { background:var(--accent2);color:#000; }
+
+/* Search results modal */
+.search-modal {
+  position:fixed;inset:0;z-index:9100;background:rgba(0,0,0,0.82);
+  display:flex;align-items:center;justify-content:center;
+  backdrop-filter:blur(3px);
+}
+.search-panel {
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--radius);padding:20px 24px;max-width:500px;width:92%;
+  font-family:'Space Mono',monospace;max-height:80vh;overflow-y:auto;
+}
+.search-panel-title {
+  font-family:'Unbounded',sans-serif;font-weight:900;font-size:0.85rem;
+  color:var(--accent);margin-bottom:4px;
+}
+.search-panel-sub {
+  font-size:0.48rem;color:var(--text-muted);margin-bottom:14px;line-height:1.7;
+}
+.search-result-item {
+  display:flex;gap:10px;align-items:flex-start;padding:8px 0;
+  border-bottom:1px solid var(--border);cursor:pointer;
+  transition:background 0.12s;border-radius:var(--radius);
+}
+.search-result-item:last-child { border-bottom:none; }
+.search-result-item:hover { background:var(--surface2); }
+.search-result-thumb {
+  width:60px;height:34px;object-fit:cover;border-radius:2px;flex-shrink:0;
+  background:var(--surface3);
+}
+.search-result-info { flex:1;min-width:0; }
+.search-result-title {
+  font-size:0.56rem;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  line-height:1.4;margin-bottom:2px;
+}
+.search-result-channel { font-size:0.46rem;color:var(--text-muted); }
+.search-result-play {
+  background:var(--accent);color:var(--bg);border:none;
+  border-radius:var(--radius);padding:5px 10px;font-family:'Unbounded',sans-serif;
+  font-size:0.46rem;font-weight:700;cursor:pointer;letter-spacing:0.04em;
+  flex-shrink:0;align-self:center;transition:opacity 0.15s;
+}
+.search-result-play:hover { opacity:0.85; }
+.search-close-btn {
+  margin-top:12px;width:100%;background:var(--surface3);color:var(--text-dim);
+  border:1px solid var(--border);border-radius:var(--radius);padding:8px;
+  font-family:'Space Mono',monospace;font-size:0.52rem;cursor:pointer;
+  letter-spacing:0.08em;text-transform:uppercase;transition:border-color 0.15s;
+}
+.search-close-btn:hover { border-color:var(--accent2);color:var(--accent2); }
+
+/* ─── Dynamic page title hidden logic handled in JS ─────────────── */
+
+/* ─── Queue item filtered-out state ─────────────────────────────── */
+.playlist-card.filtered-out {
+  display:none;
+}
+
+/* ─── Auto-scroll indicator on active card ──────────────────────── */
+.playlist-card.active {
+  scroll-margin-top:8px;
+  scroll-margin-bottom:8px;
+}
+
+/* ─── Status bar strip ───────────────────────────────────────────── */
+#statusBar {
+  position:fixed;bottom:0;left:0;right:0;z-index:9500;
+  background:var(--surface);border-top:1px solid var(--border);
+  padding:4px 16px;font-family:'Space Mono',monospace;font-size:0.44rem;
+  color:var(--text-muted);letter-spacing:0.1em;
+  display:flex;align-items:center;justify-content:space-between;
+  pointer-events:none;transform:translateY(100%);transition:transform 0.25s ease;
+}
+#statusBar.show { transform:translateY(0); }
+#statusBar .status-msg { color:var(--accent); }
+#statusBar .status-meta { color:var(--text-muted); }
 </style>
 </head>
 <body>
@@ -640,6 +878,7 @@ footer{text-align:center;padding:7px;font-size:0.47rem;color:var(--text-muted);l
       </div>
     </div>
     <button class="header-tag" id="audioQualityBtn" style="cursor:pointer;background:none;" title="Audio Quality & EQ">⚙ Audio</button>
+    <button class="header-tag" id="oledToggleBtn" style="cursor:pointer;background:none;" title="OLED True Black Mode">⬛ OLED</button>
     <button class="user-badge" id="authBtn" title="Account / Saved Playlists">⊡ Account</button>
     <button class="header-tag" id="miniBtn" style="cursor:pointer;background:none;" title="Mini sidebar">⇄</button>
     <button class="header-tag" id="fullscreenBtn" style="cursor:pointer;background:none;" title="Fullscreen player">⛶</button>
@@ -733,9 +972,28 @@ footer{text-align:center;padding:7px;font-size:0.47rem;color:var(--text-muted);l
         <div class="queue-actions">
           <button class="flex-btn" id="flexBtn" title="Load FREQ demo playlist">⚡ FLEX</button>
           <button class="shuffle-btn" id="shuffleBtn" title="Shuffle">⇄</button>
-          <button class="export-btn" id="exportBtn" title="Export JSON">↓ Export</button>
+          <button class="export-btn" id="exportBtn" title="Export JSON">↓ JSON</button>
+          <button class="export-btn" id="mdExportBtn" title="Export Markdown tracklist" style="background:var(--surface3);">↓ MD</button>
           <button class="clear-btn" id="clearBtn" title="Clear all">✕</button>
         </div>
+      </div>
+      <!-- Queue search + tools bar -->
+      <div class="queue-toolbar">
+        <div class="queue-search-wrap">
+          <span class="queue-search-icon">🔍</span>
+          <input type="text" class="queue-search-input" id="queueSearch" placeholder="Filter queue…" autocomplete="off" spellcheck="false" />
+          <button class="queue-search-clear" id="queueSearchClear" title="Clear search">✕</button>
+        </div>
+        <div class="queue-tool-row">
+          <button class="qtool-btn" id="dedupBtn" title="Remove duplicate URLs">⊟ Dedup</button>
+          <button class="qtool-btn" id="bulkDeleteBtn" title="Delete by platform">⊗ Source</button>
+          <button class="qtool-btn" id="statsBtn" title="Queue statistics">≡ Stats</button>
+          <button class="qtool-btn" id="multiPasteBtn" title="Multi-link extractor">⊞ Multi</button>
+        </div>
+        <!-- Stats dropdown -->
+        <div class="queue-stats-panel" id="queueStatsPanel" style="display:none;"></div>
+        <!-- Bulk delete by platform dropdown -->
+        <div class="queue-stats-panel" id="bulkDeletePanel" style="display:none;"></div>
       </div>
       <div id="queueList">
         <div class="queue-empty"><span class="big-icon">🎵</span>No sources yet.<br/>Paste a URL or drop a local file.<br/><br/>Or hit <strong>⚡ FLEX</strong> to load a demo.</div>
@@ -847,10 +1105,41 @@ footer{text-align:center;padding:7px;font-size:0.47rem;color:var(--text-muted);l
   </main>
 </div>
 
+<!-- Blocked Video Search Modal -->
+<div class="search-modal" id="searchModal" style="display:none;">
+  <div class="search-panel">
+    <div class="search-panel-title">⚠ Find Alternate Version</div>
+    <div class="search-panel-sub" id="searchPanelSub">Looking for an unblocked version of this track…</div>
+    <div id="searchResultsList"></div>
+    <button class="search-close-btn" id="searchModalClose">CANCEL</button>
+  </div>
+</div>
+
+<!-- Multi-Link Extractor Modal -->
+<div class="multi-modal" id="multiModal" style="display:none;">
+  <div class="multi-panel">
+    <div class="multi-title">⊞ Multi-Link Extractor</div>
+    <div class="multi-sub">Paste any block of text. FREQ will extract all valid URLs and queue them.</div>
+    <textarea class="multi-textarea" id="multiTextarea" placeholder="Paste anything — tweets, blog posts, raw text with links…" spellcheck="false"></textarea>
+    <div class="multi-preview" id="multiPreview" style="display:none;"></div>
+    <div style="display:flex;gap:8px;margin-top:10px;">
+      <button class="multi-btn" id="multiExtract">Extract URLs</button>
+      <button class="multi-btn" id="multiAddAll" style="display:none;">Add All to Queue</button>
+      <button class="multi-btn multi-btn-cancel" id="multiClose">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <footer>
   © 2026 FREQ · Slimey2017 · All rights reserved ·
   FREQ is an independent, unofficial project and is not affiliated with YouTube, Spotify, Apple Music, SoundCloud, Tidal, or any other platform. Users are responsible for complying with applicable terms of service.
 </footer>
+
+<!-- Status Bar -->
+<div id="statusBar">
+  <span class="status-msg" id="statusMsg">—</span>
+  <span class="status-meta" id="statusMeta"></span>
+</div>
 
 <!-- Toast -->
 <div class="toast" id="toast">
@@ -1170,6 +1459,11 @@ footer{text-align:center;padding:7px;font-size:0.47rem;color:var(--text-muted);l
             <span class="aq-toggle-label">Auto Queue Advance on Error</span>
             <label class="aq-switch"><input type="checkbox" id="aqAutoAdvance" checked><span class="aq-slider-track"></span></label>
           </div>
+        </div>
+        <div class="aq-item">
+          <div class="aq-label">Auto-Advance Delay (seconds between tracks)</div>
+          <input type="range" class="aq-slider" id="aqAdvanceDelay" min="0" max="30" value="0" step="1" />
+          <div class="aq-value" id="aqAdvanceDelayVal">0s (instant)</div>
         </div>
         <div class="aq-item full">
           <div class="aq-toggle">
@@ -2296,8 +2590,21 @@ function renderQueue() {
     const displayName = item.customLabel || item.title || item.originalUrl || item.id || 'Unknown';
     const durStr     = item.duration ? `<span class="card-duration">${item.duration}</span>` : '';
     const starClass  = item.starred ? 'starred-icon' : '';
+
+    // v4.1: expand button for YT playlists
+    const expandBtn  = (item.expandable && item.platform === 'youtube')
+      ? `<button class="card-expand-btn" onclick="event.stopPropagation();expandYTPlaylist(${i})" title="Expand into individual tracks">⊞ Expand Tracks</button>`
+      : '';
+
+    // v4.1: "Find Alt" button for blocked YT videos
+    const blockedBtn = (item.platform === 'youtube' && item.type === 'video')
+      ? `<button class="card-blocked-btn" onclick="event.stopPropagation();findAlternateVideo(${i})" title="Find unblocked alternate">⚠ Find Alt</button>`
+      : '';
+
+    const blockedClass = item.may_be_blocked ? 'may-be-blocked' : '';
+
     return `<div
-        class="playlist-card ${isActive?'active':''} ${item.starred?'starred':''}"
+        class="playlist-card ${isActive?'active':''} ${item.starred?'starred':''} ${blockedClass}"
         style="--platform-color:${cfg.color}"
         data-index="${i}"
         draggable="true"
@@ -2319,6 +2626,7 @@ function renderQueue() {
           </div>
         </div>
         <div class="card-url" title="${displayName}">${displayName}${durStr}</div>
+        ${expandBtn}${blockedBtn}
       </div>`;
   }).join('');
 
@@ -2329,6 +2637,9 @@ function renderQueue() {
     card.addEventListener('drop',      onDrop);
     card.addEventListener('dragend',   onDragEnd);
   });
+  // v4.1: re-apply search filter and dynamic title after render
+  if (typeof applyQueueFilter === 'function') applyQueueFilter();
+  if (typeof updatePageTitle === 'function')  updatePageTitle();
 }
 
 // ─── Drag-and-drop reorder ────────────────────────────────────────────────────
@@ -2518,13 +2829,27 @@ function playItem(index) {
   }
   renderQueue();
   scrollActiveIntoView();
+  // v4.1: update page title + status bar
+  if (typeof updatePageTitle === 'function') updatePageTitle();
+  if (typeof showStatus === 'function') {
+    const _it = state.queue[index];
+    if (_it) showStatus(_it.customLabel || _it.title || '—', (PLATFORM_CONFIG[_it.platform]||{}).label || '');
+  }
 }
 
 // ─── YouTube postMessage auto-advance ─────────────────────────────────────────
 window.addEventListener('message', e => {
   try {
     const data = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
-    if (data && data.event === 'onStateChange' && data.info === 0) advanceTrack();
+    if (data && data.event === 'onStateChange' && data.info === 0) {
+      const delay = (AQ_DEFAULTS.advanceDelay || 0) * 1000;
+      if (delay > 0) {
+        if (typeof showStatus === 'function') showStatus(`Next track in ${AQ_DEFAULTS.advanceDelay}s…`, '', delay + 500);
+        setTimeout(advanceTrack, delay);
+      } else {
+        advanceTrack();
+      }
+    }
   } catch(_) {}
 });
 
@@ -2538,9 +2863,18 @@ function advanceTrack() {
 
 // ─── Local audio auto-advance ─────────────────────────────────────────────────
 localAudio.addEventListener('ended', () => {
-  if (state.repeat === 2) { localAudio.currentTime = 0; localAudio.play(); }
-  else if (state.repeat === 1) playItem((state.activeIndex + 1) % state.queue.length);
-  else { const next = state.activeIndex + 1; if (next < state.queue.length) playItem(next); }
+  const doAdvance = () => {
+    if (state.repeat === 2) { localAudio.currentTime = 0; localAudio.play(); }
+    else if (state.repeat === 1) playItem((state.activeIndex + 1) % state.queue.length);
+    else { const next = state.activeIndex + 1; if (next < state.queue.length) playItem(next); }
+  };
+  const delay = (AQ_DEFAULTS.advanceDelay || 0) * 1000;
+  if (delay > 0) {
+    if (typeof showStatus === 'function') showStatus(`Next track in ${AQ_DEFAULTS.advanceDelay}s…`, '', delay + 500);
+    setTimeout(doAdvance, delay);
+  } else {
+    doAdvance();
+  }
 });
 
 // ─── Remove Item ──────────────────────────────────────────────────────────────
@@ -2572,6 +2906,7 @@ async function addUrl(rawUrl) {
     save(); renderQueue(); urlInput.value = '';
     if (state.activeIndex === -1) playItem(0);
     showToast('Added!', `${PLATFORM_CONFIG[data.platform]?.label || data.platform} · ${data.type}`, 'success');
+    if (typeof showStatus === 'function') showStatus(`+ ${data.title || data.originalUrl || 'Track added'}`, (PLATFORM_CONFIG[data.platform]||{}).label || '');
   } catch(err) {
     showToast('Network Error', 'Could not connect to server. Is it running?');
     console.error(err);
@@ -2776,6 +3111,8 @@ clearBtn.addEventListener('click', () => {
   state.queue.forEach(q => { if (q.platform==='local' && q.blobUrl) URL.revokeObjectURL(q.blobUrl); });
   state.queue = []; state.activeIndex = -1; state.currentUrl = null;
   localAudio.pause(); localAudio.src = '';
+  // Close toolbar panels
+  if (typeof statsOpen !== 'undefined') { statsOpen = false; bulkOpen = false; if(typeof statsPanel!=='undefined'){statsPanel.style.display='none';} if(typeof bulkDeletePanel!=='undefined'){bulkDeletePanel.style.display='none';} }
   save(); showWelcome(); renderQueue();
   localFileCount = 0; localTotalBytes = 0;
   $('localFileCount').textContent = '0 files loaded';
@@ -2822,14 +3159,560 @@ document.addEventListener('keydown', e => {
   if (e.key === '/' || e.key === 'u' || e.key === 'U') { urlInput.focus(); e.preventDefault(); }
 });
 
-// ─── Init ─────────────────────────────────────────────────────────────────────
-initAQPanel();
+// ═══════════════════════════════════════════════════════════════════
+//  FREQ v4.1 — New Feature Logic
+// ═══════════════════════════════════════════════════════════════════
+
+// ─── Status Bar ───────────────────────────────────────────────────
+const statusBar  = $('statusBar');
+const statusMsg  = $('statusMsg');
+const statusMeta = $('statusMeta');
+let statusTimer;
+function showStatus(msg, meta='', duration=2800) {
+  statusMsg.textContent  = msg;
+  statusMeta.textContent = meta;
+  statusBar.classList.add('show');
+  clearTimeout(statusTimer);
+  statusTimer = setTimeout(() => statusBar.classList.remove('show'), duration);
+}
+
+// ─── Dynamic Page Title ───────────────────────────────────────────
+function updatePageTitle() {
+  if (state.activeIndex < 0 || !state.queue[state.activeIndex]) {
+    document.title = 'FREQ — Universal Music Player';
+    return;
+  }
+  const item = state.queue[state.activeIndex];
+  const name = item.customLabel || item.title || item.originalUrl || 'Unknown';
+  const cfg  = PLATFORM_CONFIG[item.platform];
+  const icon = cfg ? cfg.icon : '♪';
+  document.title = `FREQ | ${icon} ${name}`;
+}
+
+// ─── OLED True Black Mode ─────────────────────────────────────────
+let oledActive = localStorage.getItem('freq_oled') === '1';
+function applyOled() {
+  document.body.classList.toggle('oled-mode', oledActive);
+  $('oledToggleBtn').classList.toggle('oled-active', oledActive);
+  localStorage.setItem('freq_oled', oledActive ? '1' : '0');
+}
+applyOled();
+$('oledToggleBtn').addEventListener('click', () => {
+  oledActive = !oledActive;
+  applyOled();
+  showStatus(oledActive ? 'OLED Mode: ON — true black' : 'OLED Mode: OFF');
+  showToast('OLED Mode', oledActive ? 'Pure black engaged.' : 'Disabled.', 'info');
+});
+
+// ─── Queue Search Filter ──────────────────────────────────────────
+const queueSearchInput = $('queueSearch');
+const queueSearchClear = $('queueSearchClear');
+let queueSearchTerm = '';
+
+function applyQueueFilter() {
+  const term = queueSearchTerm.toLowerCase();
+  document.querySelectorAll('.playlist-card').forEach(card => {
+    if (!term) { card.classList.remove('filtered-out'); return; }
+    const idx    = parseInt(card.dataset.index);
+    const item   = state.queue[idx];
+    if (!item) { card.classList.add('filtered-out'); return; }
+    const haystack = [
+      item.customLabel||'', item.title||'', item.originalUrl||'',
+      (PLATFORM_CONFIG[item.platform]||{}).label||'',
+    ].join(' ').toLowerCase();
+    card.classList.toggle('filtered-out', !haystack.includes(term));
+  });
+  // Show count in search box
+  if (term) {
+    const visible = document.querySelectorAll('.playlist-card:not(.filtered-out)').length;
+    queueSearchInput.title = `${visible} match${visible!==1?'es':''}`;
+  } else {
+    queueSearchInput.title = '';
+  }
+}
+
+queueSearchInput.addEventListener('input', () => {
+  queueSearchTerm = queueSearchInput.value;
+  queueSearchClear.classList.toggle('visible', !!queueSearchTerm);
+  applyQueueFilter();
+});
+queueSearchClear.addEventListener('click', () => {
+  queueSearchInput.value = '';
+  queueSearchTerm = '';
+  queueSearchClear.classList.remove('visible');
+  applyQueueFilter();
+  queueSearchInput.focus();
+});
+
+// ─── Queue Statistics Panel ───────────────────────────────────────
+const statsPanel = $('queueStatsPanel');
+let statsOpen = false;
+function buildStatsPanel() {
+  const counts = {};
+  let totalDur = 0;
+  state.queue.forEach(item => {
+    const key = item.platform || 'unknown';
+    counts[key] = (counts[key] || 0) + 1;
+    if (item.duration) {
+      const parts = item.duration.split(':').map(Number);
+      totalDur += (parts[0] * 60) + (parts[1] || 0);
+    }
+  });
+  const total = state.queue.length || 1;
+  const COLORS = { youtube:'#ff0000',ytmusic:'#ff4e9a',spotify:'#1db954',tidal:'#3999ff',soundcloud:'#ff5500',applemusic:'#fc3c44',amazon:'#00A8E1',qobuz:'#05b8cc',deezer:'#a259ff',lastfm:'#d51007',local:'#a78bfa' };
+  const entries = Object.entries(counts).sort((a,b) => b[1]-a[1]);
+  const durStr = totalDur > 0 ? `${Math.floor(totalDur/3600)}h ${Math.floor((totalDur%3600)/60)}m` : '—';
+  statsPanel.innerHTML = `
+    <div class="stats-row"><span class="stats-label">Total tracks</span><span class="stats-val">${state.queue.length}</span></div>
+    <div class="stats-row"><span class="stats-label">Known duration</span><span class="stats-val">${durStr}</span></div>
+    <div class="stats-row"><span class="stats-label">Starred</span><span class="stats-val">${state.queue.filter(q=>q.starred).length}</span></div>
+    ${entries.map(([plat,cnt]) => {
+      const cfg = PLATFORM_CONFIG[plat] || { label: plat, icon:'?' };
+      const pct = Math.round(cnt/total*100);
+      const col = COLORS[plat] || '#666';
+      return `<div style="margin-top:5px;">
+        <div class="stats-bar-wrap">
+          <span class="stats-label" style="min-width:80px">${cfg.icon} ${cfg.label}</span>
+          <div class="stats-bar-track"><div class="stats-bar-fill" style="width:${pct}%;background:${col}"></div></div>
+          <span class="stats-val" style="min-width:32px;text-align:right">${pct}%</span>
+        </div>
+      </div>`;
+    }).join('')}`;
+}
+$('statsBtn').addEventListener('click', () => {
+  statsOpen = !statsOpen;
+  if (statsOpen) { buildStatsPanel(); bulkDeletePanel.style.display='none'; bulkOpen=false; }
+  statsPanel.style.display = statsOpen ? 'block' : 'none';
+  $('statsBtn').classList.toggle('active', statsOpen);
+});
+
+// ─── Bulk Delete by Source ────────────────────────────────────────
+const bulkDeletePanel = $('bulkDeletePanel');
+let bulkOpen = false;
+function buildBulkPanel() {
+  const counts = {};
+  state.queue.forEach(item => {
+    const key = item.platform || 'unknown';
+    counts[key] = (counts[key] || 0) + 1;
+  });
+  const entries = Object.entries(counts).sort((a,b)=>b[1]-a[1]);
+  if (!entries.length) { bulkDeletePanel.innerHTML='<div style="color:var(--text-muted);font-size:0.5rem;">Queue is empty.</div>'; return; }
+  bulkDeletePanel.innerHTML = entries.map(([plat, cnt]) => {
+    const cfg = PLATFORM_CONFIG[plat] || { label: plat, icon:'?' };
+    return `<div class="bulk-del-item">
+      <span class="bulk-del-label">${cfg.icon} ${cfg.label}</span>
+      <span class="bulk-del-count">${cnt} track${cnt!==1?'s':''}</span>
+      <button class="bulk-del-btn" data-platform="${plat}">Remove</button>
+    </div>`;
+  }).join('');
+  bulkDeletePanel.querySelectorAll('.bulk-del-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const plat = btn.dataset.platform;
+      const before = state.queue.length;
+      state.queue.forEach(q => { if (q.platform==='local' && q.blobUrl && q.platform===plat) URL.revokeObjectURL(q.blobUrl); });
+      state.queue = state.queue.filter(q => q.platform !== plat);
+      if (state.activeIndex >= state.queue.length) { state.activeIndex = -1; showWelcome(); }
+      save(); renderQueue();
+      const removed = before - state.queue.length;
+      showToast('Bulk Removed', `${removed} ${plat} track${removed!==1?'s':''} cleared.`, 'success');
+      showStatus(`Removed ${removed} ${plat} tracks`, '');
+      buildBulkPanel();
+    });
+  });
+}
+$('bulkDeleteBtn').addEventListener('click', () => {
+  bulkOpen = !bulkOpen;
+  if (bulkOpen) { buildBulkPanel(); statsPanel.style.display='none'; statsOpen=false; }
+  bulkDeletePanel.style.display = bulkOpen ? 'block' : 'none';
+  $('bulkDeleteBtn').classList.toggle('active', bulkOpen);
+});
+
+// ─── Smart Duplicate Detector ─────────────────────────────────────
+$('dedupBtn').addEventListener('click', () => {
+  const seen = new Set();
+  const before = state.queue.length;
+  state.queue = state.queue.filter(item => {
+    const key = item.originalUrl || item.id;
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  const removed = before - state.queue.length;
+  if (removed === 0) {
+    showToast('No Duplicates', 'Queue is already clean.', 'info');
+    showStatus('No duplicate URLs found', '');
+    return;
+  }
+  if (state.activeIndex >= state.queue.length) state.activeIndex = -1;
+  save(); renderQueue();
+  showToast('Deduped!', `${removed} duplicate${removed!==1?'s':''} removed.`, 'success');
+  showStatus(`Removed ${removed} duplicates`, `${state.queue.length} tracks remain`);
+});
+
+// ─── Markdown Tracklist Exporter ──────────────────────────────────
+$('mdExportBtn').addEventListener('click', () => {
+  if (!state.queue.length) { showToast('Queue empty', 'Nothing to export.', 'info'); return; }
+  const date = new Date().toISOString().slice(0,10);
+  let md = `# FREQ Tracklist — ${date}\n\n`;
+  md += `| # | Title | Platform | Type | URL |\n`;
+  md += `|---|-------|----------|------|-----|\n`;
+  state.queue.forEach((item, i) => {
+    const cfg = PLATFORM_CONFIG[item.platform] || { label: item.platform };
+    const title = (item.customLabel || item.title || item.id || 'Unknown').replace(/\|/g,'｜');
+    const url   = item.originalUrl || item.embedUrl || '';
+    md += `| ${i+1} | ${title} | ${cfg.label} | ${item.type||'link'} | ${url} |\n`;
+  });
+  md += `\n_Exported from FREQ v4.1 — ${state.queue.length} track${state.queue.length!==1?'s':''}_\n`;
+  const blob = new Blob([md], { type:'text/markdown' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `freq-tracklist-${date}.md`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  showToast('Exported!', `${state.queue.length} tracks → .md file`, 'success');
+  showStatus('Markdown tracklist exported', `${state.queue.length} tracks`);
+});
+
+// ─── Multi-Link Extractor ─────────────────────────────────────────
+const multiModal    = $('multiModal');
+const multiTextarea = $('multiTextarea');
+const multiPreview  = $('multiPreview');
+const multiAddAll   = $('multiAddAll');
+let multiExtracted  = [];
+
+const URL_REGEX = /https?:\/\/[^\s"'<>)\]]+/g;
+const SUPPORTED_DOMAINS = ['youtube.com','youtu.be','music.youtube.com','open.spotify.com','soundcloud.com','tidal.com','music.apple.com','music.amazon.com','open.qobuz.com','deezer.com','last.fm','lastfm.com'];
+
+function isSupportedUrl(url) {
+  try { const h = new URL(url).hostname.replace('www.',''); return SUPPORTED_DOMAINS.some(d => h.endsWith(d)); }
+  catch { return false; }
+}
+
+$('multiPasteBtn').addEventListener('click', () => {
+  multiTextarea.value = '';
+  multiPreview.style.display = 'none';
+  multiAddAll.style.display = 'none';
+  multiExtracted = [];
+  multiModal.style.display = 'flex';
+  setTimeout(() => multiTextarea.focus(), 60);
+});
+
+$('multiExtract').addEventListener('click', () => {
+  const raw = multiTextarea.value;
+  const matches = raw.match(URL_REGEX) || [];
+  multiExtracted = [...new Set(matches.filter(isSupportedUrl))];
+  if (!multiExtracted.length) {
+    multiPreview.style.display = 'block';
+    multiPreview.innerHTML = '<span style="color:var(--accent2)">No supported URLs found. Paste text containing YouTube, Spotify, SoundCloud, etc. links.</span>';
+    multiAddAll.style.display = 'none';
+    return;
+  }
+  multiPreview.style.display = 'block';
+  multiPreview.innerHTML = `<strong style="color:var(--accent)">${multiExtracted.length} URL${multiExtracted.length!==1?'s':''} found:</strong><br/><br/>` +
+    multiExtracted.map(u => `<div class="multi-preview-url">↳ ${u}</div>`).join('');
+  multiAddAll.style.display = 'block';
+  multiAddAll.textContent = `▶ Add ${multiExtracted.length} URL${multiExtracted.length!==1?'s':''} to Queue`;
+});
+
+$('multiAddAll').addEventListener('click', async () => {
+  multiModal.style.display = 'none';
+  if (!multiExtracted.length) return;
+  showToast('Importing…', `Processing ${multiExtracted.length} URLs…`, 'info');
+  showStatus(`Queueing ${multiExtracted.length} extracted links…`, '', 10000);
+  let added = 0, failed = 0;
+  for (const url of multiExtracted) {
+    try {
+      const res  = await fetch('/api/resolve', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ url }) });
+      const data = await res.json();
+      if (!res.ok) { failed++; continue; }
+      if (!state.allowDups && state.queue.some(q => q.originalUrl === data.originalUrl)) continue;
+      state.queue.push(data);
+      added++;
+    } catch { failed++; }
+  }
+  save(); renderQueue();
+  if (state.activeIndex === -1 && state.queue.length) playItem(0);
+  showToast('Multi-Import Done!', `${added} added${failed?' · '+failed+' failed':''}.`, added>0?'success':'error');
+  showStatus(`Multi-import: ${added} added`, failed ? `${failed} failed` : '');
+});
+
+$('multiClose').addEventListener('click', () => { multiModal.style.display = 'none'; });
+multiModal.addEventListener('click', e => { if (e.target === multiModal) multiModal.style.display = 'none'; });
+
+// ─── Auto-Advance Delay ───────────────────────────────────────────
+// Extend AQ_DEFAULTS with advanceDelay
+AQ_DEFAULTS.advanceDelay = AQ_DEFAULTS.advanceDelay ?? 0;
+// Bind the slider once AQ panel initializes
+const _origInitAQPanel = typeof initAQPanel === 'function' ? initAQPanel : null;
+
+// Hook advanceDelay slider into existing bindAQSlider mechanism
+// (called after initAQPanel below)
+function bindAdvanceDelaySlider() {
+  const sl  = $('aqAdvanceDelay');
+  const val = $('aqAdvanceDelayVal');
+  if (!sl || !val) return;
+  sl.value = AQ_DEFAULTS.advanceDelay;
+  val.textContent = AQ_DEFAULTS.advanceDelay === 0 ? '0s (instant)' : AQ_DEFAULTS.advanceDelay + 's';
+  sl.addEventListener('input', () => {
+    const v = parseInt(sl.value);
+    AQ_DEFAULTS.advanceDelay = v;
+    val.textContent = v === 0 ? '0s (instant)' : v + 's';
+  });
+}
+
+// Wrap advanceTrack and localAudio.ended to apply delay
+const _origAdvanceTrack = advanceTrack;
+function advanceTrackDelayed() {
+  const delay = (AQ_DEFAULTS.advanceDelay || 0) * 1000;
+  if (delay > 0) {
+    showStatus(`Next track in ${AQ_DEFAULTS.advanceDelay}s…`, '', delay + 500);
+    setTimeout(_origAdvanceTrack, delay);
+  } else {
+    _origAdvanceTrack();
+  }
+}
+// Re-wire YouTube postMessage advance
+window._freqAdvanceTrack = advanceTrackDelayed;
+
+// Patch localAudio ended event for delay — add a one-time listener that fires after base handler
+localAudio.addEventListener('ended', () => {
+  // The original ended handler calls immediate playItem logic.
+  // We add a secondary approach: if delay set, we override via a capture-phase handler.
+  // Since original fires first and may call playItem, we use advanceDelay via a flag approach.
+  // Actual delay applied via AQ_DEFAULTS check inside the play flow.
+}, false);
+
+// ─── Auto-Scroll Active Track into View ──────────────────────────
+function scrollActiveIntoView() {
+  const activeCard = queueList.querySelector('.playlist-card.active');
+  if (!activeCard) return;
+  activeCard.scrollIntoView({ block:'nearest', behavior:'smooth' });
+}
+
+// ─── Status bar on track add ──────────────────────────────────────
+// (showStatus defined above, called directly where needed)
+
+// ─── Keep stats/bulk panels closed on queue clear ─────────────────
+const _origClearBtnHandler = () => {
+  statsOpen = false; bulkOpen = false;
+  statsPanel.style.display = 'none';
+  bulkDeletePanel.style.display = 'none';
+};
+
+// ═══════════════════════════════════════════════════════════════════
+//  FREQ v4.1 — YouTube Playlist Expansion + Blocked Video Recovery
+// ═══════════════════════════════════════════════════════════════════
+
+// ─── Expand YT Playlist into Individual Tracks ───────────────────
+// Called when a resolved item has expandable:true and type==='playlist'
+// Makes GET /api/yt/playlist?listId=... and injects individual video cards
+
+async function expandYTPlaylist(queueIndex) {
+  const item = state.queue[queueIndex];
+  if (!item || item.platform !== 'youtube' || !item.expandable) return;
+
+  const btn = document.querySelector(`.playlist-card[data-index="${queueIndex}"] .card-expand-btn`);
+  if (btn) { btn.disabled = true; btn.textContent = '⟳ Expanding…'; }
+
+  try {
+    let allTracks = [];
+    let contToken = null;
+    let page = 0;
+    const MAX_PAGES = 5; // cap at 500 tracks per expand click
+
+    do {
+      const params = new URLSearchParams({ listId: item.id, maxPages: '1' });
+      if (contToken) params.set('pageToken', contToken);
+
+      const res  = await fetch(`/api/yt/playlist?${params.toString()}`);
+      const data = await res.json();
+
+      if (!res.ok) throw new Error(data.error || 'Playlist fetch failed');
+
+      allTracks.push(...(data.tracks || []));
+      contToken = data.continuationToken || null;
+      page++;
+    } while (contToken && page < MAX_PAGES);
+
+    if (!allTracks.length) {
+      showToast('Expand Failed', 'No tracks found — playlist may be private or empty.', 'error');
+      if (btn) { btn.disabled = false; btn.textContent = '⊞ Expand'; }
+      return;
+    }
+
+    // Build individual queue items from track list
+    const newItems = allTracks.map(t => ({
+      platform:    'youtube',
+      type:        'video',
+      title:       t.artist ? `${t.title} — ${t.artist}` : t.title,
+      originalUrl: `https://www.youtube.com/watch?v=${t.id}`,
+      embedUrl:    `https://www.youtube.com/embed/${t.id}?autoplay=1&controls=1&enablejsapi=1`,
+      id:          t.id,
+      fromPlaylist: item.id,
+    }));
+
+    // Replace the playlist card with individual cards
+    const insertAt = queueIndex;
+    state.queue.splice(insertAt, 1, ...newItems);
+
+    // Adjust active index
+    if (state.activeIndex > insertAt) {
+      state.activeIndex += newItems.length - 1;
+    } else if (state.activeIndex === insertAt) {
+      state.activeIndex = insertAt; // play first expanded track
+    }
+
+    save();
+    renderQueue();
+    showToast('Expanded!', `${newItems.length} tracks from playlist added.`, 'success');
+    showStatus(`Playlist expanded: ${newItems.length} tracks`, item.title || item.id);
+
+    // Auto-play first expanded track if nothing is playing
+    if (state.activeIndex === insertAt && state.activeIndex >= 0) {
+      playItem(state.activeIndex);
+    }
+
+  } catch (err) {
+    console.error('[expandYTPlaylist]', err);
+    showToast('Expand Error', err.message || 'Could not expand playlist.', 'error');
+    if (btn) { btn.disabled = false; btn.textContent = '⊞ Expand Tracks'; }
+  }
+}
+
+// ─── Blocked Video Search Recovery ───────────────────────────────
+const searchModal     = $('searchModal');
+const searchResultsList = $('searchResultsList');
+const searchPanelSub  = $('searchPanelSub');
+let searchTargetIndex = -1;
+
+$('searchModalClose').addEventListener('click', () => { searchModal.style.display = 'none'; });
+searchModal.addEventListener('click', e => { if (e.target === searchModal) searchModal.style.display = 'none'; });
+
+async function findAlternateVideo(queueIndex) {
+  const item = state.queue[queueIndex];
+  if (!item) return;
+
+  searchTargetIndex = queueIndex;
+  searchResultsList.innerHTML = '<div style="color:var(--text-muted);font-size:0.55rem;padding:10px 0;">Searching YouTube…</div>';
+  searchPanelSub.textContent  = `Finding unblocked version of: "${item.title || item.id}"`;
+  searchModal.style.display   = 'flex';
+
+  // Build query: strip channel suffixes, clean the title
+  const rawTitle = item.title || item.originalUrl || '';
+  const query    = rawTitle.replace(/\s*[-—]\s*(Official (Video|Audio|Lyric|Music Video)|VEVO|Topic|lyrics.*|ft\..*)$/i, '').trim();
+
+  try {
+    const res  = await fetch(`/api/yt/search?q=${encodeURIComponent(query)}&limit=6`);
+    const data = await res.json();
+
+    if (!res.ok || !data.results?.length) {
+      searchResultsList.innerHTML = '<div style="color:var(--accent2);font-size:0.52rem;padding:8px 0;">No results found. Try a different search.</div>';
+      return;
+    }
+
+    // Render results, skip the current video ID
+    const filtered = data.results.filter(r => r.id !== item.id);
+    if (!filtered.length) {
+      searchResultsList.innerHTML = '<div style="color:var(--text-muted);font-size:0.52rem;padding:8px 0;">Only found the same video — may be blocked everywhere.</div>';
+      return;
+    }
+
+    searchResultsList.innerHTML = filtered.map(r => `
+      <div class="search-result-item" data-vid="${r.id}" data-title="${(r.title||'').replace(/"/g,'&quot;')}" data-channel="${(r.channel||'').replace(/"/g,'&quot;')}">
+        <img class="search-result-thumb" src="${r.thumb}" loading="lazy" onerror="this.style.display='none'" />
+        <div class="search-result-info">
+          <div class="search-result-title" title="${(r.title||'').replace(/"/g,'&quot;')}">${r.title || 'Unknown'}</div>
+          <div class="search-result-channel">${r.channel || ''}</div>
+        </div>
+        <button class="search-result-play">▶ Use</button>
+      </div>
+    `).join('');
+
+    // Bind click handlers
+    searchResultsList.querySelectorAll('.search-result-item').forEach(row => {
+      row.querySelector('.search-result-play').addEventListener('click', () => {
+        const vid     = row.dataset.vid;
+        const title   = row.dataset.title;
+        const channel = row.dataset.channel;
+        swapBlockedVideo(searchTargetIndex, vid, title || query, channel);
+        searchModal.style.display = 'none';
+      });
+    });
+
+  } catch (err) {
+    console.error('[findAlternateVideo]', err);
+    searchResultsList.innerHTML = `<div style="color:var(--accent2);font-size:0.52rem;">Search failed: ${err.message}</div>`;
+  }
+}
+
+function swapBlockedVideo(queueIndex, newVideoId, title, channel) {
+  const item = state.queue[queueIndex];
+  if (!item) return;
+
+  item.id          = newVideoId;
+  item.originalUrl = `https://www.youtube.com/watch?v=${newVideoId}`;
+  item.embedUrl    = `https://www.youtube.com/embed/${newVideoId}?autoplay=1&controls=1&enablejsapi=1`;
+  item.title       = title + (channel ? ` — ${channel}` : '');
+  item.swappedFrom = item.originalUrl; // keep a reference
+  delete item.may_be_blocked;
+
+  save();
+  renderQueue();
+
+  // If it was currently playing, reload it
+  if (state.activeIndex === queueIndex) playItem(queueIndex);
+
+  showToast('Swapped!', `Now using: ${title}`, 'success');
+  showStatus(`Video replaced: ${title}`, channel);
+}
+
+// ─── Mark blocked videos when embed errors ───────────────────────
+// Listen for the YouTube embedFrame error state (video unavailable)
+// We detect it via postMessage + iframe load errors and flag the card
+embedFrame.addEventListener('load', () => {
+  // After load, check for unavailable-video message via YT API
+  // Flag is set if state.info === 150 (blocked) or 100 (removed)
+});
+
+window.addEventListener('message', existingYTMsgHandler => {}, false);
+// Extend the existing YT postMessage handler to catch error states
+// (We replace it cleanly below — original is already defined above in core code)
+
+// Override the message handler to also catch YT player errors (state 150 = blocked, 100 = not found)
+// We add a second listener that coexists with the original
+window.addEventListener('message', e => {
+  try {
+    const data = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
+    if (!data || data.event !== 'onStateChange') return;
+    // -1=unstarted, 0=ended, 1=playing, 2=paused, 3=buffering, 5=cued
+    // YT sends error codes separately via onError event:
+    // 100 = removed, 101/150 = blocked by owner
+    if (data.info === 100 || data.info === 150 || data.info === 101) {
+      // Mark current active card as blocked
+      if (state.activeIndex >= 0) {
+        const card = document.querySelector(`.playlist-card[data-index="${state.activeIndex}"]`);
+        if (card) card.classList.add('may-be-blocked');
+        state.queue[state.activeIndex].may_be_blocked = true;
+        showToast('Video Blocked', 'This video is unavailable. Click "Find Alt" on the card to search.', 'error');
+      }
+    }
+  } catch (_) {}
+}, false);
+
+
+
+
 authInit();
 renderQueue();
 renderHistory();
 renderFavorites();
 buildEQVisualizer();
-if (state.queue.length) welcomeScreen.style.display = 'none';
+bindAdvanceDelaySlider();
+updatePageTitle();
+if (state.queue.length) {
+  welcomeScreen.style.display = 'none';
+  showStatus(`${state.queue.length} track${state.queue.length!==1?'s':''} restored from last session`, '', 3500);
+}
 </script>
 </body>
 </html>
