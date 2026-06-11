@@ -6,6 +6,7 @@
   <title>FREQ — Universal Music Player</title>
   <meta name="description" content="FREQ — Universal Music Player. Stream YouTube, Spotify, Tidal, SoundCloud, Apple Music & local files in one place." />
   <link rel="icon" type="image/x-icon" href="Geometric Frequency Logo Emphasizing Modernity.ico" />
+  <!-- Boot intro & disclaimer injected by JS before first paint -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400&family=Unbounded:wght@300;400;700;900&display=swap" rel="stylesheet" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jsmediatags/3.9.5/jsmediatags.min.js"></script>
@@ -52,6 +53,166 @@
 
 :root { --radius:4px; --font-scale:1; }
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+
+/* ═══════════════════════════════════════════════════════════════════
+   FREQ BOOT INTRO
+═══════════════════════════════════════════════════════════════════ */
+#freqIntro {
+  position:fixed;inset:0;z-index:99999;background:#000;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  font-family:'Space Mono',monospace;overflow:hidden;
+  pointer-events:all;
+}
+#freqIntro.done { animation:introExit 0.5s ease-in forwards; }
+@keyframes introExit {
+  0%   { opacity:1; transform:scaleY(1); }
+  60%  { opacity:1; transform:scaleY(1); }
+  100% { opacity:0; transform:scaleY(0); pointer-events:none; }
+}
+
+/* Phase 1 — CRT dot */
+#introDot {
+  width:4px;height:4px;border-radius:50%;background:#e8ff47;
+  box-shadow:0 0 12px #e8ff47,0 0 30px #e8ff47;
+  position:absolute;
+  animation:dotBoot 0.4s ease-out forwards;
+  opacity:0;
+}
+@keyframes dotBoot {
+  0%   { opacity:0; transform:scale(0); }
+  60%  { opacity:1; transform:scale(1.8); }
+  100% { opacity:0.6; transform:scale(1); }
+}
+
+/* Glitch flash */
+#introGlitch {
+  position:absolute;inset:0;
+  background:linear-gradient(90deg,transparent 30%,rgba(232,255,71,0.04) 50%,transparent 70%);
+  opacity:0;pointer-events:none;
+  animation:glitchFlash 0.12s 0.35s ease-out forwards;
+}
+@keyframes glitchFlash {
+  0%   { opacity:0; }
+  30%  { opacity:1; }
+  60%  { opacity:0; }
+  80%  { opacity:0.6; }
+  100% { opacity:0; }
+}
+
+/* Phase 2 — calibration text */
+#introCalib {
+  position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+  text-align:left;opacity:0;
+  animation:calibIn 0.1s 0.9s ease forwards;
+}
+@keyframes calibIn { to { opacity:1; } }
+.calib-line {
+  font-size:clamp(0.55rem,1.5vw,0.7rem);letter-spacing:0.15em;
+  color:#e8ff47;text-transform:uppercase;line-height:2.2;
+  opacity:0;overflow:hidden;white-space:nowrap;width:0;
+}
+.calib-line:nth-child(1) { animation:typeIn 0.25s 1.0s steps(22,end) forwards; }
+.calib-line:nth-child(2) { animation:typeIn 0.2s  1.3s steps(16,end) forwards; }
+.calib-line:nth-child(3) { animation:typeIn 0.2s  1.55s steps(22,end) forwards; }
+@keyframes typeIn {
+  0%   { width:0; opacity:1; }
+  100% { width:100%; opacity:1; }
+}
+
+/* loading bar */
+#introBar {
+  position:absolute;bottom:calc(50% - 80px);left:50%;transform:translateX(-50%);
+  width:min(320px,70vw);height:2px;
+  background:rgba(232,255,71,0.1);border-radius:2px;overflow:hidden;
+  opacity:0;animation:barAppear 0.01s 1.0s forwards;
+}
+@keyframes barAppear { to { opacity:1; } }
+#introBarFill {
+  height:100%;background:#e8ff47;width:0%;border-radius:2px;
+  animation:barFill 1.1s 1.0s ease-out forwards;
+}
+@keyframes barFill { 0% { width:0%; } 100% { width:100%; } }
+
+/* Phase 3 — FREQ title */
+#introTitle {
+  position:absolute;text-align:center;
+  opacity:0;
+  animation:titleHit 0.06s 2.2s ease forwards;
+}
+@keyframes titleHit { to { opacity:1; } }
+#introTitleText {
+  font-family:'Unbounded',sans-serif;font-weight:900;
+  font-size:clamp(4rem,16vw,9rem);letter-spacing:-0.04em;
+  color:#e8ff47;line-height:1;
+  animation:titleVibe 0.08s 2.2s steps(2,end) 5 alternate,
+             titleStill 99s 2.6s linear forwards;
+  text-shadow:0 0 40px rgba(232,255,71,0.5),
+              0 0 80px rgba(232,255,71,0.2);
+}
+@keyframes titleVibe {
+  0%  { transform:translateX(-2px); text-shadow: -3px 0 rgba(255,0,100,0.7), 3px 0 rgba(0,200,255,0.7), 0 0 40px rgba(232,255,71,0.5); }
+  100%{ transform:translateX(2px);  text-shadow: 3px 0 rgba(255,0,100,0.7), -3px 0 rgba(0,200,255,0.7), 0 0 40px rgba(232,255,71,0.5); }
+}
+@keyframes titleStill {
+  0%,100%{ transform:translateX(0); text-shadow:0 0 40px rgba(232,255,71,0.5); }
+}
+#introSubtitle {
+  font-size:clamp(0.45rem,2vw,0.7rem);letter-spacing:0.5em;
+  text-transform:uppercase;color:rgba(232,255,71,0.5);
+  margin-top:8px;font-family:'Space Mono',monospace;
+  opacity:0;animation:fadeUp 0.4s 2.5s ease forwards;
+}
+@keyframes fadeUp { from{opacity:0;transform:translateY(6px);} to{opacity:1;transform:none;} }
+
+/* Phase 4 — exit flash */
+#introFlash {
+  position:absolute;inset:0;background:#e8ff47;
+  opacity:0;pointer-events:none;
+  animation:exitFlash 0.3s 3.5s ease-out forwards;
+}
+@keyframes exitFlash {
+  0%   { opacity:0; }
+  20%  { opacity:0.18; }
+  100% { opacity:0; }
+}
+
+/* Returning-user disclaimer */
+#freqDisclaimer {
+  position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.92);
+  display:flex;align-items:center;justify-content:center;
+  backdrop-filter:blur(4px);
+}
+#freqDisclaimer.hidden { display:none; }
+.disclaimer-box {
+  border:1px solid var(--border,#2a2a2a);background:var(--surface,#111);
+  padding:28px 32px;max-width:340px;width:90%;border-radius:4px;text-align:center;
+  font-family:'Space Mono',monospace;
+}
+.disclaimer-logo {
+  font-family:'Unbounded',sans-serif;font-weight:900;font-size:1.8rem;
+  color:#e8ff47;letter-spacing:-0.02em;margin-bottom:4px;
+}
+.disclaimer-sub {
+  font-size:0.45rem;letter-spacing:0.35em;text-transform:uppercase;
+  color:rgba(232,255,71,0.4);margin-bottom:18px;
+}
+.disclaimer-text {
+  font-size:0.55rem;color:#666;line-height:1.9;margin-bottom:18px;
+}
+.disclaimer-text strong { color:#e8ff47; }
+.disclaimer-enter {
+  background:#e8ff47;color:#000;border:none;border-radius:4px;
+  padding:10px 24px;font-family:'Unbounded',sans-serif;font-weight:900;
+  font-size:0.6rem;letter-spacing:0.08em;cursor:pointer;
+  transition:opacity 0.15s;width:100%;
+}
+.disclaimer-enter:hover { opacity:0.85; }
+.disclaimer-skip {
+  display:block;margin-top:10px;font-size:0.45rem;color:#444;
+  cursor:pointer;letter-spacing:0.08em;text-transform:uppercase;
+  background:none;border:none;width:100%;
+}
+.disclaimer-skip:hover { color:#666; }
 
 body {
   background:var(--bg);color:var(--text);
@@ -165,6 +326,8 @@ header {
 .chip-az {color:#00A8E1;border-color:rgba(0,168,225,0.3);background:rgba(0,168,225,0.06);}
 .chip-qb {color:#05b8cc;border-color:rgba(5,184,204,0.3);background:rgba(5,184,204,0.06);}
 .chip-lc {color:#a78bfa;border-color:rgba(167,139,250,0.3);background:rgba(167,139,250,0.06);}
+.chip-dz {color:#a259ff;border-color:rgba(162,89,255,0.3);background:rgba(162,89,255,0.06);}
+.chip-lf {color:#d51007;border-color:rgba(213,16,7,0.3);background:rgba(213,16,7,0.06);}
 
 /* ─── Local file drop zone ─── */
 .file-drop-zone {
@@ -309,6 +472,8 @@ header {
 .wc-az {color:#00A8E1;border-color:rgba(0,168,225,0.4);background:rgba(0,168,225,0.08);}
 .wc-qb {color:#05b8cc;border-color:rgba(5,184,204,0.4);background:rgba(5,184,204,0.08);}
 .wc-lc {color:#a78bfa;border-color:rgba(167,139,250,0.4);background:rgba(167,139,250,0.08);}
+.wc-dz {color:#a259ff;border-color:rgba(162,89,255,0.4);background:rgba(162,89,255,0.08);}
+.wc-lf {color:#d51007;border-color:rgba(213,16,7,0.4);background:rgba(213,16,7,0.08);}
 .deco-line{position:absolute;bottom:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--accent),transparent);opacity:0.3;}
 
 /* ─── Flex intro banner ─── */
@@ -533,6 +698,8 @@ footer{text-align:center;padding:7px;font-size:0.47rem;color:var(--text-muted);l
           <span class="chip chip-am">Apple Music</span>
           <span class="chip chip-az">Amazon</span>
           <span class="chip chip-qb">Qobuz</span>
+          <span class="chip chip-dz">Deezer</span>
+          <span class="chip chip-lf">Last.fm</span>
         </div>
         <label class="dup-toggle" style="margin-top:9px;">
           <input type="checkbox" id="dupToggle" /> Allow duplicates
@@ -594,14 +761,16 @@ footer{text-align:center;padding:7px;font-size:0.47rem;color:var(--text-muted);l
     <div class="sidebar-inner sidebar-panel" id="viewLinks">
       <span class="section-title" style="display:block;margin-bottom:7px;">Platform Quick Links</span>
       <div class="quick-links">
-        <a class="qlink" href="https://youtube.com" target="_blank" style="color:#ff0000;border-color:rgba(255,0,0,0.4);background:rgba(255,0,0,0.08);">▶ YouTube</a>
+        <a class="qlink" href="https://www.youtube.com" target="_blank" style="color:#ff0000;border-color:rgba(255,0,0,0.4);background:rgba(255,0,0,0.08);">▶ YouTube</a>
         <a class="qlink" href="https://music.youtube.com" target="_blank" style="color:#ff4e9a;border-color:rgba(255,78,154,0.4);background:rgba(255,78,154,0.08);">♪ YT Music</a>
         <a class="qlink" href="https://open.spotify.com" target="_blank" style="color:#1db954;border-color:rgba(29,185,84,0.4);background:rgba(29,185,84,0.08);">◎ Spotify</a>
-        <a class="qlink" href="https://tidal.com" target="_blank" style="color:#3999ff;border-color:rgba(57,153,255,0.4);background:rgba(57,153,255,0.08);">∿ Tidal</a>
-        <a class="qlink" href="https://soundcloud.com" target="_blank" style="color:#ff5500;border-color:rgba(255,85,0,0.4);background:rgba(255,85,0,0.08);">☁ SoundCloud</a>
+        <a class="qlink" href="https://tidal.com/browse" target="_blank" style="color:#3999ff;border-color:rgba(57,153,255,0.4);background:rgba(57,153,255,0.08);">∿ Tidal</a>
+        <a class="qlink" href="https://soundcloud.com/discover" target="_blank" style="color:#ff5500;border-color:rgba(255,85,0,0.4);background:rgba(255,85,0,0.08);">☁ SoundCloud</a>
         <a class="qlink" href="https://music.apple.com" target="_blank" style="color:#fc3c44;border-color:rgba(252,60,68,0.4);background:rgba(252,60,68,0.08);">♫ Apple Music</a>
-        <a class="qlink" href="https://music.amazon.com" target="_blank" style="color:#00A8E1;border-color:rgba(0,168,225,0.4);background:rgba(0,168,225,0.08);">◈ Amazon</a>
+        <a class="qlink" href="https://music.amazon.com" target="_blank" style="color:#00A8E1;border-color:rgba(0,168,225,0.4);background:rgba(0,168,225,0.08);">◈ Amazon Music</a>
         <a class="qlink" href="https://open.qobuz.com" target="_blank" style="color:#05b8cc;border-color:rgba(5,184,204,0.4);background:rgba(5,184,204,0.08);">◉ Qobuz</a>
+        <a class="qlink" href="https://www.deezer.com/browse" target="_blank" style="color:#a259ff;border-color:rgba(162,89,255,0.4);background:rgba(162,89,255,0.08);">◆ Deezer</a>
+        <a class="qlink" href="https://www.last.fm" target="_blank" style="color:#d51007;border-color:rgba(213,16,7,0.4);background:rgba(213,16,7,0.08);">⊕ Last.fm</a>
       </div>
     </div>
   </aside>
@@ -638,6 +807,8 @@ footer{text-align:center;padding:7px;font-size:0.47rem;color:var(--text-muted);l
           <span class="welcome-chip wc-am">Apple Music</span>
           <span class="welcome-chip wc-az">Amazon Music</span>
           <span class="welcome-chip wc-qb">Qobuz</span>
+          <span class="welcome-chip wc-dz">Deezer</span>
+          <span class="welcome-chip wc-lf">Last.fm</span>
           <span class="welcome-chip wc-lc">Local Files</span>
         </div>
         <button class="flex-play-all" onclick="loadFlexPlaylist()" style="margin-top:4px;">⚡ Load FLEX Playlist</button>
@@ -1030,6 +1201,7 @@ footer{text-align:center;padding:7px;font-size:0.47rem;color:var(--text-muted);l
     <div id="authLoggedInSection" style="display:none;">
       <div class="auth-user-bar">
         <span class="auth-user-name" id="authUserName">—</span>
+        <span id="authSyncBadge" style="font-size:0.45rem;padding:2px 7px;border-radius:2px;border:1px solid;margin-right:auto;display:none;"></span>
         <button class="auth-logout-btn" id="authLogoutBtn">Sign Out</button>
       </div>
       <div class="auth-saved-playlists">
@@ -1040,6 +1212,21 @@ footer{text-align:center;padding:7px;font-size:0.47rem;color:var(--text-muted);l
           <button class="save-playlist-btn" id="savePlaylistBtn">Save Queue</button>
         </div>
       </div>
+      <!-- Cross-device sync via server -->
+      <div style="border-top:1px solid var(--border);margin-top:14px;padding-top:14px;">
+        <div class="aq-section-title" style="margin-bottom:8px;">↔ Cross-Device Sync</div>
+        <div style="font-size:0.5rem;color:var(--text-muted);line-height:1.8;margin-bottom:10px;">
+          Your playlists are stored on the FREQ server. Push your current playlists up, or pull the latest from any signed-in device.
+        </div>
+        <div style="display:flex;gap:6px;">
+          <button id="syncPushBtn" style="flex:1;background:none;border:1px solid var(--accent3);color:var(--accent3);font-family:'Space Mono',monospace;font-size:0.48rem;padding:6px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.06em;text-transform:uppercase;">↑ Push to Server</button>
+          <button id="syncPullBtn" style="flex:1;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.48rem;padding:6px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.06em;text-transform:uppercase;">↓ Pull from Server</button>
+        </div>
+        <div id="syncStatus" style="font-size:0.45rem;color:var(--text-muted);margin-top:7px;text-align:center;min-height:1.2em;"></div>
+        <div style="margin-top:10px;border-top:1px solid var(--border);padding-top:10px;">
+          <button id="deleteAccountBtn" style="width:100%;background:none;border:1px solid var(--accent2);color:var(--accent2);font-family:'Space Mono',monospace;font-size:0.46rem;padding:5px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.06em;text-transform:uppercase;opacity:0.7;">⚠ Delete Account</button>
+        </div>
+      </div>
     </div>
     <div id="authGuestSection">
       <div class="auth-tabs">
@@ -1048,14 +1235,22 @@ footer{text-align:center;padding:7px;font-size:0.47rem;color:var(--text-muted);l
       </div>
       <div id="authSigninForm" class="auth-form">
         <div class="auth-field">
-          <label class="auth-field-label">Password</label>
-          <input type="password" class="auth-input" id="signinPassword" placeholder="Enter your password…" autocomplete="current-password" />
+          <label class="auth-field-label">Username</label>
+          <input type="text" class="auth-input" id="signinUsername" placeholder="Your username…" autocomplete="username" />
         </div>
-        <div class="auth-error" id="signinError">Incorrect password. Try again.</div>
+        <div class="auth-field">
+          <label class="auth-field-label">Password</label>
+          <input type="password" class="auth-input" id="signinPassword" placeholder="Your password…" autocomplete="current-password" />
+        </div>
+        <div class="auth-error" id="signinError">No account found with that username/password.</div>
         <button class="auth-submit" id="signinSubmit">SIGN IN</button>
-        <div class="auth-note">No email required. Your password is your key.<br/>Saved playlists sync across devices using the same password.</div>
+        <div class="auth-note">Your account and playlists are stored on the FREQ server. Sign in from any device to access your data.</div>
       </div>
       <div id="authSignupForm" class="auth-form" style="display:none;">
+        <div class="auth-field">
+          <label class="auth-field-label">Username</label>
+          <input type="text" class="auth-input" id="signupUsername" placeholder="e.g. slimey2017" autocomplete="username" />
+        </div>
         <div class="auth-field">
           <label class="auth-field-label">Display Name (optional)</label>
           <input type="text" class="auth-input" id="signupName" placeholder="e.g. Slimey2017" autocomplete="off" />
@@ -1070,7 +1265,7 @@ footer{text-align:center;padding:7px;font-size:0.47rem;color:var(--text-muted);l
         </div>
         <div class="auth-error" id="signupError">Passwords do not match.</div>
         <button class="auth-submit" id="signupSubmit">CREATE ACCOUNT</button>
-        <div class="auth-note">Account creation is optional — only needed to save and sync playlists across devices. No email, no tracking.</div>
+        <div class="auth-note">No email required. Username + password is your key. Your playlists sync automatically across all your devices.</div>
       </div>
     </div>
     <button class="auth-close" id="authClose" style="margin-top:16px;background:var(--surface3);color:var(--text-dim);border:1px solid var(--border);border-radius:var(--radius);padding:8px;font-family:'Space Mono',monospace;font-size:0.55rem;cursor:pointer;width:100%;letter-spacing:0.08em;text-transform:uppercase;">CLOSE</button>
@@ -1080,6 +1275,71 @@ footer{text-align:center;padding:7px;font-size:0.47rem;color:var(--text-muted);l
 <!-- ════════════════════════════════════════════════════════════════════ -->
 <script>
 'use strict';
+
+// ─── Boot Intro + Disclaimer ──────────────────────────────────────────────────
+(function() {
+  const INTRO_SESSION_KEY = 'freq_intro_played';
+  const hasSeen = sessionStorage.getItem(INTRO_SESSION_KEY);
+
+  const introHTML = `
+  <div id="freqIntro">
+    <div id="introDot"></div>
+    <div id="introGlitch"></div>
+    <div id="introCalib">
+      <div class="calib-line">&gt; SYSTEM: INITIALIZING...</div>
+      <div class="calib-line">&gt; DECK: READY</div>
+      <div class="calib-line">&gt; FREQUENCY: STABLE</div>
+    </div>
+    <div id="introBar"><div id="introBarFill"></div></div>
+    <div id="introTitle">
+      <div id="introTitleText">FREQ</div>
+      <div id="introSubtitle">Universal Music Player</div>
+    </div>
+    <div id="introFlash"></div>
+  </div>`;
+
+  const disclaimerHTML = `
+  <div id="freqDisclaimer">
+    <div class="disclaimer-box">
+      <div class="disclaimer-logo">FREQ</div>
+      <div class="disclaimer-sub">Universal Music Player</div>
+      <div class="disclaimer-text">
+        Welcome back.<br/>
+        <strong>FREQ</strong> is an independent, unofficial project.<br/>
+        Users are responsible for complying with applicable platform terms of service.
+      </div>
+      <button class="disclaimer-enter" id="disclaimerEnterBtn">ENTER</button>
+      <button class="disclaimer-skip" id="disclaimerSkipBtn">Don't show this again this session</button>
+    </div>
+  </div>`;
+
+  if (!hasSeen) {
+    // Full cinematic intro
+    document.write(introHTML);
+    // After intro completes (4s), remove it and mark session
+    window.addEventListener('DOMContentLoaded', () => {
+      const intro = document.getElementById('freqIntro');
+      if (!intro) return;
+      setTimeout(() => {
+        intro.classList.add('done');
+        setTimeout(() => { intro.remove(); }, 500);
+        sessionStorage.setItem(INTRO_SESSION_KEY, '1');
+      }, 3800);
+    });
+  } else {
+    // Returning user — show brief disclaimer
+    document.write(disclaimerHTML);
+    window.addEventListener('DOMContentLoaded', () => {
+      const el = document.getElementById('freqDisclaimer');
+      if (!el) return;
+      document.getElementById('disclaimerEnterBtn').onclick = () => el.remove();
+      document.getElementById('disclaimerSkipBtn').onclick = () => {
+        sessionStorage.setItem(INTRO_SESSION_KEY + '_skip', '1');
+        el.remove();
+      };
+    });
+  }
+})();
 
 // ─── DOM helper (must be first — used by auth listeners below) ────────────────
 const $ = id => document.getElementById(id);
@@ -1094,6 +1354,8 @@ const PLATFORM_CONFIG = {
   applemusic: { label:'Apple Music',  color:'#fc3c44', icon:'♫' },
   amazon:     { label:'Amazon Music', color:'#00A8E1', icon:'◈' },
   qobuz:      { label:'Qobuz',        color:'#05b8cc', icon:'◉' },
+  deezer:     { label:'Deezer',       color:'#a259ff', icon:'◆' },
+  lastfm:     { label:'Last.fm',      color:'#d51007', icon:'⊕' },
   local:      { label:'Local File',   color:'#a78bfa', icon:'⊡' },
 };
 
@@ -1132,52 +1394,45 @@ const AQ_DEFAULTS = {
 Object.assign(AQ_DEFAULTS, AQ);
 
 // ─── Auth State ───────────────────────────────────────────────────────────────
-// Password-only auth (stored locally with hashed password as key)
-// Cross-device sync: accounts are identified by password hash
+// v4.0: All auth and playlist storage is server-side.
+// Token is persisted in localStorage for session resume.
 const AUTH = {
-  loggedIn: false,
-  name: '',
-  hash: '',
-  playlists: [],
+  loggedIn:    false,
+  token:       localStorage.getItem('freq_token_v4') || null,
+  username:    '',
+  name:        '',
+  playlists:   [],
 };
 
-function simpleHash(str) {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < str.length; i++) {
-    h ^= str.charCodeAt(i);
-    h = (h * 0x01000193) >>> 0;
-  }
-  return h.toString(36);
+const AUTH_BASE = '/api/auth';
+
+function authHeaders() {
+  return { 'Content-Type': 'application/json', 'Authorization': `Bearer ${AUTH.token || ''}` };
 }
 
-function authInit() {
-  const saved = JSON.parse(localStorage.getItem('freq_auth') || 'null');
-  if (saved && saved.hash) {
-    AUTH.loggedIn = true;
-    AUTH.hash = saved.hash;
-    AUTH.name = saved.name || 'FREQ User';
-    AUTH.playlists = JSON.parse(localStorage.getItem('freq_pl_' + AUTH.hash) || '[]');
-    updateAuthUI();
-  }
-}
-function authSave() {
-  if (!AUTH.loggedIn) return;
-  localStorage.setItem('freq_auth', JSON.stringify({ hash: AUTH.hash, name: AUTH.name }));
-  localStorage.setItem('freq_pl_' + AUTH.hash, JSON.stringify(AUTH.playlists));
+// ─── Sync Status Indicator ────────────────────────────────────────────────────
+function setSyncStatus(msg, color) {
+  const el = $('syncStatus');
+  if (!el) return;
+  el.textContent = msg;
+  el.style.color = color || 'var(--text-muted)';
 }
 
+// ─── Auth UI ─────────────────────────────────────────────────────────────────
 function updateAuthUI() {
   const userBadge = document.getElementById('authBtn');
   if (AUTH.loggedIn) {
     userBadge.textContent = '⊡ ' + AUTH.name;
     $('authLoggedInSection').style.display = 'block';
-    $('authGuestSection').style.display = 'none';
-    $('authUserName').textContent = AUTH.name;
+    $('authGuestSection').style.display    = 'none';
+    $('authUserName').textContent           = AUTH.name;
+    const badge = $('authSyncBadge');
+    if (badge) { badge.style.display = 'inline'; badge.textContent = '● server'; badge.style.color = 'var(--accent3)'; badge.style.borderColor = 'var(--accent3)'; }
     renderSavedPlaylists();
   } else {
     userBadge.textContent = '⊡ Account';
     $('authLoggedInSection').style.display = 'none';
-    $('authGuestSection').style.display = 'block';
+    $('authGuestSection').style.display    = 'block';
   }
 }
 
@@ -1209,87 +1464,187 @@ function loadSavedPlaylist(i) {
   $('authOverlay').classList.remove('open');
 }
 
-function deleteSavedPlaylist(i) {
+async function deleteSavedPlaylist(i) {
   AUTH.playlists.splice(i, 1);
-  authSave();
   renderSavedPlaylists();
+  await serverSync();
 }
 
-// Sign in
-$('signinSubmit').addEventListener('click', () => {
-  const pw = $('signinPassword').value.trim();
-  if (!pw) return;
-  const hash = simpleHash(pw);
-  // Check if account exists
-  const existing = JSON.parse(localStorage.getItem('freq_acct_' + hash) || 'null');
-  if (!existing) {
-    $('signinError').textContent = 'No account found. Sign up first.';
-    $('signinError').classList.add('show');
-    return;
+// ─── Server sync helpers ──────────────────────────────────────────────────────
+async function serverSync(silent) {
+  if (!AUTH.loggedIn || !AUTH.token) return;
+  try {
+    setSyncStatus('Syncing…', 'var(--accent3)');
+    const res  = await fetch(`${AUTH_BASE}/sync`, { method:'POST', headers: authHeaders(), body: JSON.stringify({ token: AUTH.token, playlists: AUTH.playlists }) });
+    const data = await res.json();
+    if (!res.ok) {
+      if (res.status === 401) { handleTokenExpiry(); return; }
+      setSyncStatus('Sync failed: ' + (data.error || 'unknown'), 'var(--accent2)');
+      return;
+    }
+    const d = new Date(data.syncedAt);
+    setSyncStatus(`✓ Synced ${data.synced} playlists · ${d.toLocaleTimeString()}`, 'var(--accent3)');
+    if (!silent) showToast('Synced!', `${data.synced} playlists pushed to server.`, 'success');
+  } catch (err) {
+    setSyncStatus('Sync error — server unreachable', 'var(--accent2)');
+    if (!silent) showToast('Sync Error', 'Could not reach server.', 'error');
   }
-  AUTH.loggedIn = true;
-  AUTH.hash = hash;
-  AUTH.name = existing.name || 'FREQ User';
-  AUTH.playlists = JSON.parse(localStorage.getItem('freq_pl_' + hash) || '[]');
-  authSave();
+}
+
+async function serverPull() {
+  if (!AUTH.loggedIn || !AUTH.token) return;
+  try {
+    setSyncStatus('Pulling…', 'var(--accent3)');
+    const res  = await fetch(`${AUTH_BASE}/pull`, { headers: { 'Authorization': `Bearer ${AUTH.token}` } });
+    const data = await res.json();
+    if (!res.ok) {
+      if (res.status === 401) { handleTokenExpiry(); return; }
+      setSyncStatus('Pull failed: ' + (data.error || 'unknown'), 'var(--accent2)');
+      return;
+    }
+    AUTH.playlists = data.playlists || [];
+    renderSavedPlaylists();
+    const d = new Date(data.pulledAt);
+    setSyncStatus(`✓ Pulled ${data.playlists.length} playlists · ${d.toLocaleTimeString()}`, 'var(--accent3)');
+    showToast('Pulled!', `${data.playlists.length} playlists loaded from server.`, 'success');
+  } catch (err) {
+    setSyncStatus('Pull error — server unreachable', 'var(--accent2)');
+    showToast('Pull Error', 'Could not reach server.', 'error');
+  }
+}
+
+function handleTokenExpiry() {
+  AUTH.loggedIn = false; AUTH.token = null; AUTH.username = ''; AUTH.name = ''; AUTH.playlists = [];
+  localStorage.removeItem('freq_token_v4');
   updateAuthUI();
-  $('signinError').classList.remove('show');
-  $('signinPassword').value = '';
-  showToast('Welcome back!', AUTH.name, 'success');
+  showToast('Session expired', 'Please sign in again.', 'error');
+}
+
+// ─── Auth Init (restore session) ──────────────────────────────────────────────
+async function authInit() {
+  if (!AUTH.token) return;
+  try {
+    // Attempt token refresh first
+    const refRes  = await fetch(`${AUTH_BASE}/token-refresh`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ token: AUTH.token }) });
+    if (!refRes.ok) { handleTokenExpiry(); return; }
+    // Pull current data
+    const pullRes = await fetch(`${AUTH_BASE}/pull`, { headers:{ 'Authorization': `Bearer ${AUTH.token}` } });
+    if (!pullRes.ok) { handleTokenExpiry(); return; }
+    const data = await pullRes.json();
+    AUTH.loggedIn  = true;
+    AUTH.username  = data.username;
+    AUTH.name      = data.displayName;
+    AUTH.playlists = data.playlists || [];
+    updateAuthUI();
+    setSyncStatus(`✓ Session restored · ${AUTH.playlists.length} playlists`, 'var(--accent3)');
+  } catch (err) {
+    // Server offline — gracefully skip, don't nuke the token
+    setSyncStatus('Server offline — working locally', 'var(--text-muted)');
+  }
+}
+
+// ─── Sign In ──────────────────────────────────────────────────────────────────
+$('signinSubmit').addEventListener('click', async () => {
+  const uname = ($('signinUsername').value || '').trim().toLowerCase();
+  const pw    = $('signinPassword').value;
+  const errEl = $('signinError');
+  if (!uname || !pw) { errEl.textContent = 'Username and password required.'; errEl.classList.add('show'); return; }
+  $('signinSubmit').disabled = true; $('signinSubmit').textContent = '…';
+  try {
+    const res  = await fetch(`${AUTH_BASE}/signin`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ username: uname, password: pw }) });
+    const data = await res.json();
+    if (!res.ok) { errEl.textContent = data.error || 'Sign in failed.'; errEl.classList.add('show'); return; }
+    AUTH.loggedIn  = true;
+    AUTH.token     = data.token;
+    AUTH.username  = data.username;
+    AUTH.name      = data.displayName;
+    AUTH.playlists = data.playlists || [];
+    localStorage.setItem('freq_token_v4', AUTH.token);
+    updateAuthUI();
+    errEl.classList.remove('show');
+    $('signinPassword').value = ''; $('signinUsername').value = '';
+    showToast('Welcome back!', AUTH.name, 'success');
+  } catch (err) {
+    errEl.textContent = 'Network error — is the server running?'; errEl.classList.add('show');
+  } finally {
+    $('signinSubmit').disabled = false; $('signinSubmit').textContent = 'SIGN IN';
+  }
 });
 
-// Sign up
-$('signupSubmit').addEventListener('click', () => {
-  const name = $('signupName').value.trim() || 'FREQ User';
-  const pw   = $('signupPassword').value;
-  const conf = $('signupConfirm').value;
-  if (pw !== conf || !pw) {
-    $('signupError').textContent = pw ? 'Passwords do not match.' : 'Password required.';
-    $('signupError').classList.add('show');
-    return;
+// ─── Sign Up ──────────────────────────────────────────────────────────────────
+$('signupSubmit').addEventListener('click', async () => {
+  const uname = ($('signupUsername').value || '').trim().toLowerCase().replace(/[^a-z0-9_]/g,'');
+  const name  = ($('signupName').value || '').trim() || uname;
+  const pw    = $('signupPassword').value;
+  const conf  = $('signupConfirm').value;
+  const errEl = $('signupError');
+  if (!uname) { errEl.textContent = 'Username required (letters, numbers, _).'; errEl.classList.add('show'); return; }
+  if (!pw || pw !== conf) { errEl.textContent = pw ? 'Passwords do not match.' : 'Password required.'; errEl.classList.add('show'); return; }
+  if (pw.length < 4) { errEl.textContent = 'Password must be at least 4 characters.'; errEl.classList.add('show'); return; }
+  $('signupSubmit').disabled = true; $('signupSubmit').textContent = '…';
+  try {
+    const res  = await fetch(`${AUTH_BASE}/signup`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ username: uname, displayName: name, password: pw }) });
+    const data = await res.json();
+    if (!res.ok) { errEl.textContent = data.error || 'Signup failed.'; errEl.classList.add('show'); return; }
+    AUTH.loggedIn  = true;
+    AUTH.token     = data.token;
+    AUTH.username  = data.username;
+    AUTH.name      = data.displayName;
+    AUTH.playlists = [];
+    localStorage.setItem('freq_token_v4', AUTH.token);
+    updateAuthUI();
+    errEl.classList.remove('show');
+    ['signupUsername','signupName','signupPassword','signupConfirm'].forEach(id => $(id).value = '');
+    showToast('Account created!', 'Welcome, ' + AUTH.name, 'success');
+  } catch (err) {
+    errEl.textContent = 'Network error — is the server running?'; errEl.classList.add('show');
+  } finally {
+    $('signupSubmit').disabled = false; $('signupSubmit').textContent = 'CREATE ACCOUNT';
   }
-  if (pw.length < 4) {
-    $('signupError').textContent = 'Password must be at least 4 characters.';
-    $('signupError').classList.add('show');
-    return;
-  }
-  const hash = simpleHash(pw);
-  localStorage.setItem('freq_acct_' + hash, JSON.stringify({ name }));
-  AUTH.loggedIn = true;
-  AUTH.hash = hash;
-  AUTH.name = name;
-  AUTH.playlists = [];
-  authSave();
-  updateAuthUI();
-  $('signupError').classList.remove('show');
-  $('signupPassword').value = '';
-  $('signupConfirm').value = '';
-  $('signupName').value = '';
-  showToast('Account created!', 'Welcome, ' + name, 'success');
 });
 
-// Sign out
+// ─── Sign Out ─────────────────────────────────────────────────────────────────
 $('authLogoutBtn').addEventListener('click', () => {
-  AUTH.loggedIn = false;
-  AUTH.hash = '';
-  AUTH.name = '';
-  AUTH.playlists = [];
-  localStorage.removeItem('freq_auth');
+  AUTH.loggedIn = false; AUTH.token = null; AUTH.username = ''; AUTH.name = ''; AUTH.playlists = [];
+  localStorage.removeItem('freq_token_v4');
   updateAuthUI();
   showToast('Signed out', '', 'info');
 });
 
-// Save queue as playlist
-$('savePlaylistBtn').addEventListener('click', () => {
+// ─── Save queue as playlist (server) ─────────────────────────────────────────
+$('savePlaylistBtn').addEventListener('click', async () => {
   if (!AUTH.loggedIn) { showToast('Not signed in', 'Sign in to save playlists.', 'error'); return; }
-  const name = $('savePlaylistName').value.trim() || 'Unnamed Playlist';
+  const name  = $('savePlaylistName').value.trim() || 'Unnamed Playlist';
   const items = state.queue.filter(q => q.platform !== 'local').map(q => ({ ...q }));
   if (!items.length) { showToast('Queue empty', 'No streaming tracks to save.', 'info'); return; }
-  AUTH.playlists.push({ name, items, saved: Date.now() });
-  authSave();
+  AUTH.playlists.push({ name, items, savedAt: Date.now() });
   renderSavedPlaylists();
   $('savePlaylistName').value = '';
   showToast('Saved!', `"${name}" — ${items.length} tracks.`, 'success');
+  await serverSync(true);
+});
+
+// ─── Push / Pull buttons ──────────────────────────────────────────────────────
+$('syncPushBtn').addEventListener('click', () => serverSync(false));
+$('syncPullBtn').addEventListener('click', () => serverPull());
+
+// ─── Delete account ───────────────────────────────────────────────────────────
+$('deleteAccountBtn').addEventListener('click', async () => {
+  if (!confirm(`Permanently delete account "${AUTH.name}"?\n\nThis cannot be undone.`)) return;
+  try {
+    const res = await fetch(`${AUTH_BASE}/account`, { method:'DELETE', headers: authHeaders(), body: JSON.stringify({ token: AUTH.token }) });
+    if (res.ok) {
+      AUTH.loggedIn = false; AUTH.token = null; AUTH.username = ''; AUTH.name = ''; AUTH.playlists = [];
+      localStorage.removeItem('freq_token_v4');
+      updateAuthUI();
+      showToast('Account deleted', 'Your account has been removed.', 'info');
+    } else {
+      const data = await res.json();
+      showToast('Error', data.error || 'Could not delete account.', 'error');
+    }
+  } catch (err) {
+    showToast('Error', 'Could not reach server.', 'error');
+  }
 });
 
 // Auth tabs
@@ -1353,8 +1708,7 @@ const clearHistBtn    = $('clearHistBtn');
 const fileDropZone    = $('fileDropZone');
 const fileInput       = $('fileInput');
 
-// ─── FLEX Playlist (the cross-platform showcase) ──────────────────────────────
-// Blend: Official Spotify track → YouTube live performance → SoundCloud rarity → Spotify again
+// ─── FLEX Playlist (cross-platform showcase) ──────────────────────────────────
 const FLEX_PLAYLIST = [
   {
     platform: 'spotify',
@@ -1363,52 +1717,7 @@ const FLEX_PLAYLIST = [
     originalUrl: 'https://open.spotify.com/track/0tKcYR2II1VCQWT79i5NrW',
     embedUrl: 'https://open.spotify.com/embed/track/0tKcYR2II1VCQWT79i5NrW?utm_source=generator&theme=0',
     id: '0tKcYR2II1VCQWT79i5NrW',
-    note: 'Studio perfection on Spotify',
-  },
-  {
-    platform: 'youtube',
-    type: 'video',
-    title: 'Billie Eilish — bad guy (Live at Glastonbury 2019)',
-    originalUrl: 'https://www.youtube.com/watch?v=xnCXbWhpRNo',
-    embedUrl: 'https://www.youtube.com/embed/xnCXbWhpRNo?autoplay=1&controls=1&enablejsapi=1',
-    id: 'xnCXbWhpRNo',
-    note: 'Raw live energy on YouTube',
-  },
-  {
-    platform: 'spotify',
-    type: 'track',
-    title: 'Blinding Lights — The Weeknd',
-    originalUrl: 'https://open.spotify.com/track/0VjIjW4GlUZAMYd2vXMi3b',
-    embedUrl: 'https://open.spotify.com/embed/track/0VjIjW4GlUZAMYd2vXMi3b?utm_source=generator&theme=0',
-    id: '0VjIjW4GlUZAMYd2vXMi3b',
-    note: 'Spotify highest audio quality',
-  },
-  {
-    platform: 'youtube',
-    type: 'video',
-    title: 'Daft Punk — Get Lucky (Live at Coachella)',
-    originalUrl: 'https://www.youtube.com/watch?v=JkK8g6FMEXE',
-    embedUrl: 'https://www.youtube.com/embed/JkK8g6FMEXE?autoplay=1&controls=1&enablejsapi=1',
-    id: 'JkK8g6FMEXE',
-    note: 'Legendary live performance — YouTube only',
-  },
-  {
-    platform: 'soundcloud',
-    type: 'track',
-    title: 'Madvillain — All Caps',
-    originalUrl: 'https://soundcloud.com/madvillain/all-caps',
-    embedUrl: 'https://w.soundcloud.com/player/?url=https%3A//soundcloud.com/madvillain/all-caps&color=%23ff5500&auto_play=true&visual=true',
-    id: 'https://soundcloud.com/madvillain/all-caps',
-    note: 'Underground gem on SoundCloud',
-  },
-  {
-    platform: 'spotify',
-    type: 'track',
-    title: 'Pyramid Song — Radiohead',
-    originalUrl: 'https://open.spotify.com/track/4RvWPyQ5RL0ao9LPZeSouE',
-    embedUrl: 'https://open.spotify.com/embed/track/4RvWPyQ5RL0ao9LPZeSouE?utm_source=generator&theme=0',
-    id: '4RvWPyQ5RL0ao9LPZeSouE',
-    note: 'Lossless on Spotify',
+    note: 'Studio quality on Spotify',
   },
   {
     platform: 'youtube',
@@ -1417,15 +1726,60 @@ const FLEX_PLAYLIST = [
     originalUrl: 'https://www.youtube.com/watch?v=tvTRZJ-4EyI',
     embedUrl: 'https://www.youtube.com/embed/tvTRZJ-4EyI?autoplay=1&controls=1&enablejsapi=1',
     id: 'tvTRZJ-4EyI',
-    note: '4K music video — YouTube',
+    note: '4K official video — YouTube',
+  },
+  {
+    platform: 'spotify',
+    type: 'track',
+    title: 'Blinding Lights — The Weeknd',
+    originalUrl: 'https://open.spotify.com/track/0VjIjW4GlUZAMYd2vXMi3b',
+    embedUrl: 'https://open.spotify.com/embed/track/0VjIjW4GlUZAMYd2vXMi3b?utm_source=generator&theme=0',
+    id: '0VjIjW4GlUZAMYd2vXMi3b',
+    note: 'Spotify lossless',
+  },
+  {
+    platform: 'youtube',
+    type: 'video',
+    title: 'Daft Punk — Get Lucky ft. Pharrell Williams (Official Audio)',
+    originalUrl: 'https://www.youtube.com/watch?v=5NV6Rdv1a3I',
+    embedUrl: 'https://www.youtube.com/embed/5NV6Rdv1a3I?autoplay=1&controls=1&enablejsapi=1',
+    id: '5NV6Rdv1a3I',
+    note: 'Official audio — YouTube',
   },
   {
     platform: 'soundcloud',
     type: 'track',
-    title: 'Tyler, the Creator — IGOR\'S THEME',
-    originalUrl: 'https://soundcloud.com/tylerthecreator/igors-theme',
-    embedUrl: 'https://w.soundcloud.com/player/?url=https%3A//soundcloud.com/tylerthecreator/igors-theme&color=%23ff5500&auto_play=true&visual=true',
-    id: 'https://soundcloud.com/tylerthecreator/igors-theme',
+    title: 'MF DOOM — All Caps',
+    originalUrl: 'https://soundcloud.com/mfdoom/all-caps',
+    embedUrl: 'https://w.soundcloud.com/player/?url=https%3A//soundcloud.com/mfdoom/all-caps&color=%23ff5500&auto_play=true&visual=true',
+    id: 'https://soundcloud.com/mfdoom/all-caps',
+    note: 'Underground classic — SoundCloud',
+  },
+  {
+    platform: 'spotify',
+    type: 'track',
+    title: 'Bad Guy — Billie Eilish',
+    originalUrl: 'https://open.spotify.com/track/2Fxmhks0live1BLVWe0T5o',
+    embedUrl: 'https://open.spotify.com/embed/track/2Fxmhks0live1BLVWe0T5o?utm_source=generator&theme=0',
+    id: '2Fxmhks0live1BLVWe0T5o',
+    note: 'Spotify — multi-Grammy winner',
+  },
+  {
+    platform: 'youtube',
+    type: 'video',
+    title: 'Tyler, the Creator — EARFQUAKE (Official Video)',
+    originalUrl: 'https://www.youtube.com/watch?v=eIGh4Nc1fAM',
+    embedUrl: 'https://www.youtube.com/embed/eIGh4Nc1fAM?autoplay=1&controls=1&enablejsapi=1',
+    id: 'eIGh4Nc1fAM',
+    note: 'Official video — YouTube',
+  },
+  {
+    platform: 'soundcloud',
+    type: 'track',
+    title: 'Frank Ocean — Chanel',
+    originalUrl: 'https://soundcloud.com/frankocean/chanel',
+    embedUrl: 'https://w.soundcloud.com/player/?url=https%3A//soundcloud.com/frankocean/chanel&color=%23ff5500&auto_play=true&visual=true',
+    id: 'https://soundcloud.com/frankocean/chanel',
     note: 'SoundCloud exclusive upload',
   },
 ];
