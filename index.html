@@ -439,16 +439,17 @@ header {
 .local-audio{width:100%;max-width:480px;accent-color:var(--accent);}
 .local-audio-info{display:flex;justify-content:space-between;width:100%;max-width:480px;font-size:0.58rem;color:var(--text-muted);}
 
-/* ─── Eq/Audio Visualizer bar ─── */
+/* ─── Eq/Audio Visualizer dots ─── */
 .audio-eq-bar {
   width:100%;max-width:480px;height:36px;
-  display:flex;align-items:flex-end;justify-content:center;gap:2px;
+  display:flex;align-items:center;justify-content:center;gap:4px;
   margin-top:-10px;
 }
-.eq-bar {
-  width:4px;border-radius:2px 2px 0 0;
-  background:var(--accent);opacity:0.6;
-  transition:height 0.1s;
+.eq-dot {
+  width:5px;height:5px;border-radius:50%;
+  background:var(--accent);opacity:0.35;
+  transition:width 0.08s, height 0.08s, opacity 0.08s;
+  flex-shrink:0;
 }
 
 /* ─── Embed ───────────────────────────────────────────────────────── */
@@ -555,10 +556,121 @@ header {
 .aq-btn-row{display:flex;gap:6px;margin-top:6px;}
 .aq-preset-btn{flex:1;background:var(--surface3);border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.5rem;padding:5px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.06em;text-transform:uppercase;transition:color 0.15s,border-color 0.15s;}
 .aq-preset-btn:hover,.aq-preset-btn.active{color:var(--accent);border-color:var(--accent);}
-.eq-bands{display:flex;align-items:flex-end;gap:3px;height:80px;padding:4px 0;}
-.eq-band{display:flex;flex-direction:column;align-items:center;gap:2px;flex:1;}
-.eq-band-slider{writing-mode:vertical-lr;direction:rtl;width:14px;height:60px;accent-color:var(--accent);cursor:pointer;}
-.eq-band-label{font-size:0.38rem;color:var(--text-muted);letter-spacing:0.04em;}
+/* ─── 10-Band Graphic EQ ─────────────────────────────────────────── */
+.eq-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.eq-curve-canvas {
+  width: 100%;
+  height: 52px;
+  border-radius: var(--radius);
+  background: var(--surface3);
+  border: 1px solid var(--border);
+  display: block;
+}
+.eq-bands {
+  display: flex;
+  gap: 0;
+  height: 100px;
+  align-items: stretch;
+}
+.eq-band {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  padding: 0 2px;
+  position: relative;
+}
+.eq-band:not(:last-child) {
+  border-right: 1px solid var(--border);
+}
+/* The slider track + thumb using rotate trick */
+.eq-band-track {
+  position: relative;
+  width: 100%;
+  height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.eq-band-slider {
+  /* rotate the range 90° so it goes bottom-to-top */
+  writing-mode: horizontal-tb;
+  appearance: slider-vertical;
+  -webkit-appearance: slider-vertical;
+  width: 20px;
+  height: 68px;
+  accent-color: var(--accent);
+  cursor: pointer;
+  background: transparent;
+  outline: none;
+  /* Fallback for browsers that don't support slider-vertical */
+  transform: rotate(-90deg);
+  transform-origin: center center;
+}
+/* Override transform for browsers that DO support slider-vertical natively */
+@supports (-webkit-appearance: slider-vertical) {
+  .eq-band-slider {
+    transform: none;
+    -webkit-appearance: slider-vertical;
+  }
+}
+.eq-band-db {
+  font-size: 0.38rem;
+  color: var(--accent);
+  font-family: 'Space Mono', monospace;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  min-width: 22px;
+  text-align: center;
+  height: 12px;
+  line-height: 12px;
+}
+.eq-band-label {
+  font-size: 0.37rem;
+  color: var(--text-muted);
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  margin-bottom: 2px;
+}
+.eq-zero-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 1px;
+  background: var(--border);
+  pointer-events: none;
+}
+.eq-band-bar {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 3px;
+  border-radius: 2px;
+  pointer-events: none;
+  transition: height 0.08s, top 0.08s, background 0.15s;
+}
+.eq-reset-btn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-family: 'Space Mono', monospace;
+  font-size: 0.44rem;
+  padding: 3px 10px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  transition: color 0.15s, border-color 0.15s;
+  align-self: flex-end;
+}
+.eq-reset-btn:hover { color: var(--accent2); border-color: var(--accent2); }
 
 /* ─── Auth Panel ─────────────────────────────────────────────────── */
 .auth-tabs{display:flex;gap:6px;margin-bottom:18px;}
@@ -740,84 +852,6 @@ body.oled-mode {
   color:var(--accent);border-color:var(--accent);
 }
 
-/* ─── Playlist Expand UI ─────────────────────────────────────────── */
-.card-expand-btn {
-  background:none;border:1px solid var(--accent3);color:var(--accent3);
-  font-family:'Space Mono',monospace;font-size:0.42rem;letter-spacing:0.08em;
-  text-transform:uppercase;padding:3px 7px;border-radius:var(--radius);
-  cursor:pointer;transition:all 0.15s;white-space:nowrap;margin-top:5px;
-  display:block;width:100%;
-}
-.card-expand-btn:hover { background:var(--accent3);color:#000; }
-.card-expand-btn:disabled { opacity:0.4;cursor:wait; }
-.card-expand-btn.expanded { border-color:var(--accent);color:var(--accent); }
-
-.expand-track-count {
-  font-size:0.42rem;color:var(--text-muted);
-  border:1px solid var(--border);padding:1px 5px;border-radius:2px;
-  margin-left:4px;
-}
-
-/* ─── Blocked Video Recovery ─────────────────────────────────────── */
-.card-blocked-btn {
-  background:none;border:1px solid var(--accent2);color:var(--accent2);
-  font-family:'Space Mono',monospace;font-size:0.42rem;letter-spacing:0.08em;
-  text-transform:uppercase;padding:3px 7px;border-radius:var(--radius);
-  cursor:pointer;transition:all 0.15s;white-space:nowrap;display:none;
-}
-.playlist-card.may-be-blocked .card-blocked-btn { display:inline-block; }
-.card-blocked-btn:hover { background:var(--accent2);color:#000; }
-
-/* Search results modal */
-.search-modal {
-  position:fixed;inset:0;z-index:9100;background:rgba(0,0,0,0.82);
-  display:flex;align-items:center;justify-content:center;
-  backdrop-filter:blur(3px);
-}
-.search-panel {
-  background:var(--surface);border:1px solid var(--border);
-  border-radius:var(--radius);padding:20px 24px;max-width:500px;width:92%;
-  font-family:'Space Mono',monospace;max-height:80vh;overflow-y:auto;
-}
-.search-panel-title {
-  font-family:'Unbounded',sans-serif;font-weight:900;font-size:0.85rem;
-  color:var(--accent);margin-bottom:4px;
-}
-.search-panel-sub {
-  font-size:0.48rem;color:var(--text-muted);margin-bottom:14px;line-height:1.7;
-}
-.search-result-item {
-  display:flex;gap:10px;align-items:flex-start;padding:8px 0;
-  border-bottom:1px solid var(--border);cursor:pointer;
-  transition:background 0.12s;border-radius:var(--radius);
-}
-.search-result-item:last-child { border-bottom:none; }
-.search-result-item:hover { background:var(--surface2); }
-.search-result-thumb {
-  width:60px;height:34px;object-fit:cover;border-radius:2px;flex-shrink:0;
-  background:var(--surface3);
-}
-.search-result-info { flex:1;min-width:0; }
-.search-result-title {
-  font-size:0.56rem;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
-  line-height:1.4;margin-bottom:2px;
-}
-.search-result-channel { font-size:0.46rem;color:var(--text-muted); }
-.search-result-play {
-  background:var(--accent);color:var(--bg);border:none;
-  border-radius:var(--radius);padding:5px 10px;font-family:'Unbounded',sans-serif;
-  font-size:0.46rem;font-weight:700;cursor:pointer;letter-spacing:0.04em;
-  flex-shrink:0;align-self:center;transition:opacity 0.15s;
-}
-.search-result-play:hover { opacity:0.85; }
-.search-close-btn {
-  margin-top:12px;width:100%;background:var(--surface3);color:var(--text-dim);
-  border:1px solid var(--border);border-radius:var(--radius);padding:8px;
-  font-family:'Space Mono',monospace;font-size:0.52rem;cursor:pointer;
-  letter-spacing:0.08em;text-transform:uppercase;transition:border-color 0.15s;
-}
-.search-close-btn:hover { border-color:var(--accent2);color:var(--accent2); }
-
 /* ─── Dynamic page title hidden logic handled in JS ─────────────── */
 
 /* ─── Queue item filtered-out state ─────────────────────────────── */
@@ -843,6 +877,99 @@ body.oled-mode {
 #statusBar.show { transform:translateY(0); }
 #statusBar .status-msg { color:var(--accent); }
 #statusBar .status-meta { color:var(--text-muted); }
+
+/* ─── YT Track List Modal ────────────────────────────────────────── */
+.yttrack-modal {
+  position:fixed;inset:0;z-index:9100;background:rgba(0,0,0,0.82);
+  display:flex;align-items:center;justify-content:center;
+  backdrop-filter:blur(4px);
+}
+.yttrack-panel {
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--radius);width:min(560px,95vw);max-height:85vh;
+  display:flex;flex-direction:column;font-family:'Space Mono',monospace;overflow:hidden;
+}
+.yttrack-header {
+  padding:16px 20px 12px;border-bottom:1px solid var(--border);
+  background:var(--surface2);flex-shrink:0;
+}
+.yttrack-title {
+  font-family:'Unbounded',sans-serif;font-weight:900;font-size:0.88rem;
+  color:var(--accent);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.yttrack-meta {
+  font-size:0.46rem;color:var(--text-muted);margin-top:3px;letter-spacing:0.1em;
+}
+.yttrack-actions {
+  display:flex;gap:8px;padding:10px 16px;border-bottom:1px solid var(--border);
+  background:var(--surface);flex-shrink:0;flex-wrap:wrap;
+}
+.yttrack-btn {
+  background:none;border:1px solid var(--border);color:var(--text-dim);
+  font-family:'Space Mono',monospace;font-size:0.48rem;letter-spacing:0.06em;
+  text-transform:uppercase;padding:6px 12px;border-radius:var(--radius);
+  cursor:pointer;transition:all 0.15s;white-space:nowrap;
+}
+.yttrack-btn-all { background:var(--accent);color:#000;border-color:var(--accent);font-family:'Unbounded',sans-serif;font-weight:700; }
+.yttrack-btn-all:hover { opacity:0.85; }
+.yttrack-btn-sel { border-color:var(--accent3);color:var(--accent3); }
+.yttrack-btn-sel:hover { background:var(--accent3);color:#000; }
+.yttrack-btn-cancel:hover { border-color:var(--accent2);color:var(--accent2); }
+.yttrack-list {
+  overflow-y:auto;flex:1;scrollbar-width:thin;scrollbar-color:var(--border) transparent;
+}
+.yttrack-list::-webkit-scrollbar{width:3px;}
+.yttrack-list::-webkit-scrollbar-thumb{background:var(--border);}
+.yttrack-loading {
+  display:flex;align-items:center;justify-content:center;gap:12px;padding:40px;
+  color:var(--text-muted);font-size:0.58rem;
+}
+.yttrack-item {
+  display:grid;grid-template-columns:28px 44px 1fr 50px 32px;
+  align-items:center;gap:8px;padding:7px 14px;
+  border-bottom:1px solid var(--border);cursor:pointer;
+  transition:background 0.12s;user-select:none;
+}
+.yttrack-item:hover { background:var(--surface2); }
+.yttrack-item.selected { background:rgba(232,255,71,0.06);border-left:2px solid var(--accent); }
+.yttrack-num {
+  font-size:0.46rem;color:var(--text-muted);text-align:right;
+}
+.yttrack-thumb {
+  width:44px;height:30px;object-fit:cover;border-radius:2px;
+  background:var(--surface3);flex-shrink:0;
+}
+.yttrack-info { min-width:0; }
+.yttrack-name {
+  font-size:0.58rem;color:var(--text);white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;
+}
+.yttrack-dur {
+  font-size:0.44rem;color:var(--text-muted);margin-top:1px;
+}
+.yttrack-add-btn {
+  background:none;border:1px solid var(--border);color:var(--text-muted);
+  font-size:0.55rem;padding:3px 7px;border-radius:var(--radius);cursor:pointer;
+  transition:all 0.15s;font-family:'Space Mono',monospace;white-space:nowrap;
+}
+.yttrack-add-btn:hover,.yttrack-add-btn.added {
+  background:var(--accent);color:#000;border-color:var(--accent);
+}
+.yttrack-checkbox {
+  width:14px;height:14px;accent-color:var(--accent);cursor:pointer;
+}
+
+/* ─── Fetch Tracks button on YT queue cards ──────────────────────── */
+.card-fetch-btn {
+  font-size:0.42rem;letter-spacing:0.04em;padding:2px 6px;
+  background:none;border:1px solid var(--border);color:var(--text-muted);
+  border-radius:2px;cursor:pointer;font-family:'Space Mono',monospace;
+  transition:color 0.15s,border-color 0.15s;white-space:nowrap;
+}
+.card-fetch-btn:hover { color:var(--accent3);border-color:var(--accent3); }
+
+/* ─── Embed block banner visible state ──────────────────────────── */
+#embedBlockBanner.visible { display:flex !important; }
 </style>
 </head>
 <body>
@@ -1077,6 +1204,25 @@ body.oled-mode {
 
       <div class="embed-loading hidden" id="embedLoading"><div class="spinner"></div></div>
 
+      <!-- Embed-Block Banner -->
+      <div id="embedBlockBanner" style="
+        display:none;position:absolute;inset:0;z-index:200;
+        background:var(--surface);
+        flex-direction:column;align-items:center;justify-content:center;
+        gap:14px;padding:32px;text-align:center;font-family:'Space Mono',monospace;">
+        <div style="font-size:2rem;">🔒</div>
+        <div style="font-family:'Unbounded',sans-serif;font-weight:900;font-size:0.85rem;color:var(--accent);">Embed Restricted</div>
+        <div style="font-size:0.55rem;color:var(--text-dim);line-height:1.9;max-width:320px;">
+          This video's uploader has disabled embedding in third-party apps.<br/>
+          You can still open it directly on YouTube.
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center;">
+          <button id="embedBlockWatch" style="background:var(--accent);color:#000;border:none;border-radius:var(--radius);padding:10px 18px;font-family:'Unbounded',sans-serif;font-size:0.6rem;font-weight:700;cursor:pointer;letter-spacing:0.06em;">▶ Watch on YouTube</button>
+          <button id="embedBlockNocookie" style="background:var(--surface3);color:var(--text);border:1px solid var(--border);border-radius:var(--radius);padding:10px 18px;font-family:'Space Mono',monospace;font-size:0.55rem;cursor:pointer;letter-spacing:0.04em;">🔁 Try Nocookie Mode</button>
+          <button id="embedBlockSkip" style="background:none;color:var(--text-muted);border:1px solid var(--border);border-radius:var(--radius);padding:10px 18px;font-family:'Space Mono',monospace;font-size:0.55rem;cursor:pointer;">⏭ Skip Track</button>
+        </div>
+      </div>
+
       <iframe
         class="embed-frame" id="embedFrame"
         allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture; web-share"
@@ -1105,13 +1251,21 @@ body.oled-mode {
   </main>
 </div>
 
-<!-- Blocked Video Search Modal -->
-<div class="search-modal" id="searchModal" style="display:none;">
-  <div class="search-panel">
-    <div class="search-panel-title">⚠ Find Alternate Version</div>
-    <div class="search-panel-sub" id="searchPanelSub">Looking for an unblocked version of this track…</div>
-    <div id="searchResultsList"></div>
-    <button class="search-close-btn" id="searchModalClose">CANCEL</button>
+<!-- YT Track List Modal -->
+<div class="yttrack-modal" id="ytTrackModal" style="display:none;">
+  <div class="yttrack-panel">
+    <div class="yttrack-header">
+      <div class="yttrack-title" id="ytTrackTitle">Loading tracks…</div>
+      <div class="yttrack-meta" id="ytTrackMeta"></div>
+    </div>
+    <div class="yttrack-actions" id="ytTrackActions" style="display:none;">
+      <button class="yttrack-btn yttrack-btn-all" id="ytAddAllBtn">▶ Add All to Queue</button>
+      <button class="yttrack-btn yttrack-btn-sel" id="ytAddSelBtn" style="display:none;">+ Add Selected</button>
+      <button class="yttrack-btn yttrack-btn-cancel" id="ytTrackClose">✕ Close</button>
+    </div>
+    <div class="yttrack-list" id="ytTrackList">
+      <div class="yttrack-loading"><div class="spinner"></div><span>Fetching tracks…</span></div>
+    </div>
   </div>
 </div>
 
@@ -1151,6 +1305,7 @@ body.oled-mode {
 <div class="ctx-menu" id="ctxMenu">
   <div class="ctx-item" id="ctxPlay">▶ Play</div>
   <div class="ctx-item" id="ctxPlayNext">▷ Play next</div>
+  <div class="ctx-item" id="ctxFetchTracks" style="display:none;">⬡ Browse tracks</div>
   <div class="ctx-item" id="ctxStar">★ Toggle favorite</div>
   <div class="ctx-item" id="ctxRename">✎ Rename</div>
   <div class="ctx-item" id="ctxOpen">↗ Open in browser</div>
@@ -1199,9 +1354,15 @@ body.oled-mode {
 
     <!-- 10-BAND EQ -->
     <div class="aq-section">
-      <div class="aq-section-title">10-Band Equalizer</div>
-      <div class="eq-bands" id="eqBands">
-        <!-- injected by JS: 32 64 125 250 500 1k 2k 4k 8k 16k -->
+      <div class="aq-section-title" style="display:flex;align-items:center;justify-content:space-between;">
+        10-Band Equalizer
+        <button class="eq-reset-btn" id="eqResetBtn" title="Reset all bands to 0 dB">Reset</button>
+      </div>
+      <div class="eq-wrap">
+        <canvas class="eq-curve-canvas" id="eqCurveCanvas" height="52"></canvas>
+        <div class="eq-bands" id="eqBands">
+          <!-- injected by buildEQBands() -->
+        </div>
       </div>
     </div>
 
@@ -2178,22 +2339,177 @@ if (savedScale) {
 }
 
 // ─── Audio Quality Panel ──────────────────────────────────────────────────────
+// ─── 10-Band Graphic EQ ───────────────────────────────────────────────────────
+const EQ_BANDS     = ['32','64','125','250','500','1k','2k','4k','8k','16k'];
+const EQ_COLORS    = ['#ff4757','#ff6b35','#ffa502','#eccc68','#7bed9f','#70a1ff','#5352ed','#a29bfe','#fd79a8','#e17055'];
+
 function buildEQBands() {
   const container = $('eqBands');
-  const bands = ['32','64','125','250','500','1k','2k','4k','8k','16k'];
-  container.innerHTML = bands.map(b => `
-    <div class="eq-band">
-      <input type="range" class="eq-band-slider" min="-12" max="12" value="${AQ_DEFAULTS.eq[b]||0}" step="0.5" data-band="${b}" />
+  if (!container) return;
+
+  container.innerHTML = EQ_BANDS.map((b, i) => {
+    const val = AQ_DEFAULTS.eq[b] || 0;
+    const col = EQ_COLORS[i];
+    return `<div class="eq-band" data-band="${b}">
+      <div class="eq-band-db" id="eqDb_${b}">${val > 0 ? '+' + val : val}</div>
+      <div class="eq-band-track">
+        <div class="eq-zero-line"></div>
+        <div class="eq-band-bar" id="eqBar_${b}" style="background:${col};"></div>
+        <input
+          type="range"
+          class="eq-band-slider"
+          id="eqSlider_${b}"
+          min="-12" max="12" step="0.5"
+          value="${val}"
+          data-band="${b}"
+          data-color="${col}"
+          title="${b} Hz: ${val > 0 ? '+' : ''}${val} dB"
+        />
+      </div>
       <span class="eq-band-label">${b}</span>
-    </div>
-  `).join('');
-  container.querySelectorAll('.eq-band-slider').forEach(sl => {
-    sl.addEventListener('input', () => {
-      AQ_DEFAULTS.eq[sl.dataset.band] = parseFloat(sl.value);
+    </div>`;
+  }).join('');
+
+  // Wire all sliders
+  EQ_BANDS.forEach(b => {
+    const sl  = $('eqSlider_'  + b);
+    const dbEl = $('eqDb_'    + b);
+    const bar  = $('eqBar_'   + b);
+    if (!sl) return;
+
+    function updateBand() {
+      const v   = parseFloat(sl.value);
+      AQ_DEFAULTS.eq[b] = v;
+      const label = (v > 0 ? '+' : '') + v;
+      dbEl.textContent = label;
+      sl.title = `${b} Hz: ${label} dB`;
+      // Positive = bar grows up from center, negative = down
+      // band-track height = 72px, zero at 50% = 36px
+      const halfH = 36;
+      const pct   = Math.abs(v) / 12; // 0..1
+      const barH  = Math.round(pct * halfH);
+      bar.style.height = barH + 'px';
+      bar.style.top    = v >= 0 ? (halfH - barH) + 'px' : halfH + 'px';
+      bar.style.background = v >= 0 ? sl.dataset.color : 'var(--accent2)';
+      dbEl.style.color = v === 0 ? 'var(--text-muted)' : (v > 0 ? sl.dataset.color : 'var(--accent2)');
+      // Update audio filter
+      if (eqFilters[b]) eqFilters[b].gain.value = v;
       applyAudioToLocalIfActive();
-    });
+      drawEQCurve();
+    }
+
+    updateBand(); // init position on load
+    sl.addEventListener('input', updateBand);
+  });
+
+  drawEQCurve();
+
+  // Reset button
+  const resetBtn = $('eqResetBtn');
+  if (resetBtn) {
+    resetBtn.onclick = () => {
+      EQ_BANDS.forEach(b => {
+        AQ_DEFAULTS.eq[b] = 0;
+        const sl = $('eqSlider_' + b);
+        if (sl) { sl.value = 0; sl.dispatchEvent(new Event('input')); }
+      });
+      playSfx('click');
+    };
+  }
+}
+
+// ─── EQ Frequency Response Curve Canvas ──────────────────────────────────────
+function drawEQCurve() {
+  const canvas = $('eqCurveCanvas');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const W   = canvas.offsetWidth  || 460;
+  const H   = canvas.offsetHeight || 52;
+  canvas.width  = W;
+  canvas.height = H;
+
+  ctx.clearRect(0, 0, W, H);
+
+  // Background grid — zero line
+  ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+  ctx.lineWidth   = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, H / 2);
+  ctx.lineTo(W, H / 2);
+  ctx.stroke();
+
+  // Minor grid lines at ±6 dB
+  [H/4, H*3/4].forEach(y => {
+    ctx.beginPath();
+    ctx.setLineDash([3,5]);
+    ctx.moveTo(0, y);
+    ctx.lineTo(W, y);
+    ctx.stroke();
+  });
+  ctx.setLineDash([]);
+
+  // Map 10 band values to curve points
+  // X positions evenly spaced, Y = center ± (val/12) * (H/2 - 4)
+  const halfH = H / 2;
+  const yRange = halfH - 5;
+  const xStep  = W / (EQ_BANDS.length - 1);
+
+  const pts = EQ_BANDS.map((b, i) => {
+    const v = AQ_DEFAULTS.eq[b] || 0;
+    return {
+      x: Math.round(i * xStep),
+      y: Math.round(halfH - (v / 12) * yRange),
+      v,
+    };
+  });
+
+  // Draw filled curve
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, 'rgba(232,255,71,0.35)');
+  grad.addColorStop(0.5, 'rgba(232,255,71,0.08)');
+  grad.addColorStop(1, 'rgba(232,255,71,0.02)');
+
+  ctx.beginPath();
+  ctx.moveTo(pts[0].x, halfH);
+  ctx.lineTo(pts[0].x, pts[0].y);
+
+  // Smooth bezier through points
+  for (let i = 0; i < pts.length - 1; i++) {
+    const cp1x = pts[i].x + (pts[i+1].x - pts[i].x) * 0.5;
+    const cp2x = pts[i].x + (pts[i+1].x - pts[i].x) * 0.5;
+    ctx.bezierCurveTo(cp1x, pts[i].y, cp2x, pts[i+1].y, pts[i+1].x, pts[i+1].y);
+  }
+  ctx.lineTo(pts[pts.length-1].x, halfH);
+  ctx.closePath();
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // Draw the line on top
+  ctx.beginPath();
+  ctx.moveTo(pts[0].x, pts[0].y);
+  for (let i = 0; i < pts.length - 1; i++) {
+    const cp1x = pts[i].x + (pts[i+1].x - pts[i].x) * 0.5;
+    const cp2x = pts[i].x + (pts[i+1].x - pts[i].x) * 0.5;
+    ctx.bezierCurveTo(cp1x, pts[i].y, cp2x, pts[i+1].y, pts[i+1].x, pts[i+1].y);
+  }
+  ctx.strokeStyle = 'var(--accent)';
+  ctx.lineWidth   = 1.5;
+  ctx.stroke();
+
+  // Draw dots at each band
+  pts.forEach((p, i) => {
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
+    ctx.fillStyle = EQ_COLORS[i];
+    ctx.fill();
   });
 }
+
+// Redraw curve when AQ panel opens
+$('audioQualityBtn').addEventListener('click', () => {
+  $('audioOverlay').classList.add('open');
+  setTimeout(drawEQCurve, 30);
+});
 
 function bindAQSlider(id, stateKey, suffix, transform) {
   const el = $(id);
@@ -2317,6 +2633,110 @@ function setupAudioContext() {
   } catch(e) { return; }
 }
 
+// ─── UI Sound Engine ──────────────────────────────────────────────────────────
+// Synthesised micro-sounds via Web Audio — no external files needed.
+let _sfxCtx = null;
+function _getSfxCtx() {
+  if (_sfxCtx && _sfxCtx.state !== 'closed') return _sfxCtx;
+  try { _sfxCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e) {}
+  return _sfxCtx;
+}
+
+function playSfx(type) {
+  const ctx = _getSfxCtx();
+  if (!ctx) return;
+  if (ctx.state === 'suspended') ctx.resume();
+
+  const now = ctx.currentTime;
+  const master = ctx.createGain();
+  master.gain.setValueAtTime(0.18, now);
+  master.connect(ctx.destination);
+
+  const osc = ctx.createOscillator();
+  const env = ctx.createGain();
+  osc.connect(env);
+  env.connect(master);
+
+  switch (type) {
+    case 'click': {
+      // Short high tick — generic button press
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(900, now);
+      osc.frequency.exponentialRampToValueAtTime(600, now + 0.06);
+      env.gain.setValueAtTime(0.25, now);
+      env.gain.exponentialRampToValueAtTime(0.001, now + 0.07);
+      osc.start(now); osc.stop(now + 0.08);
+      break;
+    }
+    case 'add': {
+      // Two-note rising chime — success / add to queue
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(880, now);
+      osc.frequency.setValueAtTime(1320, now + 0.07);
+      env.gain.setValueAtTime(0.22, now);
+      env.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
+      osc.start(now); osc.stop(now + 0.24);
+      break;
+    }
+    case 'remove': {
+      // Falling blip — remove/delete
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(600, now);
+      osc.frequency.exponentialRampToValueAtTime(200, now + 0.12);
+      env.gain.setValueAtTime(0.2, now);
+      env.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
+      osc.start(now); osc.stop(now + 0.15);
+      break;
+    }
+    case 'nav': {
+      // Soft mid tick — prev/next
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(660, now);
+      osc.frequency.exponentialRampToValueAtTime(440, now + 0.05);
+      env.gain.setValueAtTime(0.18, now);
+      env.gain.exponentialRampToValueAtTime(0.001, now + 0.09);
+      osc.start(now); osc.stop(now + 0.1);
+      break;
+    }
+    case 'shuffle': {
+      // Fast arpeggiated blips — shuffle
+      [0, 0.06, 0.12].forEach((offset, i) => {
+        const o2 = ctx.createOscillator();
+        const e2 = ctx.createGain();
+        o2.connect(e2); e2.connect(master);
+        o2.type = 'triangle';
+        o2.frequency.setValueAtTime([440, 660, 880][i], now + offset);
+        e2.gain.setValueAtTime(0.15, now + offset);
+        e2.gain.exponentialRampToValueAtTime(0.001, now + offset + 0.07);
+        o2.start(now + offset); o2.stop(now + offset + 0.08);
+      });
+      osc.start(now); osc.stop(now); // never actually plays, just satisfies structure
+      break;
+    }
+    case 'error': {
+      // Low buzz — error / unsupported
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(120, now);
+      env.gain.setValueAtTime(0.18, now);
+      env.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
+      osc.start(now); osc.stop(now + 0.2);
+      break;
+    }
+    case 'open': {
+      // Rising tone — open/launch
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(440, now);
+      osc.frequency.exponentialRampToValueAtTime(880, now + 0.1);
+      env.gain.setValueAtTime(0.16, now);
+      env.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
+      osc.start(now); osc.stop(now + 0.2);
+      break;
+    }
+    default:
+      osc.start(now); osc.stop(now);
+  }
+}
+
 function connectAudioGraph() {
   if (!audioCtx) return;
   if (sourceNode) { try { sourceNode.disconnect(); } catch(e){} }
@@ -2376,27 +2796,29 @@ function updateAudioGraph() {
   keys.forEach(k => { if (eqFilters[k]) eqFilters[k].gain.value = AQ_DEFAULTS.eq[k] || 0; });
 }
 
-// EQ Visualizer bars
+// EQ Visualizer dots
 function buildEQVisualizer() {
   const container = $('eqVisualizer');
   container.innerHTML = '';
   for (let i = 0; i < 16; i++) {
-    const bar = document.createElement('div');
-    bar.className = 'eq-bar';
-    bar.style.height = '4px';
-    container.appendChild(bar);
+    const dot = document.createElement('div');
+    dot.className = 'eq-dot';
+    container.appendChild(dot);
   }
 }
 
 function runVisualizer() {
   if (!analyserNode || !AQ_DEFAULTS.visualizer) return;
-  const bars = $('eqVisualizer').querySelectorAll('.eq-bar');
+  const dots = $('eqVisualizer').querySelectorAll('.eq-dot');
   const data = new Uint8Array(analyserNode.frequencyBinCount);
   analyserNode.getByteFrequencyData(data);
-  bars.forEach((bar, i) => {
-    const idx = Math.floor(i * data.length / bars.length);
-    const h   = Math.max(4, (data[idx] / 255) * 36);
-    bar.style.height = h + 'px';
+  dots.forEach((dot, i) => {
+    const idx = Math.floor(i * data.length / dots.length);
+    const energy = data[idx] / 255; // 0..1
+    const size   = Math.max(3, Math.round(energy * 14)); // 3px idle → 14px peak
+    dot.style.width  = size + 'px';
+    dot.style.height = size + 'px';
+    dot.style.opacity = 0.3 + energy * 0.7;
   });
   visFAF = requestAnimationFrame(runVisualizer);
 }
@@ -2416,8 +2838,9 @@ function manageSleepTimer() {
 }
 
 // ─── Audio Quality Overlay events ─────────────────────────────────────────────
-$('audioQualityBtn').addEventListener('click', () => $('audioOverlay').classList.add('open'));
+$('audioQualityBtn').addEventListener('click', () => { playSfx('click'); $('audioOverlay').classList.add('open'); });
 $('audioClose').addEventListener('click', () => {
+  playSfx('click');
   $('audioOverlay').classList.remove('open');
   updateAudioGraph();
   saveAQ();
@@ -2464,10 +2887,12 @@ dupToggle.addEventListener('change', () => {
 
 // ─── Mini / Fullscreen ────────────────────────────────────────────────────────
 miniBtn.addEventListener('click', () => {
+  playSfx('click');
   appGrid.classList.remove('fullscreen');
   appGrid.classList.toggle('mini-mode');
 });
 fullscreenBtn.addEventListener('click', () => {
+  playSfx('click');
   appGrid.classList.remove('mini-mode');
   appGrid.classList.toggle('fullscreen');
 });
@@ -2590,21 +3015,12 @@ function renderQueue() {
     const displayName = item.customLabel || item.title || item.originalUrl || item.id || 'Unknown';
     const durStr     = item.duration ? `<span class="card-duration">${item.duration}</span>` : '';
     const starClass  = item.starred ? 'starred-icon' : '';
-
-    // v4.1: expand button for YT playlists
-    const expandBtn  = (item.expandable && item.platform === 'youtube')
-      ? `<button class="card-expand-btn" onclick="event.stopPropagation();expandYTPlaylist(${i})" title="Expand into individual tracks">⊞ Expand Tracks</button>`
+    const isYT = item.platform === 'youtube' || item.platform === 'ytmusic';
+    const fetchBtn = (isYT && (item.type === 'playlist' || item.type === 'video' || item.type === 'channel'))
+      ? `<button class="card-fetch-btn" onclick="event.stopPropagation();openYtTrackModal('${i}')" title="Browse tracks on this playlist/video">⬡ Tracks</button>`
       : '';
-
-    // v4.1: "Find Alt" button for blocked YT videos
-    const blockedBtn = (item.platform === 'youtube' && item.type === 'video')
-      ? `<button class="card-blocked-btn" onclick="event.stopPropagation();findAlternateVideo(${i})" title="Find unblocked alternate">⚠ Find Alt</button>`
-      : '';
-
-    const blockedClass = item.may_be_blocked ? 'may-be-blocked' : '';
-
     return `<div
-        class="playlist-card ${isActive?'active':''} ${item.starred?'starred':''} ${blockedClass}"
+        class="playlist-card ${isActive?'active':''} ${item.starred?'starred':''}"
         style="--platform-color:${cfg.color}"
         data-index="${i}"
         draggable="true"
@@ -2618,6 +3034,7 @@ function renderQueue() {
             <span class="card-platform" style="color:${cfg.color}">${cfg.icon} ${cfg.label}</span>
           </div>
           <div style="display:flex;align-items:center;gap:4px;">
+            ${fetchBtn}
             <span class="card-type-badge">${item.type||'link'}</span>
             <div class="card-actions">
               <button class="card-action-btn star-btn ${starClass}" onclick="event.stopPropagation();toggleFav(${i})" title="Favorite">★</button>
@@ -2626,7 +3043,6 @@ function renderQueue() {
           </div>
         </div>
         <div class="card-url" title="${displayName}">${displayName}${durStr}</div>
-        ${expandBtn}${blockedBtn}
       </div>`;
   }).join('');
 
@@ -2682,6 +3098,10 @@ function openCtx(e, i) {
   e.preventDefault(); ctxIndex = i;
   ctxMenu.style.left = Math.min(e.clientX, window.innerWidth - 160) + 'px';
   ctxMenu.style.top  = Math.min(e.clientY, window.innerHeight - 220) + 'px';
+  // Show/hide Fetch Tracks option
+  const item = state.queue[i];
+  const isYT = item && (item.platform === 'youtube' || item.platform === 'ytmusic');
+  $('ctxFetchTracks').style.display = isYT ? 'block' : 'none';
   ctxMenu.classList.add('open');
 }
 document.addEventListener('click', e => { if (!ctxMenu.contains(e.target)) ctxMenu.classList.remove('open'); });
@@ -2695,6 +3115,10 @@ $('ctxPlayNext').addEventListener('click',() => {
   save(); renderQueue();
   showToast('Moved', 'Will play next.', 'info');
   ctxMenu.classList.remove('open');
+});
+$('ctxFetchTracks').addEventListener('click', () => {
+  ctxMenu.classList.remove('open');
+  openYtTrackModal(ctxIndex);
 });
 $('ctxStar').addEventListener('click',   () => { toggleFav(ctxIndex); ctxMenu.classList.remove('open'); });
 $('ctxRename').addEventListener('click', () => { ctxMenu.classList.remove('open'); renameItem(ctxIndex); });
@@ -2770,6 +3194,8 @@ function playItem(index) {
     embedFrame.src = '';
     embedLoading.classList.add('hidden');
     localPlayer.classList.add('visible');
+    // v4.1: hide embed block banner on platform switch
+    if (typeof hideEmbedBlockBanner === 'function') hideEmbedBlockBanner();
 
     localTitle.textContent  = item.customLabel || item.title || 'Unknown Track';
     localMeta.textContent   = item.meta    || 'Local File';
@@ -2826,6 +3252,8 @@ function playItem(index) {
       embedLoading.classList.add('hidden');
       embedFrame.classList.add('visible');
     }, 3500);
+    // v4.1: schedule embed-block detection after load window
+    if (typeof scheduleEmbedCheck === 'function') scheduleEmbedCheck(item);
   }
   renderQueue();
   scrollActiveIntoView();
@@ -2879,6 +3307,7 @@ localAudio.addEventListener('ended', () => {
 
 // ─── Remove Item ──────────────────────────────────────────────────────────────
 function removeItem(index) {
+  playSfx('remove');
   const item = state.queue[index];
   if (item.platform === 'local' && item.blobUrl) URL.revokeObjectURL(item.blobUrl);
   state.queue.splice(index, 1);
@@ -2897,7 +3326,7 @@ async function addUrl(rawUrl) {
       method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ url }),
     });
     const data = await res.json();
-    if (!res.ok) { showToast('Unsupported URL', data.error || 'Could not parse this link.'); return; }
+    if (!res.ok) { playSfx('error'); showToast('Unsupported URL', data.error || 'Could not parse this link.'); return; }
     if (!state.allowDups && state.queue.some(q => q.originalUrl === data.originalUrl)) {
       showToast('Already in queue', 'This URL is already queued.', 'info'); return;
     }
@@ -2905,9 +3334,11 @@ async function addUrl(rawUrl) {
     else state.queue.push(data);
     save(); renderQueue(); urlInput.value = '';
     if (state.activeIndex === -1) playItem(0);
+    playSfx('add');
     showToast('Added!', `${PLATFORM_CONFIG[data.platform]?.label || data.platform} · ${data.type}`, 'success');
     if (typeof showStatus === 'function') showStatus(`+ ${data.title || data.originalUrl || 'Track added'}`, (PLATFORM_CONFIG[data.platform]||{}).label || '');
   } catch(err) {
+    playSfx('error');
     showToast('Network Error', 'Could not connect to server. Is it running?');
     console.error(err);
   } finally {
@@ -3057,13 +3488,15 @@ $('fileBrowseBtn').addEventListener('click', e => { e.stopPropagation(); fileInp
 // ─── Controls ─────────────────────────────────────────────────────────────────
 prevBtn.addEventListener('click', () => {
   if (!state.queue.length) return;
+  playSfx('nav');
   playItem(state.activeIndex <= 0 ? state.queue.length - 1 : state.activeIndex - 1);
 });
 nextBtn.addEventListener('click', () => {
   if (!state.queue.length) return;
+  playSfx('nav');
   playItem((state.activeIndex + 1) % state.queue.length);
 });
-openBtn.addEventListener('click', () => { if (state.currentUrl) window.open(state.currentUrl, '_blank'); });
+openBtn.addEventListener('click', () => { if (state.currentUrl) { playSfx('open'); window.open(state.currentUrl, '_blank'); } });
 
 // ─── Repeat cycle ─────────────────────────────────────────────────────────────
 function updateRepeatUI() {
@@ -3073,6 +3506,7 @@ function updateRepeatUI() {
 }
 repeatBtn.addEventListener('click', () => {
   state.repeat = (state.repeat + 1) % 3;
+  playSfx('click');
   updateRepeatUI(); save();
   showToast('Repeat: ' + ['Off','All','One'][state.repeat], '', 'info');
 });
@@ -3081,6 +3515,7 @@ updateRepeatUI();
 // ─── Shuffle ──────────────────────────────────────────────────────────────────
 shuffleBtn.addEventListener('click', () => {
   if (state.queue.length < 2) return;
+  playSfx('shuffle');
   for (let i = state.queue.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [state.queue[i], state.queue[j]] = [state.queue[j], state.queue[i]];
@@ -3090,7 +3525,7 @@ shuffleBtn.addEventListener('click', () => {
 });
 
 // ─── FLEX btn ─────────────────────────────────────────────────────────────────
-$('flexBtn').addEventListener('click', loadFlexPlaylist);
+$('flexBtn').addEventListener('click', () => { playSfx('open'); loadFlexPlaylist(); });
 
 // ─── Export Queue ─────────────────────────────────────────────────────────────
 exportBtn.addEventListener('click', () => {
@@ -3101,6 +3536,7 @@ exportBtn.addEventListener('click', () => {
   a.download = `freq-queue-${new Date().toISOString().slice(0,10)}.json`;
   a.click();
   URL.revokeObjectURL(a.href);
+  playSfx('add');
   showToast('Exported!', `${exportData.length} items exported.`, 'success');
 });
 
@@ -3108,6 +3544,7 @@ exportBtn.addEventListener('click', () => {
 clearBtn.addEventListener('click', () => {
   if (!state.queue.length) return;
   if (!confirm('Clear the entire queue?')) return;
+  playSfx('remove');
   state.queue.forEach(q => { if (q.platform==='local' && q.blobUrl) URL.revokeObjectURL(q.blobUrl); });
   state.queue = []; state.activeIndex = -1; state.currentUrl = null;
   localAudio.pause(); localAudio.src = '';
@@ -3124,8 +3561,8 @@ addBtn.addEventListener('click', () => addUrl(urlInput.value));
 urlInput.addEventListener('keydown', e => { if (e.key === 'Enter') addUrl(urlInput.value); });
 
 // ─── Shortcuts panel ──────────────────────────────────────────────────────────
-$('shortcutsBtn').addEventListener('click', () => $('shortcutsOverlay').classList.add('open'));
-$('shortcutsClose').addEventListener('click', () => $('shortcutsOverlay').classList.remove('open'));
+$('shortcutsBtn').addEventListener('click', () => { playSfx('click'); $('shortcutsOverlay').classList.add('open'); });
+$('shortcutsClose').addEventListener('click', () => { playSfx('click'); $('shortcutsOverlay').classList.remove('open'); });
 
 // ─── Keyboard shortcuts ───────────────────────────────────────────────────────
 document.addEventListener('keydown', e => {
@@ -3160,8 +3597,238 @@ document.addEventListener('keydown', e => {
 });
 
 // ═══════════════════════════════════════════════════════════════════
-//  FREQ v4.1 — New Feature Logic
+//  FREQ v4.1 — YouTube Track Listing + Embed-Block Handler
 // ═══════════════════════════════════════════════════════════════════
+
+// ─── YT Track Modal ───────────────────────────────────────────────
+const ytTrackModal   = $('ytTrackModal');
+const ytTrackTitle   = $('ytTrackTitle');
+const ytTrackMeta    = $('ytTrackMeta');
+const ytTrackActions = $('ytTrackActions');
+const ytTrackList    = $('ytTrackList');
+const ytAddAllBtn    = $('ytAddAllBtn');
+const ytAddSelBtn    = $('ytAddSelBtn');
+const ytTrackClose   = $('ytTrackClose');
+
+let ytFetchedTracks  = [];   // current modal track list
+let ytSelectedIds    = new Set(); // checked track IDs
+
+async function openYtTrackModal(queueIndex) {
+  const item = state.queue[parseInt(queueIndex)];
+  if (!item) return;
+
+  ytTrackModal.style.display = 'flex';
+  ytTrackTitle.textContent   = 'Fetching tracks…';
+  ytTrackMeta.textContent    = '';
+  ytTrackActions.style.display = 'none';
+  ytTrackList.innerHTML      = '<div class="yttrack-loading"><div class="spinner"></div><span>Scraping YouTube…</span></div>';
+  ytFetchedTracks = [];
+  ytSelectedIds.clear();
+
+  try {
+    const res  = await fetch('/api/yt/tracks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: item.originalUrl }),
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      ytTrackList.innerHTML = `<div class="yttrack-loading" style="color:var(--accent2);">⚠ ${data.error || 'Failed to fetch tracks.'}</div>`;
+      return;
+    }
+
+    ytFetchedTracks = data.tracks || [];
+    ytTrackTitle.textContent = data.title || 'YouTube Tracks';
+    ytTrackMeta.textContent  = `${ytFetchedTracks.length} track${ytFetchedTracks.length!==1?'s':''} · ▶ YouTube`;
+    ytTrackActions.style.display = 'flex';
+    ytAddAllBtn.textContent  = `▶ Add All ${ytFetchedTracks.length}`;
+    ytAddSelBtn.style.display = 'none';
+
+    renderYtTrackList();
+
+  } catch (err) {
+    ytTrackList.innerHTML = `<div class="yttrack-loading" style="color:var(--accent2);">⚠ Network error: ${err.message}</div>`;
+  }
+}
+
+function renderYtTrackList() {
+  if (!ytFetchedTracks.length) {
+    ytTrackList.innerHTML = '<div class="yttrack-loading" style="color:var(--text-muted);">No tracks found.</div>';
+    return;
+  }
+
+  ytTrackList.innerHTML = ytFetchedTracks.map((t, i) => {
+    const inQueue = state.queue.some(q => q.id === t.id);
+    const selClass = ytSelectedIds.has(t.id) ? 'selected' : '';
+    return `<div class="yttrack-item ${selClass}" data-id="${t.id}" data-idx="${i}">
+      <label style="display:contents;cursor:pointer;">
+        <input type="checkbox" class="yttrack-checkbox" ${ytSelectedIds.has(t.id)?'checked':''} data-id="${t.id}" />
+        <span class="yttrack-num">${i+1}</span>
+        <img class="yttrack-thumb" src="${t.thumb}" loading="lazy" onerror="this.src=''" alt="" />
+        <div class="yttrack-info">
+          <div class="yttrack-name" title="${t.title.replace(/"/g,'&quot;')}">${t.title}</div>
+          ${t.duration ? `<div class="yttrack-dur">${t.duration}</div>` : ''}
+        </div>
+      </label>
+      <button class="yttrack-add-btn ${inQueue?'added':''}" data-idx="${i}" onclick="event.stopPropagation();ytAddSingle(${i},this)">
+        ${inQueue ? '✓' : '+'}
+      </button>
+    </div>`;
+  }).join('');
+
+  // Wire checkboxes
+  ytTrackList.querySelectorAll('.yttrack-checkbox').forEach(cb => {
+    cb.addEventListener('change', () => {
+      const id = cb.dataset.id;
+      const row = cb.closest('.yttrack-item');
+      if (cb.checked) { ytSelectedIds.add(id); row.classList.add('selected'); }
+      else { ytSelectedIds.delete(id); row.classList.remove('selected'); }
+      ytAddSelBtn.style.display = ytSelectedIds.size > 0 ? 'block' : 'none';
+      ytAddSelBtn.textContent = `+ Add ${ytSelectedIds.size} Selected`;
+    });
+  });
+}
+
+function ytAddSingle(trackIdx, btn) {
+  const t = ytFetchedTracks[trackIdx];
+  if (!t) return;
+  if (!state.allowDups && state.queue.some(q => q.id === t.id)) {
+    showToast('Already queued', t.title, 'info'); return;
+  }
+  state.queue.push({
+    platform:    'youtube',
+    type:        'video',
+    title:       t.title,
+    originalUrl: t.originalUrl,
+    embedUrl:    t.embedUrl,
+    embedUrlNC:  t.embedUrlNC,
+    id:          t.id,
+    duration:    t.duration,
+  });
+  save(); renderQueue();
+  if (state.activeIndex === -1) playItem(state.queue.length - 1);
+  btn.textContent = '✓';
+  btn.classList.add('added');
+  showStatus(`+ ${t.title}`, 'YouTube');
+}
+
+ytAddAllBtn.addEventListener('click', () => {
+  let added = 0;
+  ytFetchedTracks.forEach(t => {
+    if (!state.allowDups && state.queue.some(q => q.id === t.id)) return;
+    state.queue.push({
+      platform:    'youtube',
+      type:        'video',
+      title:       t.title,
+      originalUrl: t.originalUrl,
+      embedUrl:    t.embedUrl,
+      embedUrlNC:  t.embedUrlNC,
+      id:          t.id,
+      duration:    t.duration,
+    });
+    added++;
+  });
+  save(); renderQueue();
+  if (state.activeIndex === -1 && state.queue.length) playItem(state.queue.length - ytFetchedTracks.length);
+  showToast('Tracks Added!', `${added} YouTube track${added!==1?'s':''} queued.`, 'success');
+  showStatus(`${added} tracks added from YouTube`, '');
+  ytTrackModal.style.display = 'none';
+});
+
+ytAddSelBtn.addEventListener('click', () => {
+  let added = 0;
+  ytFetchedTracks.forEach(t => {
+    if (!ytSelectedIds.has(t.id)) return;
+    if (!state.allowDups && state.queue.some(q => q.id === t.id)) return;
+    state.queue.push({
+      platform: 'youtube', type: 'video',
+      title: t.title, originalUrl: t.originalUrl,
+      embedUrl: t.embedUrl, embedUrlNC: t.embedUrlNC,
+      id: t.id, duration: t.duration,
+    });
+    added++;
+  });
+  save(); renderQueue();
+  if (state.activeIndex === -1 && state.queue.length) playItem(0);
+  showToast('Added!', `${added} selected tracks queued.`, 'success');
+  ytTrackModal.style.display = 'none';
+});
+
+ytTrackClose.addEventListener('click', () => { ytTrackModal.style.display = 'none'; });
+ytTrackModal.addEventListener('click', e => { if (e.target === ytTrackModal) ytTrackModal.style.display = 'none'; });
+
+// ─── Embed-Block Detection + Fallback ─────────────────────────────
+const embedBlockBanner  = $('embedBlockBanner');
+const embedBlockWatch   = $('embedBlockWatch');
+const embedBlockNC      = $('embedBlockNocookie');
+const embedBlockSkipBtn = $('embedBlockSkip');
+
+let _embedCheckTimer = null;
+let _currentEmbedItem = null;
+
+function hideEmbedBlockBanner() {
+  embedBlockBanner.classList.remove('visible');
+}
+
+function showEmbedBlockBanner(item) {
+  embedBlockBanner.classList.add('visible');
+  embedBlockWatch.onclick = () => {
+    if (item.originalUrl) window.open(item.originalUrl, '_blank');
+  };
+}
+
+/**
+ * After loading a YouTube video embed, wait 4s and check if it loaded.
+ * If the iframe is still showing a blank/error state, check oEmbed.
+ */
+function scheduleEmbedCheck(item) {
+  if (_embedCheckTimer) clearTimeout(_embedCheckTimer);
+  _currentEmbedItem = item;
+  hideEmbedBlockBanner();
+
+  // Only check YT videos — not playlists, not other platforms
+  if ((item.platform !== 'youtube' && item.platform !== 'ytmusic') || item.type !== 'video') return;
+
+  // Fast check via oEmbed (server-side, no CORS)
+  _embedCheckTimer = setTimeout(async () => {
+    if (_currentEmbedItem?.id !== item.id) return; // track changed
+    try {
+      const res  = await fetch(`/api/yt/embed-check?id=${encodeURIComponent(item.id)}`);
+      const data = await res.json();
+      if (!data.embeddable) {
+        showEmbedBlockBanner(item);
+        showToast('Embed Restricted', 'This video can\'t be embedded. Options shown below.', 'error');
+      }
+    } catch { /* server unreachable — don't show banner */ }
+  }, 3500);
+}
+
+// Nocookie mode retry
+embedBlockNC.addEventListener('click', () => {
+  if (!_currentEmbedItem) return;
+  const item = _currentEmbedItem;
+  const ncUrl = item.embedUrlNC || item.embedUrl?.replace('youtube.com', 'youtube-nocookie.com');
+  if (!ncUrl) { showToast('No fallback', 'Nocookie URL unavailable.', 'error'); return; }
+  hideEmbedBlockBanner();
+  embedFrame.src = ncUrl;
+  showToast('Trying nocookie…', 'youtube-nocookie.com embed', 'info');
+  showStatus('Nocookie mode active', 'youtube-nocookie.com');
+});
+
+// Skip track
+embedBlockSkipBtn.addEventListener('click', () => {
+  hideEmbedBlockBanner();
+  const next = state.activeIndex + 1;
+  if (next < state.queue.length) playItem(next);
+  else showToast('End of queue', 'No more tracks.', 'info');
+});
+
+// ─── Patch showEmbed to schedule embed-block check ────────────────
+// showEmbed is defined in existing code — we need to hook playItem instead.
+// Already done above: scheduleEmbedCheck called in playItem flow.
+
+
 
 // ─── Status Bar ───────────────────────────────────────────────────
 const statusBar  = $('statusBar');
@@ -3199,6 +3866,7 @@ function applyOled() {
 applyOled();
 $('oledToggleBtn').addEventListener('click', () => {
   oledActive = !oledActive;
+  playSfx('click');
   applyOled();
   showStatus(oledActive ? 'OLED Mode: ON — true black' : 'OLED Mode: OFF');
   showToast('OLED Mode', oledActive ? 'Pure black engaged.' : 'Disabled.', 'info');
@@ -3339,10 +4007,12 @@ $('dedupBtn').addEventListener('click', () => {
   });
   const removed = before - state.queue.length;
   if (removed === 0) {
+    playSfx('click');
     showToast('No Duplicates', 'Queue is already clean.', 'info');
     showStatus('No duplicate URLs found', '');
     return;
   }
+  playSfx('remove');
   if (state.activeIndex >= state.queue.length) state.activeIndex = -1;
   save(); renderQueue();
   showToast('Deduped!', `${removed} duplicate${removed!==1?'s':''} removed.`, 'success');
@@ -3351,7 +4021,7 @@ $('dedupBtn').addEventListener('click', () => {
 
 // ─── Markdown Tracklist Exporter ──────────────────────────────────
 $('mdExportBtn').addEventListener('click', () => {
-  if (!state.queue.length) { showToast('Queue empty', 'Nothing to export.', 'info'); return; }
+  if (!state.queue.length) { playSfx('error'); showToast('Queue empty', 'Nothing to export.', 'info'); return; }
   const date = new Date().toISOString().slice(0,10);
   let md = `# FREQ Tracklist — ${date}\n\n`;
   md += `| # | Title | Platform | Type | URL |\n`;
@@ -3369,6 +4039,7 @@ $('mdExportBtn').addEventListener('click', () => {
   a.download = `freq-tracklist-${date}.md`;
   a.click();
   URL.revokeObjectURL(a.href);
+  playSfx('add');
   showToast('Exported!', `${state.queue.length} tracks → .md file`, 'success');
   showStatus('Markdown tracklist exported', `${state.queue.length} tracks`);
 });
@@ -3389,6 +4060,7 @@ function isSupportedUrl(url) {
 }
 
 $('multiPasteBtn').addEventListener('click', () => {
+  playSfx('click');
   multiTextarea.value = '';
   multiPreview.style.display = 'none';
   multiAddAll.style.display = 'none';
@@ -3498,208 +4170,6 @@ const _origClearBtnHandler = () => {
   statsPanel.style.display = 'none';
   bulkDeletePanel.style.display = 'none';
 };
-
-// ═══════════════════════════════════════════════════════════════════
-//  FREQ v4.1 — YouTube Playlist Expansion + Blocked Video Recovery
-// ═══════════════════════════════════════════════════════════════════
-
-// ─── Expand YT Playlist into Individual Tracks ───────────────────
-// Called when a resolved item has expandable:true and type==='playlist'
-// Makes GET /api/yt/playlist?listId=... and injects individual video cards
-
-async function expandYTPlaylist(queueIndex) {
-  const item = state.queue[queueIndex];
-  if (!item || item.platform !== 'youtube' || !item.expandable) return;
-
-  const btn = document.querySelector(`.playlist-card[data-index="${queueIndex}"] .card-expand-btn`);
-  if (btn) { btn.disabled = true; btn.textContent = '⟳ Expanding…'; }
-
-  try {
-    let allTracks = [];
-    let contToken = null;
-    let page = 0;
-    const MAX_PAGES = 5; // cap at 500 tracks per expand click
-
-    do {
-      const params = new URLSearchParams({ listId: item.id, maxPages: '1' });
-      if (contToken) params.set('pageToken', contToken);
-
-      const res  = await fetch(`/api/yt/playlist?${params.toString()}`);
-      const data = await res.json();
-
-      if (!res.ok) throw new Error(data.error || 'Playlist fetch failed');
-
-      allTracks.push(...(data.tracks || []));
-      contToken = data.continuationToken || null;
-      page++;
-    } while (contToken && page < MAX_PAGES);
-
-    if (!allTracks.length) {
-      showToast('Expand Failed', 'No tracks found — playlist may be private or empty.', 'error');
-      if (btn) { btn.disabled = false; btn.textContent = '⊞ Expand'; }
-      return;
-    }
-
-    // Build individual queue items from track list
-    const newItems = allTracks.map(t => ({
-      platform:    'youtube',
-      type:        'video',
-      title:       t.artist ? `${t.title} — ${t.artist}` : t.title,
-      originalUrl: `https://www.youtube.com/watch?v=${t.id}`,
-      embedUrl:    `https://www.youtube.com/embed/${t.id}?autoplay=1&controls=1&enablejsapi=1`,
-      id:          t.id,
-      fromPlaylist: item.id,
-    }));
-
-    // Replace the playlist card with individual cards
-    const insertAt = queueIndex;
-    state.queue.splice(insertAt, 1, ...newItems);
-
-    // Adjust active index
-    if (state.activeIndex > insertAt) {
-      state.activeIndex += newItems.length - 1;
-    } else if (state.activeIndex === insertAt) {
-      state.activeIndex = insertAt; // play first expanded track
-    }
-
-    save();
-    renderQueue();
-    showToast('Expanded!', `${newItems.length} tracks from playlist added.`, 'success');
-    showStatus(`Playlist expanded: ${newItems.length} tracks`, item.title || item.id);
-
-    // Auto-play first expanded track if nothing is playing
-    if (state.activeIndex === insertAt && state.activeIndex >= 0) {
-      playItem(state.activeIndex);
-    }
-
-  } catch (err) {
-    console.error('[expandYTPlaylist]', err);
-    showToast('Expand Error', err.message || 'Could not expand playlist.', 'error');
-    if (btn) { btn.disabled = false; btn.textContent = '⊞ Expand Tracks'; }
-  }
-}
-
-// ─── Blocked Video Search Recovery ───────────────────────────────
-const searchModal     = $('searchModal');
-const searchResultsList = $('searchResultsList');
-const searchPanelSub  = $('searchPanelSub');
-let searchTargetIndex = -1;
-
-$('searchModalClose').addEventListener('click', () => { searchModal.style.display = 'none'; });
-searchModal.addEventListener('click', e => { if (e.target === searchModal) searchModal.style.display = 'none'; });
-
-async function findAlternateVideo(queueIndex) {
-  const item = state.queue[queueIndex];
-  if (!item) return;
-
-  searchTargetIndex = queueIndex;
-  searchResultsList.innerHTML = '<div style="color:var(--text-muted);font-size:0.55rem;padding:10px 0;">Searching YouTube…</div>';
-  searchPanelSub.textContent  = `Finding unblocked version of: "${item.title || item.id}"`;
-  searchModal.style.display   = 'flex';
-
-  // Build query: strip channel suffixes, clean the title
-  const rawTitle = item.title || item.originalUrl || '';
-  const query    = rawTitle.replace(/\s*[-—]\s*(Official (Video|Audio|Lyric|Music Video)|VEVO|Topic|lyrics.*|ft\..*)$/i, '').trim();
-
-  try {
-    const res  = await fetch(`/api/yt/search?q=${encodeURIComponent(query)}&limit=6`);
-    const data = await res.json();
-
-    if (!res.ok || !data.results?.length) {
-      searchResultsList.innerHTML = '<div style="color:var(--accent2);font-size:0.52rem;padding:8px 0;">No results found. Try a different search.</div>';
-      return;
-    }
-
-    // Render results, skip the current video ID
-    const filtered = data.results.filter(r => r.id !== item.id);
-    if (!filtered.length) {
-      searchResultsList.innerHTML = '<div style="color:var(--text-muted);font-size:0.52rem;padding:8px 0;">Only found the same video — may be blocked everywhere.</div>';
-      return;
-    }
-
-    searchResultsList.innerHTML = filtered.map(r => `
-      <div class="search-result-item" data-vid="${r.id}" data-title="${(r.title||'').replace(/"/g,'&quot;')}" data-channel="${(r.channel||'').replace(/"/g,'&quot;')}">
-        <img class="search-result-thumb" src="${r.thumb}" loading="lazy" onerror="this.style.display='none'" />
-        <div class="search-result-info">
-          <div class="search-result-title" title="${(r.title||'').replace(/"/g,'&quot;')}">${r.title || 'Unknown'}</div>
-          <div class="search-result-channel">${r.channel || ''}</div>
-        </div>
-        <button class="search-result-play">▶ Use</button>
-      </div>
-    `).join('');
-
-    // Bind click handlers
-    searchResultsList.querySelectorAll('.search-result-item').forEach(row => {
-      row.querySelector('.search-result-play').addEventListener('click', () => {
-        const vid     = row.dataset.vid;
-        const title   = row.dataset.title;
-        const channel = row.dataset.channel;
-        swapBlockedVideo(searchTargetIndex, vid, title || query, channel);
-        searchModal.style.display = 'none';
-      });
-    });
-
-  } catch (err) {
-    console.error('[findAlternateVideo]', err);
-    searchResultsList.innerHTML = `<div style="color:var(--accent2);font-size:0.52rem;">Search failed: ${err.message}</div>`;
-  }
-}
-
-function swapBlockedVideo(queueIndex, newVideoId, title, channel) {
-  const item = state.queue[queueIndex];
-  if (!item) return;
-
-  item.id          = newVideoId;
-  item.originalUrl = `https://www.youtube.com/watch?v=${newVideoId}`;
-  item.embedUrl    = `https://www.youtube.com/embed/${newVideoId}?autoplay=1&controls=1&enablejsapi=1`;
-  item.title       = title + (channel ? ` — ${channel}` : '');
-  item.swappedFrom = item.originalUrl; // keep a reference
-  delete item.may_be_blocked;
-
-  save();
-  renderQueue();
-
-  // If it was currently playing, reload it
-  if (state.activeIndex === queueIndex) playItem(queueIndex);
-
-  showToast('Swapped!', `Now using: ${title}`, 'success');
-  showStatus(`Video replaced: ${title}`, channel);
-}
-
-// ─── Mark blocked videos when embed errors ───────────────────────
-// Listen for the YouTube embedFrame error state (video unavailable)
-// We detect it via postMessage + iframe load errors and flag the card
-embedFrame.addEventListener('load', () => {
-  // After load, check for unavailable-video message via YT API
-  // Flag is set if state.info === 150 (blocked) or 100 (removed)
-});
-
-window.addEventListener('message', existingYTMsgHandler => {}, false);
-// Extend the existing YT postMessage handler to catch error states
-// (We replace it cleanly below — original is already defined above in core code)
-
-// Override the message handler to also catch YT player errors (state 150 = blocked, 100 = not found)
-// We add a second listener that coexists with the original
-window.addEventListener('message', e => {
-  try {
-    const data = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
-    if (!data || data.event !== 'onStateChange') return;
-    // -1=unstarted, 0=ended, 1=playing, 2=paused, 3=buffering, 5=cued
-    // YT sends error codes separately via onError event:
-    // 100 = removed, 101/150 = blocked by owner
-    if (data.info === 100 || data.info === 150 || data.info === 101) {
-      // Mark current active card as blocked
-      if (state.activeIndex >= 0) {
-        const card = document.querySelector(`.playlist-card[data-index="${state.activeIndex}"]`);
-        if (card) card.classList.add('may-be-blocked');
-        state.queue[state.activeIndex].may_be_blocked = true;
-        showToast('Video Blocked', 'This video is unavailable. Click "Find Alt" on the card to search.', 'error');
-      }
-    }
-  } catch (_) {}
-}, false);
-
-
 
 
 authInit();
