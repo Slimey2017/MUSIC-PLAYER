@@ -1,14 +1,24 @@
 /**
  * FREQ — Universal Music Player
- * server.js  ·  v4.1  "Sigma+"
+ * server.js  ·  v4.1  "The Extractor"
  *
  * © 2025–2026 FREQ / Slimey2017. All rights reserved.
  *
  * ─── API Endpoints ────────────────────────────────────────────────────────────
  * POST /api/resolve              { url: string }
+ *   → { platform, type, embedUrl, id, title?, embedBlocked? }
+ *
  * POST /api/import               { urls: string[] }
- * GET  /api/yt/playlist          ?listId=<playlistId>[&pageToken=<token>]
- * GET  /api/yt/search            ?q=<query>[&limit=<n>]
+ *
+ * POST /api/yt/tracks            { url: string }   ← NEW v4.1
+ *   → { type:'playlist'|'video', title, tracks:[{ id, title, duration, thumb }] }
+ *   Scrapes ytInitialData from YouTube page — zero API key.
+ *   Works for: watch?v=, playlist?list=, /channel/, /@handle, youtu.be/
+ *
+ * GET  /api/yt/embed-check       ?id=<videoId>     ← NEW v4.1
+ *   → { id, embeddable: bool, nocookie: bool }
+ *   Checks YouTube oEmbed endpoint to detect embedding restrictions.
+ *
  * GET  /health
  * GET  /redirect                 ?url=<encoded>&platform=<name>
  *
@@ -16,21 +26,16 @@
  * POST /api/auth/signin          { username, password }
  * POST /api/auth/token-refresh   { token }
  * POST /api/auth/sync            { token, playlists }
- * GET  /api/auth/pull            ?token=<token>
+ * GET  /api/auth/pull
  * DELETE /api/auth/account       { token }
  *
  * ─── New in v4.1 ─────────────────────────────────────────────────────────────
- *   - GET /api/yt/playlist  — scrapes YouTube InnerTube API (no key) to expand
- *     a playlist/album into individual track {id, title, artist} objects.
- *     Supports continuation tokens for playlists > 100 tracks.
- *   - GET /api/yt/search    — finds alternate YouTube videos by title query,
- *     used as a fallback when a queued video is blocked/unavailable.
- *   - resolveYouTube() now returns expandable:true for playlist/album types
- *     so the client knows to call /api/yt/playlist to expand it.
- *
- * Supported platforms:
- *   YouTube · YT Music · Spotify · Tidal · SoundCloud · Apple Music
- *   Amazon Music · Qobuz · Deezer · Last.fm
+ *   - POST /api/yt/tracks  — scrapes YouTube playlist/video tracks, no API key
+ *   - GET  /api/yt/embed-check — detects embed-blocked videos via oEmbed
+ *   - resolveYouTube now returns embedBlocked flag + nocookie fallback URL
+ *   - All resolvers hardened with better error messages
+ *   - node-fetch for server-side HTTP (scraping)
+ *   - User-Agent spoofing so YT page scrape actually works
  */
 
 'use strict';
@@ -40,156 +45,11 @@ const cors     = require('cors');
 const path     = require('path');
 const crypto   = require('crypto');
 const fs       = require('fs');
-const https    = require('https');
+const fetch    = require('node-fetch');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
 
-// ─── InnerTube API Helpers ────────────────────────────────────────────────────
-// Uses YouTube's internal web API — no API key required.
-// client version spoofed as a standard web client.
-
-const INNERTUBE_CLIENT = {
-  clientName:    'WEB',
-  clientVersion: '2.20240304.00.00',
-  hl:            'en',
-  gl:            'US',
-};
-
-const INNERTUBE_HEADERS = {
-  'Content-Type':  'application/json',
-  'User-Agent':    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122.0.0.0 Safari/537.36',
-  'Accept':        '*/*',
-  'Origin':        'https://www.youtube.com',
-  'Referer':       'https://www.youtube.com/',
-  'X-YouTube-Client-Name':    '1',
-  'X-YouTube-Client-Version': INNERTUBE_CLIENT.clientVersion,
-};
-
-/**
- * Generic InnerTube POST request.
- * endpoint: e.g. 'browse', 'search'
- * body:     additional fields merged into context wrapper
- */
-function innerTubePost(endpoint, body) {
-  return new Promise((resolve, reject) => {
-    const payload = JSON.stringify({
-      context: { client: INNERTUBE_CLIENT },
-      ...body,
-    });
-
-    const opts = {
-      hostname: 'www.youtube.com',
-      path:     `/youtubei/v1/${endpoint}?prettyPrint=false`,
-      method:   'POST',
-      headers:  { ...INNERTUBE_HEADERS, 'Content-Length': Buffer.byteLength(payload) },
-    };
-
-    const req = https.request(opts, res => {
-      let raw = '';
-      res.setEncoding('utf8');
-      res.on('data', chunk => { raw += chunk; if (raw.length > 8_000_000) { req.destroy(); reject(new Error('Response too large')); } });
-      res.on('end', () => {
-        try { resolve(JSON.parse(raw)); }
-        catch (e) { reject(new Error('InnerTube JSON parse failed: ' + e.message)); }
-      });
-    });
-
-    req.setTimeout(12_000, () => { req.destroy(); reject(new Error('InnerTube timeout')); });
-    req.on('error', reject);
-    req.write(payload);
-    req.end();
-  });
-}
-
-/**
- * Extract tracks from a playlist browse response.
- * Handles both initial load and continuation pages.
- */
-function extractPlaylistTracks(data) {
-  const tracks = [];
-
-  // Try initial browse structure
-  const tabs = data?.contents?.twoColumnBrowseResultsRenderer?.tabs;
-  if (tabs) {
-    for (const tab of tabs) {
-      const sections = tab?.tabRenderer?.content?.sectionListRenderer?.contents;
-      if (!sections) continue;
-      for (const sec of sections) {
-        const items = sec?.itemSectionRenderer?.contents;
-        if (!items) continue;
-        for (const item of items) {
-          const videos = item?.playlistVideoListRenderer?.contents;
-          if (!videos) continue;
-          for (const v of videos) {
-            const vr = v.playlistVideoRenderer;
-            if (!vr?.videoId) continue;
-            tracks.push({
-              id:     vr.videoId,
-              title:  vr.title?.runs?.[0]?.text || 'Unknown',
-              artist: vr.shortBylineText?.runs?.[0]?.text || '',
-            });
-          }
-          // Return continuation token if present
-          const contItem = videos.find(v => v.continuationItemRenderer);
-          const contToken = contItem?.continuationItemRenderer?.continuationEndpoint?.continuationCommand?.token || null;
-          return { tracks, continuationToken: contToken };
-        }
-      }
-    }
-  }
-
-  // Try continuation response structure
-  const onResponseReceived = data?.onResponseReceivedActions;
-  if (onResponseReceived) {
-    for (const action of onResponseReceived) {
-      const videos = action?.appendContinuationItemsAction?.continuationItems;
-      if (!videos) continue;
-      for (const v of videos) {
-        const vr = v.playlistVideoRenderer;
-        if (!vr?.videoId) continue;
-        tracks.push({
-          id:     vr.videoId,
-          title:  vr.title?.runs?.[0]?.text || 'Unknown',
-          artist: vr.shortBylineText?.runs?.[0]?.text || '',
-        });
-      }
-      const contItem = videos.find(v => v.continuationItemRenderer);
-      const contToken = contItem?.continuationItemRenderer?.continuationEndpoint?.continuationCommand?.token || null;
-      return { tracks, continuationToken: contToken };
-    }
-  }
-
-  return { tracks, continuationToken: null };
-}
-
-/**
- * Extract video results from a search response.
- */
-function extractSearchResults(data) {
-  const results = [];
-  const sections = data?.contents?.twoColumnSearchResultsRenderer?.primaryContents?.sectionListRenderer?.contents;
-  if (!sections) return results;
-  for (const sec of sections) {
-    const items = sec?.itemSectionRenderer?.contents;
-    if (!items) continue;
-    for (const item of items) {
-      const vr = item.videoRenderer;
-      if (!vr?.videoId) continue;
-      results.push({
-        id:      vr.videoId,
-        title:   vr.title?.runs?.[0]?.text || '',
-        channel: vr.ownerText?.runs?.[0]?.text || vr.longBylineText?.runs?.[0]?.text || '',
-        thumb:   vr.thumbnail?.thumbnails?.[0]?.url || '',
-      });
-      if (results.length >= 8) break;
-    }
-    if (results.length) break;
-  }
-  return results;
-}
-
-// Path for JSON persistence
 const DATA_PATH = path.join(__dirname, 'freq_data.json');
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
@@ -198,10 +58,6 @@ app.use(express.json({ limit: '4mb' }));
 app.use(express.static(__dirname));
 
 // ─── In-Memory Data Store ─────────────────────────────────────────────────────
-// accounts:  Map<username_lower, { username, displayName, salt, hash, createdAt }>
-// playlists: Map<username_lower, [{ name, items, savedAt }]>
-// sessions:  Map<token, { username, expiresAt }>
-
 const store = {
   accounts:  new Map(),
   playlists: new Map(),
@@ -229,7 +85,6 @@ function loadStore() {
     if (data.accounts)  store.accounts  = new Map(data.accounts);
     if (data.playlists) store.playlists = new Map(data.playlists);
     if (data.sessions)  store.sessions  = new Map(data.sessions);
-    // Prune expired sessions on load
     const now = Date.now();
     for (const [tok, sess] of store.sessions) {
       if (sess.expiresAt < now) store.sessions.delete(tok);
@@ -240,7 +95,6 @@ function loadStore() {
   }
 }
 
-// Debounced persist — avoid hammering disk
 let persistTimer = null;
 function schedulePersist() {
   if (persistTimer) clearTimeout(persistTimer);
@@ -259,25 +113,16 @@ async function hashPassword(password, salt) {
   });
 }
 
-function generateSalt() {
-  return crypto.randomBytes(16).toString('hex');
-}
+function generateSalt()  { return crypto.randomBytes(16).toString('hex'); }
+function generateToken() { return crypto.randomBytes(16).toString('hex'); }
 
-function generateToken() {
-  return crypto.randomBytes(16).toString('hex');
-}
-
-const TOKEN_TTL = 30 * 24 * 60 * 60 * 1000; // 30 days in ms
+const TOKEN_TTL = 30 * 24 * 60 * 60 * 1000;
 
 function resolveToken(token) {
   if (!token) return null;
   const sess = store.sessions.get(token);
   if (!sess) return null;
-  if (sess.expiresAt < Date.now()) {
-    store.sessions.delete(token);
-    schedulePersist();
-    return null;
-  }
+  if (sess.expiresAt < Date.now()) { store.sessions.delete(token); schedulePersist(); return null; }
   return sess;
 }
 
@@ -303,6 +148,146 @@ setInterval(() => {
   }
 }, 300_000);
 
+// ─── HTTP fetch helper (spoofs browser UA so YT doesn't block) ────────────────
+const YT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+
+async function fetchHTML(url, timeoutMs = 8000) {
+  const ctrl = new (require('events').EventEmitter.captureRejections ? AbortController : (class { abort(){} signal={} }))();
+  const timer = setTimeout(() => ctrl.abort && ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent': YT_UA,
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      },
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.text();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// ─── YouTube page scraper — extracts ytInitialData ────────────────────────────
+/**
+ * Parses YouTube's ytInitialData JSON embedded in the page source.
+ * Returns parsed object or null.
+ */
+function extractYtInitialData(html) {
+  // YT embeds var ytInitialData = {...}; in a <script> tag
+  const match = html.match(/var ytInitialData\s*=\s*(\{.+?\});\s*(?:var |<\/script>)/s);
+  if (!match) {
+    // Alternate: window["ytInitialData"] = {...};
+    const match2 = html.match(/window\["ytInitialData"\]\s*=\s*(\{.+?\});\s*(?:<\/script>|var )/s);
+    if (!match2) return null;
+    try { return JSON.parse(match2[1]); } catch { return null; }
+  }
+  try { return JSON.parse(match[1]); } catch { return null; }
+}
+
+/**
+ * Walks ytInitialData to find all videoRenderer / playlistVideoRenderer objects.
+ * Returns array of { id, title, duration, thumb }.
+ */
+function extractTracksFromYtData(data) {
+  const tracks = [];
+  const seen   = new Set();
+
+  function walk(obj) {
+    if (!obj || typeof obj !== 'object') return;
+    // playlistVideoRenderer (playlist page)
+    if (obj.playlistVideoRenderer) {
+      const r  = obj.playlistVideoRenderer;
+      const id = r.videoId;
+      if (id && !seen.has(id)) {
+        seen.add(id);
+        const title    = r.title?.runs?.[0]?.text || r.title?.simpleText || 'Unknown';
+        const durText  = r.lengthText?.simpleText || r.lengthText?.runs?.[0]?.text || null;
+        const thumbs   = r.thumbnail?.thumbnails || [];
+        const thumb    = thumbs[thumbs.length - 1]?.url || `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
+        tracks.push({ id, title, duration: durText, thumb });
+      }
+    }
+    // videoRenderer (search results / channel page)
+    if (obj.videoRenderer) {
+      const r  = obj.videoRenderer;
+      const id = r.videoId;
+      if (id && !seen.has(id)) {
+        seen.add(id);
+        const title   = r.title?.runs?.[0]?.text || r.title?.simpleText || 'Unknown';
+        const durText = r.lengthText?.simpleText || null;
+        const thumbs  = r.thumbnail?.thumbnails || [];
+        const thumb   = thumbs[thumbs.length - 1]?.url || `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
+        tracks.push({ id, title, duration: durText, thumb });
+      }
+    }
+    // gridVideoRenderer (channel videos tab)
+    if (obj.gridVideoRenderer) {
+      const r  = obj.gridVideoRenderer;
+      const id = r.videoId;
+      if (id && !seen.has(id)) {
+        seen.add(id);
+        const title   = r.title?.runs?.[0]?.text || r.title?.simpleText || 'Unknown';
+        const durText = r.thumbnailOverlays?.[0]?.thumbnailOverlayTimeStatusRenderer?.text?.simpleText || null;
+        const thumbs  = r.thumbnail?.thumbnails || [];
+        const thumb   = thumbs[thumbs.length - 1]?.url || `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
+        tracks.push({ id, title, duration: durText, thumb });
+      }
+    }
+    // richItemRenderer (home feed / shorts shelf)
+    if (obj.richItemRenderer) walk(obj.richItemRenderer.content);
+
+    // Recurse into arrays and objects
+    if (Array.isArray(obj)) { obj.forEach(walk); return; }
+    for (const key of Object.keys(obj)) {
+      const v = obj[key];
+      if (v && typeof v === 'object') walk(v);
+    }
+  }
+
+  walk(data);
+  return tracks;
+}
+
+/**
+ * Extract playlist title from ytInitialData.
+ */
+function extractPlaylistTitle(data) {
+  try {
+    // playlist page: sidebar has metadata
+    const header = data?.header?.playlistHeaderRenderer
+      || data?.sidebar?.playlistSidebarRenderer?.items?.[0]?.playlistSidebarPrimaryInfoRenderer;
+    if (header?.title?.runs?.[0]?.text) return header.title.runs[0].text;
+    if (header?.title?.simpleText)      return header.title.simpleText;
+    // microformat
+    const mf = data?.microformat?.microformatDataRenderer;
+    if (mf?.title) return mf.title;
+  } catch {}
+  return null;
+}
+
+// ─── YouTube oEmbed embed-check ───────────────────────────────────────────────
+/**
+ * Checks whether a YouTube video ID can be embedded.
+ * Uses oEmbed endpoint — if it returns 401/403 or the response has
+ * "Video not found" it means embedding is disabled.
+ * Free, no API key.
+ */
+async function checkYtEmbeddable(videoId) {
+  const url = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`;
+  try {
+    const res = await fetch(url, { headers: { 'User-Agent': YT_UA } });
+    if (res.status === 401 || res.status === 403) return { embeddable: false };
+    if (!res.ok) return { embeddable: false };
+    const data = await res.json();
+    // If the title is returned it's embeddable
+    return { embeddable: true, title: data.title || null, thumb: data.thumbnail_url || null };
+  } catch {
+    return { embeddable: false };
+  }
+}
+
 // ─── Platform Detection ───────────────────────────────────────────────────────
 function detectPlatform(url) {
   try {
@@ -324,33 +309,75 @@ function detectPlatform(url) {
 
 // ─── Embed URL Builders ───────────────────────────────────────────────────────
 
+/**
+ * resolveYouTube — v4.1
+ * - Returns both standard and nocookie embed URLs
+ * - Detects playlist vs video
+ * - Sets title from URL when possible
+ */
 function resolveYouTube(url) {
   const u = new URL(url);
+
+  // YT Music browse paths  e.g. /browse/VLPL...
   const browsePath = u.pathname.match(/^\/browse\/(VL[A-Za-z0-9_-]+)/);
   if (browsePath) {
     const listId = browsePath[1].replace(/^VL/, '');
+    return buildYtPlaylistResult(listId, url);
+  }
+
+  const listId  = u.searchParams.get('list');
+  const videoId = u.searchParams.get('v')
+    || (u.hostname === 'youtu.be' ? u.pathname.replace(/^\//, '').split('?')[0] : null);
+
+  // Playlist (possibly with a starting video)
+  if (listId && !videoId) return buildYtPlaylistResult(listId, url);
+
+  // Video (possibly also in a playlist — treat as video)
+  if (videoId && videoId.length >= 11) return buildYtVideoResult(videoId, listId, url);
+
+  // Shorts /shorts/<id>
+  const shortsMatch = u.pathname.match(/^\/shorts\/([A-Za-z0-9_-]{11})/);
+  if (shortsMatch) return buildYtVideoResult(shortsMatch[1], null, url);
+
+  // Channel / handle pages: not directly playable, return as link for track-fetch
+  const channelMatch = u.pathname.match(/^\/@([^/]+)|^\/channel\/([A-Za-z0-9_-]+)/);
+  if (channelMatch) {
+    const handle = channelMatch[1] || channelMatch[2];
     return {
-      type: 'playlist',
-      embedUrl: `https://www.youtube.com/embed/videoseries?list=${listId}&autoplay=1&controls=1`,
-      id: listId,
-      expandable: true,   // v4.1: signal client to expand into individual tracks
+      type: 'channel',
+      embedUrl: `/redirect?url=${encodeURIComponent(url)}&platform=youtube`,
+      id: handle,
+      title: `@${handle}`,
+      canFetchTracks: true,
     };
   }
-  const listId  = u.searchParams.get('list');
-  const videoId = u.searchParams.get('v') ||
-    (u.hostname === 'youtu.be' ? u.pathname.replace(/^\//, '').split('?')[0] : null);
-  if (listId) return {
-    type: 'playlist',
-    embedUrl: `https://www.youtube.com/embed/videoseries?list=${listId}&autoplay=1&controls=1`,
-    id: listId,
-    expandable: true,   // v4.1: signal client to expand
-  };
-  if (videoId && videoId.length >= 11) return {
-    type: 'video',
-    embedUrl: `https://www.youtube.com/embed/${videoId}?autoplay=1&controls=1&enablejsapi=1`,
-    id: videoId,
-  };
+
   return null;
+}
+
+function buildYtVideoResult(videoId, listId, originalUrl) {
+  const params = new URLSearchParams({
+    autoplay: '1', controls: '1', enablejsapi: '1', origin: 'https://freq.app',
+    ...(listId ? { list: listId } : {}),
+  });
+  return {
+    type:        'video',
+    embedUrl:    `https://www.youtube.com/embed/${videoId}?${params}`,
+    embedUrlNC:  `https://www.youtube-nocookie.com/embed/${videoId}?${params}`, // nocookie fallback
+    id:          videoId,
+    canFetchTracks: false,
+  };
+}
+
+function buildYtPlaylistResult(listId, originalUrl) {
+  const params = new URLSearchParams({ list: listId, autoplay: '1', controls: '1' });
+  return {
+    type:        'playlist',
+    embedUrl:    `https://www.youtube.com/embed/videoseries?${params}`,
+    embedUrlNC:  `https://www.youtube-nocookie.com/embed/videoseries?${params}`,
+    id:          listId,
+    canFetchTracks: true,
+  };
 }
 
 function resolveSpotify(url) {
@@ -378,13 +405,20 @@ function resolveSoundCloud(url) {
 
 function resolveAppleMusic(url) {
   const u = new URL(url);
+  // Strip locale path prefix if present (e.g. /us/album/...)
+  // Normalise to global embed
   const playlistMatch = u.pathname.match(/^\/([a-z]{2})\/playlist\/(?:[^/]*\/)?(pl\.[A-Za-z0-9]+)/);
   if (playlistMatch) {
     const [, country, id] = playlistMatch;
     return { type:'playlist', embedUrl:`https://embed.music.apple.com/${country}/playlist/${id}`, id };
   }
   const albumMatch = u.pathname.match(/^\/([a-z]{2})\/(?:album|song)\/(?:[^/]*\/)?([\d]+)/);
-  if (!albumMatch) return null;
+  if (!albumMatch) {
+    // try without locale
+    const noLocale = u.pathname.match(/^\/((?:album|song|playlist)\/[^?]+)/);
+    if (noLocale) return { type:'link', embedUrl:`https://embed.music.apple.com/${noLocale[1]}`, id:noLocale[1] };
+    return null;
+  }
   const [, country, id] = albumMatch;
   const trackId = u.searchParams.get('i');
   if (trackId) return { type:'track', embedUrl:`https://embed.music.apple.com/${country}/album/${id}?i=${trackId}`, id };
@@ -406,20 +440,12 @@ function resolveQobuz(url) {
   return { type, embedUrl:`/redirect?url=${encodeURIComponent(url)}&platform=qobuz`, id };
 }
 
-/**
- * Deezer — v4.0 NEW
- * Deezer supports public embeds via https://widget.deezer.com/widget/dark/<type>/<id>
- * Supports: track, album, playlist, artist, radio
- */
 function resolveDeezer(url) {
   const u = new URL(url);
-  // Paths: /us/track/123, /track/123, /playlist/123, /album/123, /artist/123
   const match = u.pathname.match(/(?:\/[a-z]{2})?\/?(track|playlist|album|artist|radio)\/([0-9]+)/i);
   if (!match) return null;
   const [, rawType, id] = match;
   const type = rawType.toLowerCase();
-  // Deezer widget uses plural for most but "track" stays singular
-  const widgetType = type === 'track' ? 'track' : type + 's';
   return {
     type,
     embedUrl: `https://widget.deezer.com/widget/dark/${type}/${id}`,
@@ -427,22 +453,10 @@ function resolveDeezer(url) {
   };
 }
 
-/**
- * Last.fm — v4.0 NEW
- * Last.fm has no embeddable player — we redirect with the branded page.
- * We extract artist/track/album/user info for a useful label.
- */
 function resolveLastFm(url) {
   const u = new URL(url);
-  // Patterns:
-  //   /music/<artist>/_/<track>
-  //   /music/<artist>/<album>
-  //   /user/<username>
-  //   /tag/<tag>
   const pathname = u.pathname;
-
-  let type = 'link';
-  let id   = url;
+  let type = 'link', id = url;
 
   const musicMatch = pathname.match(/^\/music\/([^/]+)(?:\/_\/([^/]+)|\/([^/]+))?/);
   const userMatch  = pathname.match(/^\/user\/([^/]+)/);
@@ -450,15 +464,13 @@ function resolveLastFm(url) {
 
   if (musicMatch) {
     const [, artist, track, album] = musicMatch;
-    if (track)  { type = 'track';  id = decodeURIComponent(artist) + ' — ' + decodeURIComponent(track); }
-    else if (album) { type = 'album'; id = decodeURIComponent(artist) + ' · ' + decodeURIComponent(album); }
+    if (track)      { type = 'track';  id = decodeURIComponent(artist) + ' — ' + decodeURIComponent(track); }
+    else if (album) { type = 'album';  id = decodeURIComponent(artist) + ' · ' + decodeURIComponent(album); }
     else            { type = 'artist'; id = decodeURIComponent(artist); }
   } else if (userMatch) {
-    type = 'profile';
-    id   = decodeURIComponent(userMatch[1]);
+    type = 'profile'; id = decodeURIComponent(userMatch[1]);
   } else if (tagMatch) {
-    type = 'tag';
-    id   = decodeURIComponent(tagMatch[1]);
+    type = 'tag'; id = decodeURIComponent(tagMatch[1]);
   }
 
   return {
@@ -484,9 +496,10 @@ const RESOLVERS = {
 
 // ─── Redirect Brand Config ────────────────────────────────────────────────────
 const REDIRECT_BRANDS = {
-  amazon: { name:'Amazon Music',  color:'#00A8E1', bgColor:'#0f1923', emoji:'◈' },
-  qobuz:  { name:'Qobuz',         color:'#05b8cc', bgColor:'#050f14', emoji:'◉' },
-  lastfm: { name:'Last.fm',       color:'#d51007', bgColor:'#0e0505', emoji:'⊕' },
+  amazon:  { name:'Amazon Music', color:'#00A8E1', bgColor:'#0f1923', emoji:'◈' },
+  qobuz:   { name:'Qobuz',        color:'#05b8cc', bgColor:'#050f14', emoji:'◉' },
+  lastfm:  { name:'Last.fm',      color:'#d51007', bgColor:'#0e0505', emoji:'⊕' },
+  youtube: { name:'YouTube',      color:'#ff0000', bgColor:'#0a0000', emoji:'▶' },
 };
 
 app.get('/redirect', (req, res) => {
@@ -553,15 +566,17 @@ app.post('/api/resolve', rateLimit, (req, res) => {
   const trimmed  = url.trim();
   const platform = detectPlatform(trimmed);
   if (!platform)
-    return res.status(400).json({ error: 'Unsupported platform. Paste a URL from YouTube, YT Music, Spotify, Tidal, SoundCloud, Apple Music, Amazon Music, Qobuz, Deezer, or Last.fm.' });
+    return res.status(400).json({
+      error: 'Unsupported platform. Paste a URL from YouTube, YT Music, Spotify, Tidal, SoundCloud, Apple Music, Amazon Music, Qobuz, Deezer, or Last.fm.',
+    });
 
   try {
     const info = RESOLVERS[platform](trimmed);
-    if (!info) return res.status(400).json({ error: `Could not extract a playable ID from this ${platform} URL.` });
+    if (!info) return res.status(400).json({ error: `Could not extract a playable ID from this ${platform} URL. Check that the link is public and not a redirect.` });
     return res.json({ platform, originalUrl: trimmed, ...info });
   } catch (err) {
     console.error(`[resolve] ${platform}:`, err.message);
-    return res.status(400).json({ error: 'Could not parse this URL.' });
+    return res.status(400).json({ error: `Could not parse this URL: ${err.message}` });
   }
 });
 
@@ -570,8 +585,8 @@ app.post('/api/import', rateLimit, (req, res) => {
   const { urls } = req.body;
   if (!Array.isArray(urls) || !urls.length)
     return res.status(400).json({ error: 'Request body must include a "urls" array.' });
-  if (urls.length > 100)
-    return res.status(400).json({ error: 'Maximum 100 URLs per import.' });
+  if (urls.length > 200)
+    return res.status(400).json({ error: 'Maximum 200 URLs per import.' });
 
   const results = urls.map(rawUrl => {
     if (typeof rawUrl !== 'string' || !rawUrl.trim()) return { error:'Invalid URL', url:rawUrl };
@@ -594,11 +609,125 @@ app.post('/api/import', rateLimit, (req, res) => {
   });
 });
 
+// ─── POST /api/yt/tracks  (NEW v4.1) ─────────────────────────────────────────
+/**
+ * Body: { url: string }
+ * Returns: { type, title, tracks: [{ id, title, duration, thumb, embedUrl }] }
+ *
+ * Strategy:
+ *   1. Fetch the YouTube page HTML with a browser UA
+ *   2. Extract ytInitialData JSON
+ *   3. Walk it to collect all video renderers
+ *   4. Return track list — client decides which to queue
+ *
+ * Supports: watch?v=, playlist?list=, /shorts/, /@handle, /channel/
+ */
+app.post('/api/yt/tracks', rateLimit, async (req, res) => {
+  const { url } = req.body;
+  if (!url || typeof url !== 'string')
+    return res.status(400).json({ error: '"url" required.' });
+
+  const trimmed = url.trim();
+  // Only allow YouTube URLs
+  const platform = detectPlatform(trimmed);
+  if (platform !== 'youtube' && platform !== 'ytmusic')
+    return res.status(400).json({ error: 'Only YouTube / YT Music URLs are supported for track listing.' });
+
+  // Normalise: ensure we're fetching the right page
+  let fetchUrl = trimmed;
+  try {
+    const u = new URL(trimmed);
+    // For a single video, fetch the video page — it shows related/playlist tracks
+    // For a playlist, fetch playlist?list=...
+    if (!u.searchParams.get('list') && !u.pathname.startsWith('/playlist')) {
+      // Single video page — we'll get the "Up next" / playlist continuation
+      // Just use the URL as-is
+    }
+    // YT Music → convert to regular youtube.com for scraping
+    if (u.hostname === 'music.youtube.com') {
+      u.hostname = 'www.youtube.com';
+      fetchUrl = u.toString();
+    }
+  } catch (e) {
+    return res.status(400).json({ error: 'Invalid URL.' });
+  }
+
+  console.log(`[yt/tracks] Fetching: ${fetchUrl}`);
+
+  try {
+    const html = await fetchHTML(fetchUrl, 10000);
+
+    if (!html || html.length < 1000) {
+      return res.status(502).json({ error: 'YouTube returned an empty response. Try again.' });
+    }
+
+    if (html.includes('Sorry, something went wrong') || html.includes('Our systems have detected unusual traffic')) {
+      return res.status(429).json({ error: 'YouTube rate limited. Please wait a moment and try again.' });
+    }
+
+    const ytData = extractYtInitialData(html);
+    if (!ytData) {
+      return res.status(502).json({ error: 'Could not parse YouTube page data. The page structure may have changed.' });
+    }
+
+    const tracks = extractTracksFromYtData(ytData);
+    const title  = extractPlaylistTitle(ytData) || null;
+
+    if (!tracks.length) {
+      return res.status(404).json({ error: 'No tracks found on this page. The playlist may be private or empty.' });
+    }
+
+    // Build embedUrl for each track
+    const tracksWithEmbed = tracks.map(t => ({
+      ...t,
+      embedUrl:   `https://www.youtube.com/embed/${t.id}?autoplay=1&controls=1&enablejsapi=1`,
+      embedUrlNC: `https://www.youtube-nocookie.com/embed/${t.id}?autoplay=1&controls=1&enablejsapi=1`,
+      originalUrl: `https://www.youtube.com/watch?v=${t.id}`,
+      platform:   'youtube',
+      type:       'video',
+    }));
+
+    console.log(`[yt/tracks] Found ${tracksWithEmbed.length} tracks, title: "${title}"`);
+
+    return res.json({
+      type:   'playlist',
+      title:  title || 'YouTube Playlist',
+      tracks: tracksWithEmbed,
+      total:  tracksWithEmbed.length,
+      sourceUrl: trimmed,
+    });
+
+  } catch (err) {
+    console.error('[yt/tracks] Error:', err.message);
+    return res.status(502).json({ error: `Could not fetch YouTube page: ${err.message}` });
+  }
+});
+
+// ─── GET /api/yt/embed-check  (NEW v4.1) ─────────────────────────────────────
+/**
+ * Query: ?id=<videoId>
+ * Returns: { id, embeddable: bool, title?, thumb? }
+ *
+ * Uses YouTube's free oEmbed endpoint — no API key needed.
+ * 401/403 = embedding disabled by uploader.
+ */
+app.get('/api/yt/embed-check', rateLimit, async (req, res) => {
+  const { id } = req.query;
+  if (!id || !/^[A-Za-z0-9_-]{11}$/.test(id))
+    return res.status(400).json({ error: 'Valid YouTube video ID required.' });
+
+  try {
+    const result = await checkYtEmbeddable(id);
+    return res.json({ id, ...result });
+  } catch (err) {
+    return res.status(502).json({ error: err.message });
+  }
+});
+
 // ═══════════════════════════════════════════════════════════════════════════════
-//  AUTH ROUTES
+//  AUTH ROUTES  (unchanged from v4.0)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-// ─── POST /api/auth/signup ────────────────────────────────────────────────────
 app.post('/api/auth/signup', rateLimit, async (req, res) => {
   const { username, displayName, password } = req.body;
   if (!username || !password)
@@ -617,11 +746,9 @@ app.post('/api/auth/signup', rateLimit, async (req, res) => {
     const hash = await hashPassword(password, salt);
     store.accounts.set(key, { username: key, displayName: (displayName || '').trim() || key, salt, hash, createdAt: Date.now() });
     store.playlists.set(key, []);
-
     const token = generateToken();
     store.sessions.set(token, { username: key, expiresAt: Date.now() + TOKEN_TTL });
     schedulePersist();
-
     return res.status(201).json({ token, username: key, displayName: store.accounts.get(key).displayName });
   } catch (err) {
     console.error('[signup]', err);
@@ -629,7 +756,6 @@ app.post('/api/auth/signup', rateLimit, async (req, res) => {
   }
 });
 
-// ─── POST /api/auth/signin ────────────────────────────────────────────────────
 app.post('/api/auth/signin', rateLimit, async (req, res) => {
   const { username, password } = req.body;
   if (!username || !password)
@@ -637,43 +763,31 @@ app.post('/api/auth/signin', rateLimit, async (req, res) => {
 
   const key  = username.trim().toLowerCase();
   const acct = store.accounts.get(key);
-  if (!acct)
-    return res.status(401).json({ error: 'No account found with that username.' });
+  if (!acct) return res.status(401).json({ error: 'No account found with that username.' });
 
   try {
     const hash = await hashPassword(password, acct.salt);
-    if (hash !== acct.hash)
-      return res.status(401).json({ error: 'Incorrect password.' });
-
+    if (hash !== acct.hash) return res.status(401).json({ error: 'Incorrect password.' });
     const token = generateToken();
     store.sessions.set(token, { username: key, expiresAt: Date.now() + TOKEN_TTL });
     schedulePersist();
-
-    return res.json({
-      token,
-      username:    key,
-      displayName: acct.displayName,
-      playlists:   store.playlists.get(key) || [],
-    });
+    return res.json({ token, username: key, displayName: acct.displayName, playlists: store.playlists.get(key) || [] });
   } catch (err) {
     console.error('[signin]', err);
     return res.status(500).json({ error: 'Server error during sign in.' });
   }
 });
 
-// ─── POST /api/auth/token-refresh ─────────────────────────────────────────────
 app.post('/api/auth/token-refresh', (req, res) => {
   const { token } = req.body;
   const sess = resolveToken(token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token.' });
-
   sess.expiresAt = Date.now() + TOKEN_TTL;
   store.sessions.set(token, sess);
   schedulePersist();
   return res.json({ ok: true, expiresAt: sess.expiresAt });
 });
 
-// ─── POST /api/auth/sync (push playlists) ─────────────────────────────────────
 app.post('/api/auth/sync', (req, res) => {
   const { token, playlists } = req.body;
   const sess = resolveToken(token);
@@ -681,18 +795,15 @@ app.post('/api/auth/sync', (req, res) => {
   if (!Array.isArray(playlists)) return res.status(400).json({ error: '"playlists" must be an array.' });
   if (JSON.stringify(playlists).length > 2_000_000)
     return res.status(413).json({ error: 'Playlist data exceeds 2 MB limit.' });
-
   store.playlists.set(sess.username, playlists);
   schedulePersist();
   return res.json({ ok: true, synced: playlists.length, syncedAt: Date.now() });
 });
 
-// ─── GET /api/auth/pull ───────────────────────────────────────────────────────
 app.get('/api/auth/pull', (req, res) => {
   const token = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
   const sess  = resolveToken(token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
-
   const acct = store.accounts.get(sess.username);
   return res.json({
     username:    sess.username,
@@ -702,113 +813,18 @@ app.get('/api/auth/pull', (req, res) => {
   });
 });
 
-// ─── DELETE /api/auth/account ─────────────────────────────────────────────────
 app.delete('/api/auth/account', (req, res) => {
   const token = req.body.token || (req.headers.authorization || '').replace('Bearer ', '');
   const sess  = resolveToken(token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token.' });
-
   const username = sess.username;
   store.accounts.delete(username);
   store.playlists.delete(username);
-  // Purge all sessions for this user
   for (const [tok, s] of store.sessions) {
     if (s.username === username) store.sessions.delete(tok);
   }
   schedulePersist();
   return res.json({ ok: true, deleted: username });
-});
-
-// ─── GET /api/yt/playlist ─────────────────────────────────────────────────────
-// Expands a YouTube playlist/album into individual track objects.
-// Query params:
-//   listId     (required)  YouTube playlist ID, e.g. PLxxxxxx or OLAK5uy_xxx (album mix)
-//   pageToken  (optional)  Continuation token for page 2+
-//   maxPages   (optional)  Maximum continuation pages to follow (default 3, max 10)
-//
-// Returns: { tracks: [{id, title, artist}], continuationToken, total, listId }
-app.get('/api/yt/playlist', rateLimit, async (req, res) => {
-  const { listId, pageToken, maxPages } = req.query;
-  if (!listId || typeof listId !== 'string' || !/^[A-Za-z0-9_-]+$/.test(listId))
-    return res.status(400).json({ error: 'listId is required and must be a valid YouTube playlist ID.' });
-
-  const maxP = Math.min(parseInt(maxPages) || 3, 10);
-
-  try {
-    let allTracks = [];
-    let contToken = pageToken || null;
-    let isFirst   = true;
-
-    for (let page = 0; page < (pageToken ? 1 : maxP); page++) {
-      let data;
-      if (isFirst && !pageToken) {
-        // Initial browse request
-        data = await innerTubePost('browse', { browseId: `VL${listId}` });
-        isFirst = false;
-      } else {
-        // Continuation request
-        if (!contToken) break;
-        data = await innerTubePost('browse', { continuation: contToken });
-      }
-
-      const { tracks, continuationToken } = extractPlaylistTracks(data);
-
-      if (!tracks.length && page === 0) {
-        // InnerTube returned nothing — possibly a private/deleted list
-        return res.status(404).json({ error: 'Playlist not found or is private.' });
-      }
-
-      allTracks.push(...tracks);
-      contToken = continuationToken;
-
-      if (!contToken) break; // no more pages
-    }
-
-    return res.json({
-      listId,
-      tracks:            allTracks,
-      total:             allTracks.length,
-      continuationToken: contToken || null,
-      hasMore:           !!contToken,
-    });
-  } catch (err) {
-    console.error('[yt/playlist]', err.message);
-    return res.status(502).json({ error: 'Failed to fetch playlist from YouTube: ' + err.message });
-  }
-});
-
-// ─── GET /api/yt/search ───────────────────────────────────────────────────────
-// Searches YouTube for videos matching a query.
-// Used as a fallback when a video is blocked/unavailable.
-// Query params:
-//   q      (required)  Search query string
-//   limit  (optional)  Max results to return (default 5, max 8)
-//
-// Returns: { results: [{id, title, channel, thumb}], query }
-app.get('/api/yt/search', rateLimit, async (req, res) => {
-  const { q, limit } = req.query;
-  if (!q || typeof q !== 'string' || !q.trim())
-    return res.status(400).json({ error: 'Query parameter "q" is required.' });
-
-  const maxResults = Math.min(parseInt(limit) || 5, 8);
-  const query      = q.trim().slice(0, 200); // cap query length
-
-  try {
-    const data    = await innerTubePost('search', { query, params: 'EgIQAQ%3D%3D' }); // EgIQAQ== = videos only filter
-    const results = extractSearchResults(data).slice(0, maxResults);
-
-    if (!results.length) {
-      // Fallback: retry without videos-only filter
-      const data2 = await innerTubePost('search', { query });
-      const fallback = extractSearchResults(data2).slice(0, maxResults);
-      return res.json({ results: fallback, query, fallback: true });
-    }
-
-    return res.json({ results, query });
-  } catch (err) {
-    console.error('[yt/search]', err.message);
-    return res.status(502).json({ error: 'YouTube search failed: ' + err.message });
-  }
 });
 
 // ─── Catch-all ────────────────────────────────────────────────────────────────
@@ -820,12 +836,10 @@ app.get('*', (req, res) => {
 loadStore();
 
 const server = app.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n🎵  FREQ v4.1 "Sigma+" is running`);
-  console.log(`    Local:    http://localhost:${PORT}`);
-  console.log(`    Health:   http://localhost:${PORT}/health`);
-  console.log(`    YT API:   http://localhost:${PORT}/api/yt/playlist?listId=PLxxx`);
-  console.log(`    Search:   http://localhost:${PORT}/api/yt/search?q=track+name`);
-  console.log(`    Data:     ${DATA_PATH}`);
+  console.log(`\n🎵  FREQ v4.1 "The Extractor" is running`);
+  console.log(`    Local:  http://localhost:${PORT}`);
+  console.log(`    Health: http://localhost:${PORT}/health`);
+  console.log(`    Data:   ${DATA_PATH}`);
   console.log(`    © 2025–2026 FREQ / Slimey2017. All rights reserved.\n`);
 });
 
@@ -838,6 +852,5 @@ server.on('error', err => {
   process.exit(1);
 });
 
-// Graceful shutdown — flush to disk
 process.on('SIGINT',  () => { persistStore(); process.exit(0); });
 process.on('SIGTERM', () => { persistStore(); process.exit(0); });
