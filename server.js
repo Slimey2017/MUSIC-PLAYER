@@ -34,7 +34,7 @@
  *   - GET  /api/yt/embed-check — detects embed-blocked videos via oEmbed
  *   - resolveYouTube now returns embedBlocked flag + nocookie fallback URL
  *   - All resolvers hardened with better error messages
- *   - node-fetch for server-side HTTP (scraping)
+ *   - Native fetch (Node v18+) for server-side HTTP (scraping)
  *   - User-Agent spoofing so YT page scrape actually works
  */
 
@@ -45,7 +45,7 @@ const cors     = require('cors');
 const path     = require('path');
 const crypto   = require('crypto');
 const fs       = require('fs');
-const fetch    = require('node-fetch');
+// node-fetch not needed — Node v18+ has native fetch built in
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -152,10 +152,11 @@ setInterval(() => {
 const YT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
 async function fetchHTML(url, timeoutMs = 8000) {
-  const ctrl = new (require('events').EventEmitter.captureRejections ? AbortController : (class { abort(){} signal={} }))();
-  const timer = setTimeout(() => ctrl.abort && ctrl.abort(), timeoutMs);
+  const ctrl  = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     const res = await fetch(url, {
+      signal: ctrl.signal,
       headers: {
         'User-Agent': YT_UA,
         'Accept-Language': 'en-US,en;q=0.9',
