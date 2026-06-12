@@ -828,6 +828,66 @@ app.delete('/api/auth/account', (req, res) => {
   return res.json({ ok: true, deleted: username });
 });
 
+// ═══════════════════════════════════════════════════════════════════════════════
+//  NAMED INDEXES  — server-curated playlists fetchable by slug
+//  GET /api/index/:name  → { name, tracks: [...], total, fetchedAt }
+//  GET /api/index        → { indexes: ['flex', ...] }
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Each entry is a resolved track object identical to what /api/resolve returns.
+ * Add more named indexes below by adding a new key.
+ */
+const NAMED_INDEXES = {
+  // Add named indexes here. Each key is the URL slug (e.g. 'flex', 'chill').
+  // Tracks use the same shape as /api/resolve responses.
+  //
+  // Example:
+  // flex: {
+  //   label:       'FLEX',
+  //   description: 'The FREQ FLEX showcase playlist.',
+  //   tracks: [
+  //     {
+  //       platform: 'youtube', type: 'video', id: 'abc123',
+  //       originalUrl: 'https://www.youtube.com/watch?v=abc123',
+  //       embedUrl:    'https://www.youtube.com/embed/abc123?autoplay=1&controls=1&enablejsapi=1',
+  //       embedUrlNC:  'https://www.youtube-nocookie.com/embed/abc123?autoplay=1&controls=1&enablejsapi=1',
+  //       title:       'Track Title',
+  //     },
+  //   ],
+  // },
+};
+
+// GET /api/index  — list all available named indexes
+app.get('/api/index', (req, res) => {
+  const indexes = Object.entries(NAMED_INDEXES).map(([slug, idx]) => ({
+    slug,
+    label:       idx.label,
+    description: idx.description || '',
+    total:       idx.tracks.length,
+  }));
+  return res.json({ indexes });
+});
+
+// GET /api/index/:name  — fetch a named index by slug
+app.get('/api/index/:name', (req, res) => {
+  const slug = req.params.name.toLowerCase().trim();
+  const idx  = NAMED_INDEXES[slug];
+  if (!idx) {
+    return res.status(404).json({
+      error: `No index named "${slug}". Available: ${Object.keys(NAMED_INDEXES).join(', ')}`,
+    });
+  }
+  return res.json({
+    name:      slug,
+    label:     idx.label,
+    description: idx.description || '',
+    tracks:    idx.tracks,
+    total:     idx.tracks.length,
+    fetchedAt: Date.now(),
+  });
+});
+
 // ─── Catch-all ────────────────────────────────────────────────────────────────
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
