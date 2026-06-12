@@ -439,17 +439,41 @@ header {
 .local-audio{width:100%;max-width:480px;accent-color:var(--accent);}
 .local-audio-info{display:flex;justify-content:space-between;width:100%;max-width:480px;font-size:0.58rem;color:var(--text-muted);}
 
-/* ─── Eq/Audio Visualizer dots ─── */
+/* ─── Eq/Audio Visualizer dots — bars/wave/circle/dots all use canvas ─── */
 .audio-eq-bar {
-  width:100%;max-width:480px;height:36px;
-  display:flex;align-items:center;justify-content:center;gap:4px;
-  margin-top:-10px;
+  width:100%;max-width:480px;height:48px;
+  display:flex;align-items:center;justify-content:center;gap:2px;
+  margin-top:-8px;
+  position:relative;
+}
+/* Canvas-based visualizer (replaces dots) */
+#visCanvas {
+  width:100%;height:100%;border-radius:4px;
+  display:block;
+  position:absolute;inset:0;
 }
 .eq-dot {
-  width:5px;height:5px;border-radius:50%;
-  background:var(--accent);opacity:0.35;
-  transition:width 0.08s, height 0.08s, opacity 0.08s;
-  flex-shrink:0;
+  display:none; /* legacy dots hidden; canvas takes over */
+}
+
+/* ─── Playlist Visualizer Overlay (top-right of embed player) ─── */
+#playlistVis {
+  position:absolute;
+  top:10px;right:12px;
+  width:90px;height:36px;
+  z-index:50;
+  pointer-events:none;
+  border-radius:4px;
+  overflow:hidden;
+  opacity:0;
+  transition:opacity 0.3s;
+  background:rgba(0,0,0,0.45);
+  border:1px solid rgba(255,255,255,0.07);
+}
+#playlistVis.active { opacity:1; }
+#playlistVisCanvas {
+  width:100%;height:100%;
+  display:block;
 }
 
 /* ─── Embed ───────────────────────────────────────────────────────── */
@@ -556,25 +580,30 @@ header {
 .aq-btn-row{display:flex;gap:6px;margin-top:6px;}
 .aq-preset-btn{flex:1;background:var(--surface3);border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.5rem;padding:5px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.06em;text-transform:uppercase;transition:color 0.15s,border-color 0.15s;}
 .aq-preset-btn:hover,.aq-preset-btn.active{color:var(--accent);border-color:var(--accent);}
-/* ─── 10-Band Graphic EQ ─────────────────────────────────────────── */
+/* ─── 10-Band Graphic EQ — Studio Level Bar Style ────────────────── */
 .eq-wrap {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 .eq-curve-canvas {
   width: 100%;
-  height: 52px;
+  height: 44px;
   border-radius: var(--radius);
   background: var(--surface3);
   border: 1px solid var(--border);
   display: block;
 }
+/* The 10-band container */
 .eq-bands {
   display: flex;
   gap: 0;
-  height: 100px;
+  height: 130px;
   align-items: stretch;
+  background: var(--surface3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
 }
 .eq-band {
   flex: 1;
@@ -582,79 +611,94 @@ header {
   flex-direction: column;
   align-items: center;
   justify-content: flex-end;
-  gap: 4px;
-  padding: 0 2px;
+  gap: 0;
+  padding: 4px 1px 3px;
   position: relative;
+  cursor: ns-resize;
+  user-select: none;
 }
 .eq-band:not(:last-child) {
   border-right: 1px solid var(--border);
 }
-/* The slider track + thumb using rotate trick */
+.eq-band:hover { background: rgba(255,255,255,0.02); }
+/* The tall track area for drag interaction */
 .eq-band-track {
   position: relative;
   width: 100%;
-  height: 72px;
+  flex: 1;
   display: flex;
-  align-items: center;
+  align-items: stretch;
   justify-content: center;
+  cursor: ns-resize;
 }
+/* Hidden range input — covers the entire band for a11y + drag */
 .eq-band-slider {
-  /* rotate the range 90° so it goes bottom-to-top */
-  writing-mode: horizontal-tb;
-  appearance: slider-vertical;
-  -webkit-appearance: slider-vertical;
-  width: 20px;
-  height: 68px;
-  accent-color: var(--accent);
-  cursor: pointer;
-  background: transparent;
-  outline: none;
-  /* Fallback for browsers that don't support slider-vertical */
-  transform: rotate(-90deg);
-  transform-origin: center center;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: ns-resize;
+  writing-mode: vertical-lr;
+  direction: rtl;
+  margin: 0;
+  padding: 0;
 }
-/* Override transform for browsers that DO support slider-vertical natively */
-@supports (-webkit-appearance: slider-vertical) {
-  .eq-band-slider {
-    transform: none;
-    -webkit-appearance: slider-vertical;
-  }
+/* The visual bar column */
+.eq-band-col {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  pointer-events: none;
+}
+/* Zero center line */
+.eq-zero-line {
+  position: absolute;
+  left: 0; right: 0;
+  top: 50%;
+  height: 1px;
+  background: rgba(255,255,255,0.14);
+  pointer-events: none;
+  z-index: 1;
+}
+/* The coloured gain bar */
+.eq-band-bar {
+  position: absolute;
+  left: 20%;
+  right: 20%;
+  border-radius: 2px 2px 0 0;
+  pointer-events: none;
+  transition: height 0.06s, top 0.06s, background 0.1s;
+  z-index: 2;
+}
+/* Level segments — subtle segmented look */
+.eq-band-segments {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
 }
 .eq-band-db {
-  font-size: 0.38rem;
+  font-size: 0.36rem;
   color: var(--accent);
   font-family: 'Space Mono', monospace;
   font-weight: 700;
-  letter-spacing: 0.02em;
-  min-width: 22px;
+  letter-spacing: 0.01em;
   text-align: center;
-  height: 12px;
-  line-height: 12px;
+  height: 13px;
+  line-height: 13px;
+  flex-shrink: 0;
 }
 .eq-band-label {
-  font-size: 0.37rem;
+  font-size: 0.32rem;
   color: var(--text-muted);
-  letter-spacing: 0.03em;
+  letter-spacing: 0.02em;
   text-transform: uppercase;
-  margin-bottom: 2px;
-}
-.eq-zero-line {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 50%;
-  height: 1px;
-  background: var(--border);
-  pointer-events: none;
-}
-.eq-band-bar {
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 3px;
-  border-radius: 2px;
-  pointer-events: none;
-  transition: height 0.08s, top 0.08s, background 0.15s;
+  text-align: center;
+  flex-shrink: 0;
+  margin-bottom: 1px;
 }
 .eq-reset-btn {
   background: none;
@@ -1010,7 +1054,7 @@ body.oled-mode {
     <button class="header-tag" id="miniBtn" style="cursor:pointer;background:none;" title="Mini sidebar">⇄</button>
     <button class="header-tag" id="fullscreenBtn" style="cursor:pointer;background:none;" title="Fullscreen player">⛶</button>
     <button class="header-tag" id="shortcutsBtn" style="cursor:pointer;background:none;" title="Keyboard shortcuts">? Keys</button>
-    <div class="header-tag">v4.0</div>
+    <div class="header-tag">v4.2</div>
   </div>
 </header>
 
@@ -1204,6 +1248,11 @@ body.oled-mode {
 
       <div class="embed-loading hidden" id="embedLoading"><div class="spinner"></div></div>
 
+      <!-- Playlist mini-visualizer (top-right corner, shown during online playback) -->
+      <div id="playlistVis">
+        <canvas id="playlistVisCanvas"></canvas>
+      </div>
+
       <!-- Embed-Block Banner -->
       <div id="embedBlockBanner" style="
         display:none;position:absolute;inset:0;z-index:200;
@@ -1241,7 +1290,7 @@ body.oled-mode {
       <div class="local-meta" id="localMeta">Local File</div>
       <audio class="local-audio" id="localAudio" controls></audio>
       <div class="audio-eq-bar" id="eqVisualizer">
-        <!-- bars injected by JS -->
+        <canvas id="visCanvas"></canvas>
       </div>
       <div class="local-audio-info">
         <span id="localFormat">—</span>
@@ -2347,12 +2396,13 @@ function buildEQBands() {
   const container = $('eqBands');
   if (!container) return;
 
+  // Build each band as a clickable/draggable level bar column
   container.innerHTML = EQ_BANDS.map((b, i) => {
     const val = AQ_DEFAULTS.eq[b] || 0;
     const col = EQ_COLORS[i];
-    return `<div class="eq-band" data-band="${b}">
+    return `<div class="eq-band" data-band="${b}" title="${b} Hz">
       <div class="eq-band-db" id="eqDb_${b}">${val > 0 ? '+' + val : val}</div>
-      <div class="eq-band-track">
+      <div class="eq-band-track" id="eqTrack_${b}">
         <div class="eq-zero-line"></div>
         <div class="eq-band-bar" id="eqBar_${b}" style="background:${col};"></div>
         <input
@@ -2363,7 +2413,8 @@ function buildEQBands() {
           value="${val}"
           data-band="${b}"
           data-color="${col}"
-          title="${b} Hz: ${val > 0 ? '+' : ''}${val} dB"
+          orient="vertical"
+          title="${b} Hz"
         />
       </div>
       <span class="eq-band-label">${b}</span>
@@ -2372,34 +2423,60 @@ function buildEQBands() {
 
   // Wire all sliders
   EQ_BANDS.forEach(b => {
-    const sl  = $('eqSlider_'  + b);
-    const dbEl = $('eqDb_'    + b);
+    const sl   = $('eqSlider_' + b);
+    const dbEl = $('eqDb_'     + b);
     const bar  = $('eqBar_'   + b);
+    const track = $('eqTrack_' + b);
     if (!sl) return;
 
-    function updateBand() {
-      const v   = parseFloat(sl.value);
+    function updateBand(v) {
+      v = Math.max(-12, Math.min(12, v));
       AQ_DEFAULTS.eq[b] = v;
-      const label = (v > 0 ? '+' : '') + v;
+      sl.value = v;
+      const label = (v > 0 ? '+' : '') + v.toFixed(1).replace(/\.0$/, '');
       dbEl.textContent = label;
+      dbEl.style.color = v === 0 ? 'var(--text-muted)' : (v > 0 ? sl.dataset.color : 'var(--accent2)');
       sl.title = `${b} Hz: ${label} dB`;
-      // Positive = bar grows up from center, negative = down
-      // band-track height = 72px, zero at 50% = 36px
-      const halfH = 36;
+
+      // Bar geometry: track is 100% height. Zero is at 50%.
+      // Positive: bar goes from 50% up → top is (50% - height), bottom is 50%
+      // Negative: bar goes from 50% down → top is 50%, bottom is (50% + height)
+      const trackH = track.offsetHeight || 88; // px, fallback
+      const halfH = trackH / 2;
       const pct   = Math.abs(v) / 12; // 0..1
       const barH  = Math.round(pct * halfH);
-      bar.style.height = barH + 'px';
-      bar.style.top    = v >= 0 ? (halfH - barH) + 'px' : halfH + 'px';
-      bar.style.background = v >= 0 ? sl.dataset.color : 'var(--accent2)';
-      dbEl.style.color = v === 0 ? 'var(--text-muted)' : (v > 0 ? sl.dataset.color : 'var(--accent2)');
+      if (v >= 0) {
+        bar.style.height = barH + 'px';
+        bar.style.top    = (halfH - barH) + 'px';
+        bar.style.borderRadius = '3px 3px 0 0';
+        bar.style.background = sl.dataset.color;
+      } else {
+        bar.style.height = barH + 'px';
+        bar.style.top    = halfH + 'px';
+        bar.style.borderRadius = '0 0 3px 3px';
+        bar.style.background = 'var(--accent2)';
+      }
+
       // Update audio filter
       if (eqFilters[b]) eqFilters[b].gain.value = v;
       applyAudioToLocalIfActive();
       drawEQCurve();
     }
 
-    updateBand(); // init position on load
-    sl.addEventListener('input', updateBand);
+    // Range input fires on drag
+    sl.addEventListener('input', () => updateBand(parseFloat(sl.value)));
+
+    // Click on the track area to set value by position
+    track.addEventListener('click', (e) => {
+      if (e.target === sl) return; // let slider handle its own events
+      const rect = track.getBoundingClientRect();
+      const relY  = e.clientY - rect.top;
+      const frac  = relY / rect.height; // 0=top, 1=bottom
+      const val   = 12 - frac * 24;    // maps 0→+12, 0.5→0, 1→-12
+      updateBand(parseFloat(val.toFixed(1)));
+    });
+
+    updateBand(AQ_DEFAULTS.eq[b] || 0); // init position on load
   });
 
   drawEQCurve();
@@ -2411,8 +2488,15 @@ function buildEQBands() {
       EQ_BANDS.forEach(b => {
         AQ_DEFAULTS.eq[b] = 0;
         const sl = $('eqSlider_' + b);
-        if (sl) { sl.value = 0; sl.dispatchEvent(new Event('input')); }
+        if (sl) sl.value = 0;
+        const dbEl = $('eqDb_' + b);
+        if (dbEl) { dbEl.textContent = '0'; dbEl.style.color = 'var(--text-muted)'; }
+        const bar = $('eqBar_' + b);
+        if (bar) { bar.style.height = '0px'; bar.style.top = '50%'; }
+        if (eqFilters[b]) eqFilters[b].gain.value = 0;
       });
+      drawEQCurve();
+      saveAQ();
       playSfx('click');
     };
   }
@@ -2569,6 +2653,15 @@ function initAQPanel() {
   bindAQSelect('aqReverbRoom',   'reverbRoom');
   bindAQSelect('aqCompRatio',    'compRatio');
   bindAQSelect('aqVisStyle',     'visStyle');
+  // Restart visualizer when style changes so canvas renders new mode
+  const vsEl = $('aqVisStyle');
+  if (vsEl) vsEl.addEventListener('change', () => {
+    if (AQ_DEFAULTS.visualizer && analyserNode) {
+      if (visFAF) cancelAnimationFrame(visFAF);
+      runVisualizer();
+    }
+    if (_plVisRAF) { cancelAnimationFrame(_plVisRAF); runPlaylistVis(); }
+  });
   bindAQSelect('aqSleepDur',     'sleepDur');
   bindAQToggle('aqSpatial',      'spatial');
   bindAQToggle('aqMono',         'mono');
@@ -2582,6 +2675,18 @@ function initAQPanel() {
   bindAQToggle('aqReplayGain',   'replayGain');
   bindAQToggle('aqHiRes',        'hiRes');
   bindAQToggle('aqVisualizer',   'visualizer');
+  // When toggled, restart or stop canvas visualizer
+  const vEl = $('aqVisualizer');
+  if (vEl) vEl.addEventListener('change', () => {
+    if (AQ_DEFAULTS.visualizer && analyserNode) {
+      if (visFAF) cancelAnimationFrame(visFAF);
+      runVisualizer();
+    } else {
+      if (visFAF) { cancelAnimationFrame(visFAF); visFAF = null; }
+      const canvas = $('visCanvas');
+      if (canvas) canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+    }
+  });
   bindAQToggle('aqLoudnessNorm', 'loudnessNorm');
   bindAQToggle('aqAutoAdvance',  'autoAdvance');
   bindAQToggle('aqSleepTimer',   'sleepTimer');
@@ -2796,31 +2901,232 @@ function updateAudioGraph() {
   keys.forEach(k => { if (eqFilters[k]) eqFilters[k].gain.value = AQ_DEFAULTS.eq[k] || 0; });
 }
 
-// EQ Visualizer dots
+// ─── Canvas Visualizer — supports bars, wave, circle, dots ───────────────────
+let visRAF = null;  // alias kept for compatibility
+// visFAF alias is also used below
+
 function buildEQVisualizer() {
-  const container = $('eqVisualizer');
-  container.innerHTML = '';
-  for (let i = 0; i < 16; i++) {
-    const dot = document.createElement('div');
-    dot.className = 'eq-dot';
-    container.appendChild(dot);
+  // Nothing to inject — canvas is already in HTML
+  // Resize canvas to match container
+  const canvas = $('visCanvas');
+  if (!canvas) return;
+  const wrap = $('eqVisualizer');
+  if (wrap) {
+    canvas.width  = wrap.offsetWidth  || 480;
+    canvas.height = wrap.offsetHeight || 48;
   }
 }
 
+function getAccentColor() {
+  return getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#e8ff47';
+}
+function getAccent2Color() {
+  return getComputedStyle(document.documentElement).getPropertyValue('--accent2').trim() || '#ff4757';
+}
+function getAccent3Color() {
+  return getComputedStyle(document.documentElement).getPropertyValue('--accent3').trim() || '#00d4ff';
+}
+
 function runVisualizer() {
-  if (!analyserNode || !AQ_DEFAULTS.visualizer) return;
-  const dots = $('eqVisualizer').querySelectorAll('.eq-dot');
-  const data = new Uint8Array(analyserNode.frequencyBinCount);
-  analyserNode.getByteFrequencyData(data);
-  dots.forEach((dot, i) => {
-    const idx = Math.floor(i * data.length / dots.length);
-    const energy = data[idx] / 255; // 0..1
-    const size   = Math.max(3, Math.round(energy * 14)); // 3px idle → 14px peak
-    dot.style.width  = size + 'px';
-    dot.style.height = size + 'px';
-    dot.style.opacity = 0.3 + energy * 0.7;
-  });
+  if (!analyserNode || !AQ_DEFAULTS.visualizer) {
+    // Stop visualizer if disabled
+    const canvas = $('visCanvas');
+    if (canvas) {
+      const ctx = canvas.getContext('2d');
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+    return;
+  }
+
+  const canvas = $('visCanvas');
+  if (!canvas) return;
+
+  // Keep canvas sized to container
+  const wrap = $('eqVisualizer');
+  if (wrap && (canvas.width !== wrap.offsetWidth || canvas.height !== wrap.offsetHeight)) {
+    canvas.width  = wrap.offsetWidth  || 480;
+    canvas.height = wrap.offsetHeight || 48;
+  }
+
+  const ctx    = canvas.getContext('2d');
+  const W      = canvas.width;
+  const H      = canvas.height;
+  const style  = AQ_DEFAULTS.visStyle || 'bars';
+  const accent = getAccentColor();
+  const accent2 = getAccent2Color();
+  const accent3 = getAccent3Color();
+
+  const bufLen = analyserNode.frequencyBinCount; // = fftSize/2
+  const freqData = new Uint8Array(bufLen);
+  const timeData = new Uint8Array(bufLen);
+  analyserNode.getByteFrequencyData(freqData);
+  analyserNode.getByteTimeDomainData(timeData);
+
+  ctx.clearRect(0, 0, W, H);
+
+  if (style === 'bars') {
+    const barCount = Math.min(bufLen, 32);
+    const barW = W / barCount;
+    for (let i = 0; i < barCount; i++) {
+      const idx = Math.floor(i * bufLen / barCount);
+      const energy = freqData[idx] / 255;
+      const barH = energy * H;
+      // Gradient from accent2 at bottom to accent at top
+      const grad = ctx.createLinearGradient(0, H - barH, 0, H);
+      grad.addColorStop(0, accent);
+      grad.addColorStop(1, accent2 + '88');
+      ctx.fillStyle = grad;
+      ctx.fillRect(i * barW + 1, H - barH, barW - 2, barH);
+    }
+  } else if (style === 'wave') {
+    ctx.beginPath();
+    ctx.strokeStyle = accent;
+    ctx.lineWidth   = 1.5;
+    const sliceW = W / bufLen;
+    let x = 0;
+    for (let i = 0; i < bufLen; i++) {
+      const v = timeData[i] / 128;
+      const y = (v * H) / 2;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+      x += sliceW;
+    }
+    ctx.lineTo(W, H / 2);
+    ctx.stroke();
+  } else if (style === 'circle') {
+    const cx = W / 2, cy = H / 2;
+    const r  = Math.min(cx, cy) - 4;
+    const count = Math.min(bufLen, 64);
+    ctx.beginPath();
+    for (let i = 0; i < count; i++) {
+      const idx = Math.floor(i * bufLen / count);
+      const energy = freqData[idx] / 255;
+      const angle  = (i / count) * Math.PI * 2 - Math.PI / 2;
+      const len    = r * 0.3 + energy * r * 0.7;
+      const x1 = cx + Math.cos(angle) * r * 0.3;
+      const y1 = cy + Math.sin(angle) * r * 0.3;
+      const x2 = cx + Math.cos(angle) * len;
+      const y2 = cy + Math.sin(angle) * len;
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+    }
+    ctx.strokeStyle = accent;
+    ctx.lineWidth   = 1.5;
+    ctx.stroke();
+    // Center dot
+    ctx.beginPath();
+    ctx.arc(cx, cy, 2.5, 0, Math.PI * 2);
+    ctx.fillStyle = accent;
+    ctx.fill();
+  } else if (style === 'dots') {
+    const count  = Math.min(bufLen, 24);
+    const spacing = W / (count + 1);
+    for (let i = 0; i < count; i++) {
+      const idx    = Math.floor(i * bufLen / count);
+      const energy = freqData[idx] / 255;
+      const size   = Math.max(2, energy * (H / 2 - 2));
+      const x      = spacing * (i + 1);
+      const y      = H / 2;
+      ctx.beginPath();
+      ctx.arc(x, y, size, 0, Math.PI * 2);
+      ctx.fillStyle = i % 2 === 0 ? accent : accent3;
+      ctx.globalAlpha = 0.4 + energy * 0.6;
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+  }
+
   visFAF = requestAnimationFrame(runVisualizer);
+}
+
+// ─── Playlist mini-visualizer (ambient for embed player) ─────────────────────
+let _plVisRAF = null;
+let _plVisAnalyser = null; // will mirror main analyserNode when available
+
+function runPlaylistVis() {
+  const pvc  = $('playlistVisCanvas');
+  const pvEl = $('playlistVis');
+  if (!pvc || !pvEl) return;
+
+  // Resize
+  pvc.width  = pvEl.offsetWidth  || 90;
+  pvc.height = pvEl.offsetHeight || 36;
+
+  const ctx   = pvc.getContext('2d');
+  const W     = pvc.width;
+  const H     = pvc.height;
+  const style = AQ_DEFAULTS.visStyle || 'bars';
+  const accent = getAccentColor();
+  const accent2 = getAccent2Color();
+
+  // If we have a real analyser (local file), use it; otherwise animate idle
+  if (analyserNode) {
+    const bufLen  = analyserNode.frequencyBinCount;
+    const freqData = new Uint8Array(bufLen);
+    analyserNode.getByteFrequencyData(freqData);
+
+    ctx.clearRect(0, 0, W, H);
+    if (style === 'wave') {
+      const timeData = new Uint8Array(bufLen);
+      analyserNode.getByteTimeDomainData(timeData);
+      ctx.beginPath();
+      const sliceW = W / bufLen;
+      let x = 0;
+      for (let i = 0; i < bufLen; i++) {
+        const v = timeData[i] / 128;
+        const y = (v * H) / 2;
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        x += sliceW;
+      }
+      ctx.strokeStyle = accent;
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
+    } else {
+      const barCount = 18;
+      const barW = W / barCount;
+      for (let i = 0; i < barCount; i++) {
+        const idx = Math.floor(i * bufLen / barCount);
+        const energy = freqData[idx] / 255;
+        const barH = energy * H;
+        ctx.fillStyle = i < barCount / 2 ? accent : accent2;
+        ctx.globalAlpha = 0.85;
+        ctx.fillRect(i * barW + 0.5, H - barH, barW - 1.5, barH);
+        ctx.globalAlpha = 1;
+      }
+    }
+  } else {
+    // Idle animation — gentle breathing bars
+    const t = Date.now() / 800;
+    ctx.clearRect(0, 0, W, H);
+    const barCount = 18;
+    const barW = W / barCount;
+    for (let i = 0; i < barCount; i++) {
+      const energy = (Math.sin(t + i * 0.5) + 1) / 2 * 0.35 + 0.05;
+      const barH = energy * H;
+      ctx.fillStyle = accent;
+      ctx.globalAlpha = 0.4;
+      ctx.fillRect(i * barW + 0.5, H - barH, barW - 1.5, barH);
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  _plVisRAF = requestAnimationFrame(runPlaylistVis);
+}
+
+function startPlaylistVis() {
+  const pvEl = $('playlistVis');
+  if (!pvEl || !AQ_DEFAULTS.visualizer) return;
+  pvEl.classList.add('active');
+  if (_plVisRAF) cancelAnimationFrame(_plVisRAF);
+  runPlaylistVis();
+}
+
+function stopPlaylistVis() {
+  if (_plVisRAF) { cancelAnimationFrame(_plVisRAF); _plVisRAF = null; }
+  const pvEl = $('playlistVis');
+  if (pvEl) pvEl.classList.remove('active');
+  const pvc = $('playlistVisCanvas');
+  if (pvc) pvc.getContext('2d').clearRect(0, 0, pvc.width, pvc.height);
 }
 
 // Sleep timer
@@ -3016,8 +3322,8 @@ function renderQueue() {
     const durStr     = item.duration ? `<span class="card-duration">${item.duration}</span>` : '';
     const starClass  = item.starred ? 'starred-icon' : '';
     const isYT = item.platform === 'youtube' || item.platform === 'ytmusic';
-    const fetchBtn = (isYT && (item.type === 'playlist' || item.type === 'video' || item.type === 'channel'))
-      ? `<button class="card-fetch-btn" onclick="event.stopPropagation();openYtTrackModal('${i}')" title="Browse tracks on this playlist/video">⬡ Tracks</button>`
+    const fetchBtn = isYT
+      ? `<button class="card-fetch-btn" onclick="event.stopPropagation();openYtTrackModal('${i}')" title="Browse tracks / playlist">⬡ Tracks</button>`
       : '';
     return `<div
         class="playlist-card ${isActive?'active':''} ${item.starred?'starred':''}"
@@ -3234,6 +3540,8 @@ function playItem(index) {
     buildEQVisualizer();
     if (visFAF) cancelAnimationFrame(visFAF);
     if (analyserNode && AQ_DEFAULTS.visualizer) runVisualizer();
+    // Stop the embed playlist vis when playing local
+    if (typeof stopPlaylistVis === 'function') stopPlaylistVis();
 
   } else {
     // Stop local playback
@@ -3254,6 +3562,8 @@ function playItem(index) {
     }, 3500);
     // v4.1: schedule embed-block detection after load window
     if (typeof scheduleEmbedCheck === 'function') scheduleEmbedCheck(item);
+    // Start playlist mini-visualizer
+    if (typeof startPlaylistVis === 'function') startPlaylistVis();
   }
   renderQueue();
   scrollActiveIntoView();
@@ -3659,15 +3969,18 @@ function renderYtTrackList() {
   }
 
   ytTrackList.innerHTML = ytFetchedTracks.map((t, i) => {
-    const inQueue = state.queue.some(q => q.id === t.id);
+    const inQueue  = state.queue.some(q => q.id === t.id);
     const selClass = ytSelectedIds.has(t.id) ? 'selected' : '';
+    const blockedBadge = t.embedBlocked
+      ? `<span style="font-size:0.38rem;color:var(--accent2);border:1px solid var(--accent2);border-radius:2px;padding:1px 4px;letter-spacing:0.04em;margin-left:3px;">🔒 blocked</span>`
+      : '';
     return `<div class="yttrack-item ${selClass}" data-id="${t.id}" data-idx="${i}">
       <label style="display:contents;cursor:pointer;">
         <input type="checkbox" class="yttrack-checkbox" ${ytSelectedIds.has(t.id)?'checked':''} data-id="${t.id}" />
         <span class="yttrack-num">${i+1}</span>
         <img class="yttrack-thumb" src="${t.thumb}" loading="lazy" onerror="this.src=''" alt="" />
         <div class="yttrack-info">
-          <div class="yttrack-name" title="${t.title.replace(/"/g,'&quot;')}">${t.title}</div>
+          <div class="yttrack-name" title="${t.title.replace(/"/g,'&quot;')}">${t.title}${blockedBadge}</div>
           ${t.duration ? `<div class="yttrack-dur">${t.duration}</div>` : ''}
         </div>
       </label>
@@ -3781,6 +4094,7 @@ function showEmbedBlockBanner(item) {
 /**
  * After loading a YouTube video embed, wait 4s and check if it loaded.
  * If the iframe is still showing a blank/error state, check oEmbed.
+ * On embed-block confirmed: auto-try nocookie first, then show banner.
  */
 function scheduleEmbedCheck(item) {
   if (_embedCheckTimer) clearTimeout(_embedCheckTimer);
@@ -3797,8 +4111,21 @@ function scheduleEmbedCheck(item) {
       const res  = await fetch(`/api/yt/embed-check?id=${encodeURIComponent(item.id)}`);
       const data = await res.json();
       if (!data.embeddable) {
-        showEmbedBlockBanner(item);
-        showToast('Embed Restricted', 'This video can\'t be embedded. Options shown below.', 'error');
+        // First, auto-try the nocookie URL silently
+        const ncUrl = item.embedUrlNC || (item.embedUrl || '').replace('www.youtube.com', 'www.youtube-nocookie.com');
+        if (ncUrl && !embedFrame.src.includes('nocookie')) {
+          embedFrame.src = ncUrl;
+          showStatus('Trying nocookie embed…', 'youtube-nocookie.com');
+          // Check again after 3s — if STILL blocked show the banner
+          setTimeout(() => {
+            if (_currentEmbedItem?.id !== item.id) return;
+            showEmbedBlockBanner(item);
+            showToast('Embed Restricted', 'Tried nocookie — still blocked. Options shown.', 'error');
+          }, 3000);
+        } else {
+          showEmbedBlockBanner(item);
+          showToast('Embed Restricted', 'This video can\'t be embedded.', 'error');
+        }
       }
     } catch { /* server unreachable — don't show banner */ }
   }, 3500);
