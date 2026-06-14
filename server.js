@@ -178,6 +178,41 @@ async function fetchHTML(url, timeoutMs = 8000) {
  * Parses YouTube's ytInitialData JSON embedded in the page source.
  * Returns parsed object or null.
  */
+function extractJsonObject(html, startIdx) {
+  let depth = 0;
+  let inString = false;
+  let stringQuote = null;
+  let escaped = false;
+
+  for (let i = startIdx; i < html.length; i++) {
+    const ch = html[i];
+    if (inString) {
+      if (escaped) { escaped = false; continue; }
+      if (ch === '\\') { escaped = true; continue; }
+      if (ch === stringQuote) { inString = false; stringQuote = null; }
+      continue;
+    }
+
+    if (ch === '"' || ch === "'") {
+      inString = true;
+      stringQuote = ch;
+      continue;
+    }
+
+    if (ch === '{') {
+      depth++;
+      continue;
+    }
+
+    if (ch === '}') {
+      depth--;
+      if (depth === 0) return html.slice(startIdx, i + 1);
+    }
+  }
+
+  return null;
+}
+
 function extractYtInitialData(html) {
   // Attempt to locate ytInitialData by marker and extract a balanced JSON object.
   const markers = [
@@ -188,28 +223,21 @@ function extractYtInitialData(html) {
   ];
 
   for (const marker of markers) {
-    const idx = html.indexOf(marker);
-    if (idx === -1) continue;
-    // Find the first '{' after the marker
-    const openIdx = html.indexOf('{', idx);
-    if (openIdx === -1) continue;
-
-    // Walk the string and find the matching closing '}' using a depth counter
-    let depth = 0;
-    let endIdx = -1;
-    for (let i = openIdx; i < html.length; i++) {
-      const ch = html[i];
-      if (ch === '{') depth++; else if (ch === '}') depth--;
-      if (depth === 0) { endIdx = i; break; }
-    }
-    if (endIdx === -1) continue;
-
-    const jsonStr = html.slice(openIdx, endIdx + 1);
-    try {
-      return JSON.parse(jsonStr);
-    } catch (err) {
-      // Fallthrough to try other markers/strategies
-      continue;
+    let idx = html.indexOf(marker);
+    while (idx !== -1) {
+      const assignIdx = html.indexOf('=', idx);
+      if (assignIdx !== -1) {
+        const openIdx = html.indexOf('{', assignIdx);
+        if (openIdx !== -1) {
+          const jsonStr = extractJsonObject(html, openIdx);
+          if (jsonStr) {
+            try { return JSON.parse(jsonStr); } catch (err) {
+              // Fall through to later occurrences / other markers
+            }
+          }
+        }
+      }
+      idx = html.indexOf(marker, idx + marker.length);
     }
   }
 
@@ -961,6 +989,11 @@ const SUPPORT_INFO = {
   contact: 'support@freq.app',
   docsUrl: 'https://freqapp.example/docs',
   github: 'https://github.com/slimey2017/freq',
+  knownIssues: [
+    'Server-stored accounts and playlists are persisted to freq_data.json. Ensure the app folder is writable so data remains after restart.',
+    'Audio EQ and visualizer controls apply to local files. Embedded streaming playback uses an ambient mini visualizer due to browser security restrictions.',
+    'YouTube track scraping may fail for private, geo-restricted, or changed YouTube page layouts. Refresh or try again later if it happens.',
+  ],
   indexes: Object.keys(NAMED_INDEXES),
 };
 
