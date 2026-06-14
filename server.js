@@ -19,6 +19,9 @@
  *   → { id, embeddable: bool, nocookie: bool }
  *   Checks YouTube oEmbed endpoint to detect embedding restrictions.
  *
+ * GET  /api/support              → server status, docs links, support contact
+ * GET  /api/index                → list all named indexes available from server
+ * GET  /api/index/:name          → fetch a named server index playlist by slug
  * GET  /health
  * GET  /redirect                 ?url=<encoded>&platform=<name>
  *
@@ -98,7 +101,7 @@ function loadStore() {
 let persistTimer = null;
 function schedulePersist() {
   if (persistTimer) clearTimeout(persistTimer);
-  persistTimer = setTimeout(persistStore, 800);
+  persistTimer = setTimeout(persistStore, 200);
 }
 
 // ─── Crypto helpers ───────────────────────────────────────────────────────────
@@ -176,15 +179,18 @@ async function fetchHTML(url, timeoutMs = 8000) {
  * Returns parsed object or null.
  */
 function extractYtInitialData(html) {
-  // YT embeds var ytInitialData = {...}; in a <script> tag
-  const match = html.match(/var ytInitialData\s*=\s*(\{.+?\});\s*(?:var |<\/script>)/s);
-  if (!match) {
-    // Alternate: window["ytInitialData"] = {...};
-    const match2 = html.match(/window\["ytInitialData"\]\s*=\s*(\{.+?\});\s*(?:<\/script>|var )/s);
-    if (!match2) return null;
-    try { return JSON.parse(match2[1]); } catch { return null; }
+  const patterns = [
+    /var ytInitialData\s*=\s*(\{.+?\})\s*(?:;|<\/script>)/s,
+    /window\["ytInitialData"\]\s*=\s*(\{.+?\})\s*(?:;|<\/script>)/s,
+    /window\.ytInitialData\s*=\s*(\{.+?\})\s*(?:;|<\/script>)/s,
+    /ytInitialData\s*=\s*(\{.+?\})\s*(?:;|<\/script>)/s,
+  ];
+  for (const pattern of patterns) {
+    const match = html.match(pattern);
+    if (!match) continue;
+    try { return JSON.parse(match[1]); } catch (err) { continue; }
   }
-  try { return JSON.parse(match[1]); } catch { return null; }
+  return null;
 }
 
 /**
@@ -217,6 +223,19 @@ function extractTracksFromYtData(data) {
       if (id && !seen.has(id)) {
         seen.add(id);
         const title   = r.title?.runs?.[0]?.text || r.title?.simpleText || 'Unknown';
+        const durText = r.lengthText?.simpleText || null;
+        const thumbs  = r.thumbnail?.thumbnails || [];
+        const thumb   = thumbs[thumbs.length - 1]?.url || `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
+        tracks.push({ id, title, duration: durText, thumb });
+      }
+    }
+    // compactVideoRenderer (compact playlists / mobile-style lists)
+    if (obj.compactVideoRenderer) {
+      const r  = obj.compactVideoRenderer;
+      const id = r.videoId;
+      if (id && !seen.has(id)) {
+        seen.add(id);
+        const title   = r.title?.simpleText || r.title?.runs?.[0]?.text || 'Unknown';
         const durText = r.lengthText?.simpleText || null;
         const thumbs  = r.thumbnail?.thumbnails || [];
         const thumb   = thumbs[thumbs.length - 1]?.url || `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
@@ -750,6 +769,7 @@ app.post('/api/auth/signup', rateLimit, async (req, res) => {
     const token = generateToken();
     store.sessions.set(token, { username: key, expiresAt: Date.now() + TOKEN_TTL });
     schedulePersist();
+    persistStore();
     return res.status(201).json({ token, username: key, displayName: store.accounts.get(key).displayName });
   } catch (err) {
     console.error('[signup]', err);
@@ -772,6 +792,7 @@ app.post('/api/auth/signin', rateLimit, async (req, res) => {
     const token = generateToken();
     store.sessions.set(token, { username: key, expiresAt: Date.now() + TOKEN_TTL });
     schedulePersist();
+    persistStore();
     return res.json({ token, username: key, displayName: acct.displayName, playlists: store.playlists.get(key) || [] });
   } catch (err) {
     console.error('[signin]', err);
@@ -786,6 +807,7 @@ app.post('/api/auth/token-refresh', (req, res) => {
   sess.expiresAt = Date.now() + TOKEN_TTL;
   store.sessions.set(token, sess);
   schedulePersist();
+  persistStore();
   return res.json({ ok: true, expiresAt: sess.expiresAt });
 });
 
@@ -798,6 +820,7 @@ app.post('/api/auth/sync', (req, res) => {
     return res.status(413).json({ error: 'Playlist data exceeds 2 MB limit.' });
   store.playlists.set(sess.username, playlists);
   schedulePersist();
+  persistStore();
   return res.json({ ok: true, synced: playlists.length, syncedAt: Date.now() });
 });
 
@@ -825,6 +848,7 @@ app.delete('/api/auth/account', (req, res) => {
     if (s.username === username) store.sessions.delete(tok);
   }
   schedulePersist();
+  persistStore();
   return res.json({ ok: true, deleted: username });
 });
 
@@ -839,24 +863,84 @@ app.delete('/api/auth/account', (req, res) => {
  * Add more named indexes below by adding a new key.
  */
 const NAMED_INDEXES = {
-  // Add named indexes here. Each key is the URL slug (e.g. 'flex', 'chill').
-  // Tracks use the same shape as /api/resolve responses.
-  //
-  // Example:
-  // flex: {
-  //   label:       'FLEX',
-  //   description: 'The FREQ FLEX showcase playlist.',
-  //   tracks: [
-  //     {
-  //       platform: 'youtube', type: 'video', id: 'abc123',
-  //       originalUrl: 'https://www.youtube.com/watch?v=abc123',
-  //       embedUrl:    'https://www.youtube.com/embed/abc123?autoplay=1&controls=1&enablejsapi=1',
-  //       embedUrlNC:  'https://www.youtube-nocookie.com/embed/abc123?autoplay=1&controls=1&enablejsapi=1',
-  //       title:       'Track Title',
-  //     },
-  //   ],
-  // },
+  flex: {
+    label: 'FREQ FLEX',
+    description: 'A curated cross-platform showcase from the FREQ server.',
+    tracks: [
+      {
+        platform: 'youtube', type: 'video', id: 'tvTRZJ-4EyI',
+        originalUrl: 'https://www.youtube.com/watch?v=tvTRZJ-4EyI',
+        embedUrl: 'https://www.youtube.com/embed/tvTRZJ-4EyI?autoplay=1&controls=1&enablejsapi=1',
+        title: 'Kendrick Lamar — HUMBLE. (Official Video)',
+      },
+      {
+        platform: 'spotify', type: 'track', id: '0tKcYR2II1VCQWT79i5NrW',
+        originalUrl: 'https://open.spotify.com/track/0tKcYR2II1VCQWT79i5NrW',
+        embedUrl: 'https://open.spotify.com/embed/track/0tKcYR2II1VCQWT79i5NrW?utm_source=generator&theme=0',
+        title: 'Childish Gambino — Redbone',
+      },
+      {
+        platform: 'youtube', type: 'video', id: '5NV6Rdv1a3I',
+        originalUrl: 'https://www.youtube.com/watch?v=5NV6Rdv1a3I',
+        embedUrl: 'https://www.youtube.com/embed/5NV6Rdv1a3I?autoplay=1&controls=1&enablejsapi=1',
+        title: 'Daft Punk — Get Lucky ft. Pharrell Williams (Official Audio)',
+      },
+      {
+        platform: 'soundcloud', type: 'track', id: 'https://soundcloud.com/mfdoom/all-caps',
+        originalUrl: 'https://soundcloud.com/mfdoom/all-caps',
+        embedUrl: 'https://w.soundcloud.com/player/?url=https%3A//soundcloud.com/mfdoom/all-caps&color=%23ff5500&auto_play=true&visual=true',
+        title: 'MF DOOM — All Caps',
+      },
+      {
+        platform: 'youtube', type: 'video', id: 'eIGh4Nc1fAM',
+        originalUrl: 'https://www.youtube.com/watch?v=eIGh4Nc1fAM',
+        embedUrl: 'https://www.youtube.com/embed/eIGh4Nc1fAM?autoplay=1&controls=1&enablejsapi=1',
+        title: 'Tyler, the Creator — EARFQUAKE (Official Video)',
+      },
+    ],
+  },
+  chill: {
+    label: 'Chill Mode',
+    description: 'Relaxed ambient tracks and lo-fi vibes.',
+    tracks: [
+      {
+        platform: 'youtube', type: 'video', id: 'dvgZkm1xWPE',
+        originalUrl: 'https://www.youtube.com/watch?v=dvgZkm1xWPE',
+        embedUrl: 'https://www.youtube.com/embed/dvgZkm1xWPE?autoplay=1&controls=1&enablejsapi=1',
+        title: 'Tycho — Awake',
+      },
+      {
+        platform: 'youtube', type: 'video', id: '5qap5aO4i9A',
+        originalUrl: 'https://www.youtube.com/watch?v=5qap5aO4i9A',
+        embedUrl: 'https://www.youtube.com/embed/5qap5aO4i9A?autoplay=1&controls=1&enablejsapi=1',
+        title: 'lofi hip hop radio — beats to relax/study to',
+      },
+      {
+        platform: 'spotify', type: 'track', id: '2V5k2sB3R4u9Dxu3jSPQYa',
+        originalUrl: 'https://open.spotify.com/track/2V5k2sB3R4u9Dxu3jSPQYa',
+        embedUrl: 'https://open.spotify.com/embed/track/2V5k2sB3R4u9Dxu3jSPQYa?utm_source=generator&theme=0',
+        title: 'Bonobo — Kerala',
+      },
+    ],
+  },
 };
+
+const SUPPORT_INFO = {
+  version: 'v4.2',
+  status: 'online',
+  contact: 'support@freq.app',
+  docsUrl: 'https://freqapp.example/docs',
+  github: 'https://github.com/slimey2017/freq',
+  indexes: Object.keys(NAMED_INDEXES),
+};
+
+app.get('/api/support', (req, res) => {
+  return res.json({
+    ...SUPPORT_INFO,
+    serverTime: Date.now(),
+    uptime: Math.round(process.uptime()),
+  });
+});
 
 // GET /api/index  — list all available named indexes
 app.get('/api/index', (req, res) => {
@@ -915,3 +999,4 @@ server.on('error', err => {
 
 process.on('SIGINT',  () => { persistStore(); process.exit(0); });
 process.on('SIGTERM', () => { persistStore(); process.exit(0); });
+
