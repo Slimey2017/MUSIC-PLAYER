@@ -179,17 +179,47 @@ async function fetchHTML(url, timeoutMs = 8000) {
  * Returns parsed object or null.
  */
 function extractYtInitialData(html) {
-  const patterns = [
-    /var ytInitialData\s*=\s*(\{.+?\})\s*(?:;|<\/script>)/s,
-    /window\["ytInitialData"\]\s*=\s*(\{.+?\})\s*(?:;|<\/script>)/s,
-    /window\.ytInitialData\s*=\s*(\{.+?\})\s*(?:;|<\/script>)/s,
-    /ytInitialData\s*=\s*(\{.+?\})\s*(?:;|<\/script>)/s,
+  // Attempt to locate ytInitialData by marker and extract a balanced JSON object.
+  const markers = [
+    'var ytInitialData',
+    'window["ytInitialData"]',
+    'window.ytInitialData',
+    'ytInitialData',
   ];
-  for (const pattern of patterns) {
-    const match = html.match(pattern);
-    if (!match) continue;
-    try { return JSON.parse(match[1]); } catch (err) { continue; }
+
+  for (const marker of markers) {
+    const idx = html.indexOf(marker);
+    if (idx === -1) continue;
+    // Find the first '{' after the marker
+    const openIdx = html.indexOf('{', idx);
+    if (openIdx === -1) continue;
+
+    // Walk the string and find the matching closing '}' using a depth counter
+    let depth = 0;
+    let endIdx = -1;
+    for (let i = openIdx; i < html.length; i++) {
+      const ch = html[i];
+      if (ch === '{') depth++; else if (ch === '}') depth--;
+      if (depth === 0) { endIdx = i; break; }
+    }
+    if (endIdx === -1) continue;
+
+    const jsonStr = html.slice(openIdx, endIdx + 1);
+    try {
+      return JSON.parse(jsonStr);
+    } catch (err) {
+      // Fallthrough to try other markers/strategies
+      continue;
+    }
   }
+
+  // Last-resort regex fallback (kept for compatibility)
+  try {
+    const regex = /ytInitialData\s*=\s*(\{[\s\S]*?\})\s*(?:;|<\/script>)/i;
+    const m = html.match(regex);
+    if (m) return JSON.parse(m[1]);
+  } catch (e) {}
+
   return null;
 }
 
@@ -999,4 +1029,3 @@ server.on('error', err => {
 
 process.on('SIGINT',  () => { persistStore(); process.exit(0); });
 process.on('SIGTERM', () => { persistStore(); process.exit(0); });
-
