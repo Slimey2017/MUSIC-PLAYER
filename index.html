@@ -2621,6 +2621,7 @@ function bindAQSlider(id, stateKey, suffix, transform) {
     const v = parseFloat(el.value);
     AQ_DEFAULTS[stateKey] = v;
     if (valEl) valEl.textContent = transform ? transform(v) : v + suffix;
+    if (audioCtx && gainNode) updateAudioGraph();
     applyAudioToLocalIfActive();
     saveAQ();
   }
@@ -2631,7 +2632,11 @@ function bindAQSelect(id, stateKey) {
   const el = $(id);
   if (!el) return;
   el.value = AQ_DEFAULTS[stateKey];
-  el.addEventListener('change', () => { AQ_DEFAULTS[stateKey] = el.value; saveAQ(); });
+  el.addEventListener('change', () => {
+    AQ_DEFAULTS[stateKey] = el.value;
+    if (audioCtx && gainNode) updateAudioGraph();
+    saveAQ();
+  });
 }
 function bindAQToggle(id, stateKey) {
   const el = $(id);
@@ -2639,6 +2644,7 @@ function bindAQToggle(id, stateKey) {
   el.checked = AQ_DEFAULTS[stateKey];
   el.addEventListener('change', () => {
     AQ_DEFAULTS[stateKey] = el.checked;
+    if (audioCtx && gainNode) updateAudioGraph();
     applyAudioToLocalIfActive();
     saveAQ();
     if (stateKey === 'sleepTimer') manageSleepTimer();
@@ -3123,17 +3129,57 @@ function runPlaylistVis() {
       }
     }
   } else {
-    // Idle animation — gentle breathing bars
-    const t = Date.now() / 800;
+    // Idle animation for online playback — preserve current visualizer style.
+    const t = Date.now() / 700;
     ctx.clearRect(0, 0, W, H);
     const barCount = 18;
     const barW = W / barCount;
-    for (let i = 0; i < barCount; i++) {
-      const energy = (Math.sin(t + i * 0.5) + 1) / 2 * 0.35 + 0.05;
-      const barH = energy * H;
+
+    if (style === 'wave') {
+      ctx.beginPath();
+      for (let i = 0; i < barCount; i++) {
+        const x = (i / (barCount - 1)) * W;
+        const y = H * (0.45 + 0.15 * Math.sin(t + i * 0.6));
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.strokeStyle = accent;
+      ctx.lineWidth = 1.3;
+      ctx.stroke();
+    } else if (style === 'circle') {
+      const centerX = W / 2;
+      const centerY = H / 2;
+      const radius = Math.min(W, H) * 0.25;
+      const pulse = radius * (0.65 + 0.15 * Math.sin(t));
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, pulse, 0, Math.PI * 2);
       ctx.fillStyle = accent;
-      ctx.globalAlpha = 0.4;
-      ctx.fillRect(i * barW + 0.5, H - barH, barW - 1.5, barH);
+      ctx.globalAlpha = 0.15;
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = accent2;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    } else if (style === 'dots') {
+      for (let i = 0; i < barCount; i++) {
+        const x = (i + 0.5) * barW;
+        const radius = 2 + 2 * ((Math.sin(t + i * 0.45) + 1) / 2);
+        const y = H / 2 + Math.sin(t + i * 0.4) * (H * 0.15);
+        ctx.beginPath();
+        ctx.arc(x, y, radius, 0, Math.PI * 2);
+        ctx.fillStyle = i % 2 ? accent : accent2;
+        ctx.globalAlpha = 0.7;
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    } else {
+      for (let i = 0; i < barCount; i++) {
+        const energy = (Math.sin(t + i * 0.5) + 1) / 2 * 0.35 + 0.05;
+        const barH = energy * H;
+        ctx.fillStyle = i < barCount / 2 ? accent : accent2;
+        ctx.globalAlpha = 0.4;
+        ctx.fillRect(i * barW + 0.5, H - barH, barW - 1.5, barH);
+      }
       ctx.globalAlpha = 1;
     }
   }
@@ -3207,6 +3253,9 @@ async function loadSupportInfo() {
     rows.push(`<div class="support-row"><strong>Contact</strong><span>${data.contact || 'support@freq.app'}</span></div>`);
     if (Array.isArray(data.indexes) && data.indexes.length) {
       rows.push(`<div class="support-row" style="flex-direction:column;align-items:flex-start;"><strong>Server Indexes</strong><span style="margin-top:6px;color:var(--text);">${data.indexes.map(i => `<a class=\"support-link\" href=\"/api/index/${encodeURIComponent(i)}\" target=\"_blank\">${i}</a>`).join('')}</span></div>`);
+    }
+    if (Array.isArray(data.knownIssues) && data.knownIssues.length) {
+      rows.push(`<div class="support-row" style="flex-direction:column;align-items:flex-start;"><strong>Known Issues</strong><div class="support-details" style="margin-top:8px;">${data.knownIssues.map(i => `<div>• ${i}</div>`).join('')}</div></div>`);
     }
     content.innerHTML = rows.join('');
   } catch (err) {
