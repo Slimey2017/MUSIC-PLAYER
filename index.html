@@ -549,14 +549,10 @@ header {
 .count-badge{font-size:0.5rem;background:var(--accent);color:var(--bg);border-radius:2px;padding:1px 4px;font-weight:700;font-family:'Unbounded',sans-serif;}
 
 /* ─── Shortcuts Overlay ───────────────────────────────────────────── */
-.shortcuts-overlay,.audio-overlay,.auth-overlay,.support-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:8000;display:none;align-items:center;justify-content:center;}
-.shortcuts-overlay.open,.audio-overlay.open,.auth-overlay.open,.support-overlay.open{display:flex;}
-.shortcuts-panel,.audio-panel,.auth-panel,.support-panel{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:28px;max-width:520px;width:92%;max-height:90vh;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--border) transparent;}
-.shortcuts-title,.audio-title,.auth-title,.support-title{font-family:'Unbounded',sans-serif;font-size:0.88rem;font-weight:700;color:var(--accent);margin-bottom:18px;letter-spacing:-0.01em;}
-.support-row{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px;padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface3);}
-.support-row strong{font-size:0.78rem;color:var(--text);}
-.support-link{display:inline-flex;align-items:center;gap:6px;padding:8px 12px;background:var(--accent);color:var(--bg);border-radius:var(--radius);text-decoration:none;font-size:0.72rem;font-weight:700;}
-.support-details{font-size:0.68rem;line-height:1.6;color:var(--text-muted);}
+.shortcuts-overlay,.audio-overlay,.auth-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:8000;display:none;align-items:center;justify-content:center;}
+.shortcuts-overlay.open,.audio-overlay.open,.auth-overlay.open{display:flex;}
+.shortcuts-panel,.audio-panel,.auth-panel{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:28px;max-width:520px;width:92%;max-height:90vh;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--border) transparent;}
+.shortcuts-title,.audio-title,.auth-title{font-family:'Unbounded',sans-serif;font-size:0.88rem;font-weight:700;color:var(--accent);margin-bottom:18px;letter-spacing:-0.01em;}
 .shortcut-row{display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border);font-size:0.62rem;color:var(--text-dim);}
 .shortcut-row:last-child{border-bottom:none;}
 .shortcut-key{background:var(--surface3);border:1px solid var(--border);border-radius:3px;padding:2px 6px;font-family:'Space Mono',monospace;font-size:0.58rem;color:var(--text);}
@@ -1057,7 +1053,6 @@ body.oled-mode {
     <button class="user-badge" id="authBtn" title="Account / Saved Playlists">⊡ Account</button>
     <button class="header-tag" id="miniBtn" style="cursor:pointer;background:none;" title="Mini sidebar">⇄</button>
     <button class="header-tag" id="fullscreenBtn" style="cursor:pointer;background:none;" title="Fullscreen player">⛶</button>
-    <button class="header-tag" id="supportBtn" style="cursor:pointer;background:none;" title="Support & resources">❓ Support</button>
     <button class="header-tag" id="shortcutsBtn" style="cursor:pointer;background:none;" title="Keyboard shortcuts">? Keys</button>
     <div class="header-tag">v4.2</div>
   </div>
@@ -1323,18 +1318,6 @@ body.oled-mode {
   </div>
 </div>
 
-<!-- Support Overlay -->
-<div class="support-overlay" id="supportOverlay" style="display:none;">
-  <div class="support-panel">
-    <div class="support-title">❓ Support & Resources</div>
-    <div id="supportContent">
-      <div class="support-row"><strong>Loading support info…</strong></div>
-      <div class="support-details">Connecting to the FREQ server for help, docs, and curated index info.</div>
-    </div>
-    <button class="auth-close" id="supportClose" style="margin-top:18px;background:var(--surface3);color:var(--text-dim);border:1px solid var(--border);border-radius:var(--radius);padding:8px;font-family:'Space Mono',monospace;font-size:0.55rem;cursor:pointer;width:100%;letter-spacing:0.08em;text-transform:uppercase;">CLOSE</button>
-  </div>
-</div>
-
 <!-- Multi-Link Extractor Modal -->
 <div class="multi-modal" id="multiModal" style="display:none;">
   <div class="multi-panel">
@@ -1406,7 +1389,14 @@ body.oled-mode {
   <div class="audio-panel">
     <div class="audio-title">⚙ Audio Quality & Settings</div>
 
-    <!-- PRESETS -->
+    <!-- Embed-mode notice: shown when online/embed track is active -->
+    <div id="aqEmbedNotice" style="display:none;margin-bottom:14px;padding:10px 12px;background:rgba(0,212,255,0.07);border:1px solid rgba(0,212,255,0.2);border-radius:var(--radius);font-size:0.48rem;line-height:1.8;color:var(--accent3);">
+      <strong>⚡ Online Track Active</strong> — <span id="aqEmbedPlatformName">YouTube</span><br/>
+      <span style="color:var(--text-dim);">
+        <span id="aqEmbedYTNote" style="display:none;">Volume &amp; Speed are sent to YouTube via the IFrame API. EQ, reverb, and effects only work on Local Files.</span>
+        <span id="aqEmbedOtherNote" style="display:none;">Volume, Speed, EQ, and effects only work on Local Files — <span id="aqEmbedOtherPlatform"></span> doesn't allow external audio control.</span>
+      </span>
+    </div>
     <div class="aq-section">
       <div class="aq-section-title">Presets</div>
       <div class="aq-btn-row">
@@ -1470,7 +1460,7 @@ body.oled-mode {
       <div class="aq-grid">
         <div class="aq-item">
           <div class="aq-label">Playback Speed</div>
-          <input type="range" class="aq-slider" id="aqSpeed" min="0.25" max="3" value="1" step="0.05" />
+          <input type="range" class="aq-slider" id="aqSpeed" min="0.25" max="9" value="1" step="0.05" />
           <div class="aq-value" id="aqSpeedVal">1.00×</div>
         </div>
         <div class="aq-item">
@@ -2606,11 +2596,7 @@ function drawEQCurve() {
   });
 }
 
-// Redraw curve when AQ panel opens
-$('audioQualityBtn').addEventListener('click', () => {
-  $('audioOverlay').classList.add('open');
-  setTimeout(drawEQCurve, 30);
-});
+// Redraw curve when AQ panel opens — handled by audioQualityBtn listener below
 
 function bindAQSlider(id, stateKey, suffix, transform) {
   const el = $(id);
@@ -2621,7 +2607,6 @@ function bindAQSlider(id, stateKey, suffix, transform) {
     const v = parseFloat(el.value);
     AQ_DEFAULTS[stateKey] = v;
     if (valEl) valEl.textContent = transform ? transform(v) : v + suffix;
-    if (audioCtx && gainNode) updateAudioGraph();
     applyAudioToLocalIfActive();
     saveAQ();
   }
@@ -2632,11 +2617,7 @@ function bindAQSelect(id, stateKey) {
   const el = $(id);
   if (!el) return;
   el.value = AQ_DEFAULTS[stateKey];
-  el.addEventListener('change', () => {
-    AQ_DEFAULTS[stateKey] = el.value;
-    if (audioCtx && gainNode) updateAudioGraph();
-    saveAQ();
-  });
+  el.addEventListener('change', () => { AQ_DEFAULTS[stateKey] = el.value; saveAQ(); });
 }
 function bindAQToggle(id, stateKey) {
   const el = $(id);
@@ -2644,7 +2625,6 @@ function bindAQToggle(id, stateKey) {
   el.checked = AQ_DEFAULTS[stateKey];
   el.addEventListener('change', () => {
     AQ_DEFAULTS[stateKey] = el.checked;
-    if (audioCtx && gainNode) updateAudioGraph();
     applyAudioToLocalIfActive();
     saveAQ();
     if (stateKey === 'sleepTimer') manageSleepTimer();
@@ -2660,7 +2640,12 @@ function initAQPanel() {
   bindAQSlider('aqTrebleGain',   'trebleGain',      ' dB');
   bindAQSlider('aqMidGain',      'midGain',         ' dB');
   bindAQSlider('aqFadeIn',       'fadeIn',          's');
-  bindAQSlider('aqSpeed',        'speed',           '×', v => v.toFixed(2) + '×');
+  bindAQSlider('aqSpeed',        'speed',           '×', v => {
+    const item = state.activeIndex >= 0 ? state.queue[state.activeIndex] : null;
+    const isYT = item && (item.platform === 'youtube' || item.platform === 'ytmusic');
+    if (isYT && v > 2) return v.toFixed(2) + '× (YT max 2×)';
+    return v.toFixed(2) + '×';
+  });
   bindAQSlider('aqPitch',        'pitch',           ' st');
   bindAQSlider('aqStereoWidth',  'stereoWidth',     '%');
   bindAQSlider('aqPan',          'pan',             '', v => v === 0 ? 'Center' : (v < 0 ? Math.abs(v) + '% L' : v + '% R'));
@@ -2701,16 +2686,21 @@ function initAQPanel() {
   // When toggled, restart or stop canvas visualizer
   const vEl = $('aqVisualizer');
   if (vEl) vEl.addEventListener('change', () => {
-    const embedActive = embedFrame && embedFrame.classList.contains('visible');
-    if (AQ_DEFAULTS.visualizer && analyserNode) {
-      if (visFAF) cancelAnimationFrame(visFAF);
-      runVisualizer();
-      if (embedActive && typeof startPlaylistVis === 'function') startPlaylistVis();
+    if (AQ_DEFAULTS.visualizer) {
+      // Restart local visualizer if local file active
+      if (analyserNode) {
+        if (visFAF) cancelAnimationFrame(visFAF);
+        runVisualizer();
+      }
+      // Restart mini vis always (shows idle animation for embed)
+      if (_plVisRAF) cancelAnimationFrame(_plVisRAF);
+      runPlaylistVis();
     } else {
+      // Stop both
       if (visFAF) { cancelAnimationFrame(visFAF); visFAF = null; }
       const canvas = $('visCanvas');
       if (canvas) canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
-      if (typeof stopPlaylistVis === 'function') stopPlaylistVis();
+      stopPlaylistVis();
     }
   });
   bindAQToggle('aqLoudnessNorm', 'loudnessNorm');
@@ -2737,16 +2727,74 @@ function initAQPanel() {
   });
 }
 
-function applyAudioToLocalIfActive() {
-  if (!localAudio) return;
-  // Apply volume
-  localAudio.volume = Math.min(1, AQ_DEFAULTS.volume / 100);
-  // Playback speed
-  localAudio.playbackRate = AQ_DEFAULTS.speed;
-  // (Full Web Audio API EQ/effects would require AudioContext — applied on next local track load)
+// ─── YouTube IFrame API postMessage bridge ────────────────────────────────────
+// Sends commands to the YouTube embed iframe without needing the JS API loaded.
+// The iframe must have been created with enablejsapi=1 (already the case).
+function ytPostCmd(funcName, args) {
+  try {
+    if (!embedFrame || !embedFrame.contentWindow) return;
+    const item = state.queue[state.activeIndex];
+    if (!item || (item.platform !== 'youtube' && item.platform !== 'ytmusic')) return;
+    embedFrame.contentWindow.postMessage(JSON.stringify({
+      event: 'command',
+      func: funcName,
+      args: args || [],
+    }), '*');
+  } catch(e) {}
 }
 
-// Audio Context for local files
+function applyAudioToLocalIfActive() {
+  const item = state.activeIndex >= 0 ? state.queue[state.activeIndex] : null;
+  const isLocal = item && item.platform === 'local';
+  const isYT    = item && (item.platform === 'youtube' || item.platform === 'ytmusic');
+
+  if (isLocal) {
+    // Direct <audio> element control
+    localAudio.volume = Math.min(1, AQ_DEFAULTS.volume / 100);
+    localAudio.playbackRate = Math.min(16, AQ_DEFAULTS.speed); // <audio> supports up to ~16×
+    // Apply full Web Audio graph changes if context is alive
+    if (audioCtx && gainNode) updateAudioGraph();
+  } else if (isYT) {
+    // YouTube IFrame API: volume (0–100) and playback rate
+    ytPostCmd('setVolume', [Math.round(AQ_DEFAULTS.volume)]);
+    // YT only supports specific rates: 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2
+    // We clamp to 2 for YT; for >2 we show a note
+    const ytRate = Math.min(2, AQ_DEFAULTS.speed);
+    ytPostCmd('setPlaybackRate', [ytRate]);
+  }
+  // EQ/effects: only meaningful for local (Web Audio graph) — nothing to do for embeds
+}
+
+// ─── Audio panel embed-mode notice ────────────────────────────────────────────
+function updateAQEmbedNotice() {
+  const notice        = $('aqEmbedNotice');
+  const platName      = $('aqEmbedPlatformName');
+  const ytNote        = $('aqEmbedYTNote');
+  const otherNote     = $('aqEmbedOtherNote');
+  const otherPlatEl   = $('aqEmbedOtherPlatform');
+  if (!notice) return;
+
+  const item = state.activeIndex >= 0 ? state.queue[state.activeIndex] : null;
+  if (!item || item.platform === 'local') {
+    notice.style.display = 'none';
+    return;
+  }
+
+  notice.style.display = 'block';
+  const cfg = PLATFORM_CONFIG[item.platform] || { label: item.platform };
+  platName.textContent = cfg.label;
+
+  const isYT = item.platform === 'youtube' || item.platform === 'ytmusic';
+  ytNote.style.display    = isYT ? 'inline' : 'none';
+  otherNote.style.display = isYT ? 'none'   : 'inline';
+  if (otherPlatEl) otherPlatEl.textContent = cfg.label;
+
+  // Grey-out EQ section when embed (non-YT) — just visual hint via opacity
+  const eqSection = document.querySelector('.aq-section:nth-child(3)');
+  if (eqSection) eqSection.style.opacity = isYT ? '0.4' : '0.4';
+}
+
+
 let audioCtx = null;
 let sourceNode = null;
 let eqFilters = {};
@@ -2763,6 +2811,16 @@ function setupAudioContext() {
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   } catch(e) { return; }
 }
+
+// Eagerly create AudioContext on first user gesture so it's ready when files load
+let _audioCtxReady = false;
+function ensureAudioCtx() {
+  if (_audioCtxReady) return;
+  setupAudioContext();
+  if (audioCtx) _audioCtxReady = true;
+}
+document.addEventListener('click', ensureAudioCtx, { once: true });
+document.addEventListener('keydown', ensureAudioCtx, { once: true });
 
 // ─── UI Sound Engine ──────────────────────────────────────────────────────────
 // Synthesised micro-sounds via Web Audio — no external files needed.
@@ -2868,18 +2926,38 @@ function playSfx(type) {
   }
 }
 
+let _audioGraphConnected = false;
+
 function connectAudioGraph() {
   if (!audioCtx) return;
-  if (sourceNode) { try { sourceNode.disconnect(); } catch(e){} }
+  // createMediaElementSource can only be called once per HTMLMediaElement.
+  // On subsequent calls we just rebuild the filter chain from the existing sourceNode.
+  if (!_audioGraphConnected) {
+    if (sourceNode) { try { sourceNode.disconnect(); } catch(e){} }
+    try {
+      sourceNode = audioCtx.createMediaElementSource(localAudio);
+      _audioGraphConnected = true;
+    } catch(e) {
+      // Already has a source node (InvalidStateError) — reuse existing
+      if (!sourceNode) return;
+    }
+  } else {
+    // Disconnect old chain without destroying sourceNode
+    if (gainNode) { try { gainNode.disconnect(); } catch(e){} }
+    if (analyserNode) { try { analyserNode.disconnect(); } catch(e){} }
+  }
 
-  sourceNode = audioCtx.createMediaElementSource(localAudio);
-  gainNode   = audioCtx.createGain();
+  gainNode = audioCtx.createGain();
 
   // Build 10-band EQ
   const bands = [32,64,125,250,500,1000,2000,4000,8000,16000];
   const keys  = ['32','64','125','250','500','1k','2k','4k','8k','16k'];
   let chain   = sourceNode;
   eqFilters   = {};
+
+  // Disconnect source from any old chain first
+  try { sourceNode.disconnect(); } catch(e) {}
+
   bands.forEach((freq, idx) => {
     const f = audioCtx.createBiquadFilter();
     f.type      = (idx === 0) ? 'lowshelf' : (idx === bands.length-1) ? 'highshelf' : 'peaking';
@@ -2894,21 +2972,25 @@ function connectAudioGraph() {
   compressorNode = audioCtx.createDynamicsCompressor();
   compressorNode.threshold.value = AQ_DEFAULTS.compThreshold;
   compressorNode.ratio.value     = parseFloat(AQ_DEFAULTS.compRatio);
-  chain.connect(compressorNode);
-  chain = compressorNode;
+  if (AQ_DEFAULTS.compressor) {
+    chain.connect(compressorNode);
+    chain = compressorNode;
+  }
 
   // Delay
   delayNode = audioCtx.createDelay(2.0);
   delayNode.delayTime.value = AQ_DEFAULTS.delay / 1000;
-  chain.connect(delayNode);
-  chain = delayNode;
+  if (AQ_DEFAULTS.delay > 0) {
+    chain.connect(delayNode);
+    chain = delayNode;
+  }
 
   // Gain
   chain.connect(gainNode);
 
   // Analyser
   analyserNode = audioCtx.createAnalyser();
-  analyserNode.fftSize = 64;
+  analyserNode.fftSize = 128;
   gainNode.connect(analyserNode);
   gainNode.connect(audioCtx.destination);
 
@@ -3022,34 +3104,26 @@ function runVisualizer() {
   } else if (style === 'circle') {
     const cx = W / 2, cy = H / 2;
     const r  = Math.min(cx, cy) - 4;
-    const count = Math.min(bufLen, 96);
-    const outerRadius = r;
-    const innerRadius = Math.max(r * 0.12, 5);
-    // Draw a faint ring background
-    ctx.beginPath();
-    ctx.arc(cx, cy, outerRadius, 0, Math.PI * 2);
-    ctx.strokeStyle = accent2 + '33';
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
+    const count = Math.min(bufLen, 64);
     ctx.beginPath();
     for (let i = 0; i < count; i++) {
       const idx = Math.floor(i * bufLen / count);
       const energy = freqData[idx] / 255;
       const angle  = (i / count) * Math.PI * 2 - Math.PI / 2;
-      const len    = innerRadius + energy * (outerRadius - innerRadius) * 1.1;
-      const x1 = cx + Math.cos(angle) * innerRadius;
-      const y1 = cy + Math.sin(angle) * innerRadius;
+      const len    = r * 0.3 + energy * r * 0.7;
+      const x1 = cx + Math.cos(angle) * r * 0.3;
+      const y1 = cy + Math.sin(angle) * r * 0.3;
       const x2 = cx + Math.cos(angle) * len;
       const y2 = cy + Math.sin(angle) * len;
       ctx.moveTo(x1, y1);
       ctx.lineTo(x2, y2);
     }
     ctx.strokeStyle = accent;
-    ctx.lineWidth   = 3;
+    ctx.lineWidth   = 1.5;
     ctx.stroke();
     // Center dot
     ctx.beginPath();
-    ctx.arc(cx, cy, 5.5, 0, Math.PI * 2);
+    ctx.arc(cx, cy, 2.5, 0, Math.PI * 2);
     ctx.fillStyle = accent;
     ctx.fill();
   } else if (style === 'dots') {
@@ -3081,6 +3155,13 @@ function runPlaylistVis() {
   const pvc  = $('playlistVisCanvas');
   const pvEl = $('playlistVis');
   if (!pvc || !pvEl) return;
+
+  // If visualizer is disabled in settings, clear and stop
+  if (!AQ_DEFAULTS.visualizer) {
+    const ctx = pvc.getContext('2d');
+    ctx.clearRect(0, 0, pvc.width, pvc.height);
+    return;
+  }
 
   // Resize
   pvc.width  = pvEl.offsetWidth  || 90;
@@ -3129,57 +3210,17 @@ function runPlaylistVis() {
       }
     }
   } else {
-    // Idle animation for online playback — preserve current visualizer style.
-    const t = Date.now() / 700;
+    // Idle animation — gentle breathing bars
+    const t = Date.now() / 800;
     ctx.clearRect(0, 0, W, H);
     const barCount = 18;
     const barW = W / barCount;
-
-    if (style === 'wave') {
-      ctx.beginPath();
-      for (let i = 0; i < barCount; i++) {
-        const x = (i / (barCount - 1)) * W;
-        const y = H * (0.45 + 0.15 * Math.sin(t + i * 0.6));
-        if (i === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
-      }
-      ctx.strokeStyle = accent;
-      ctx.lineWidth = 1.3;
-      ctx.stroke();
-    } else if (style === 'circle') {
-      const centerX = W / 2;
-      const centerY = H / 2;
-      const radius = Math.min(W, H) * 0.25;
-      const pulse = radius * (0.65 + 0.15 * Math.sin(t));
-      ctx.beginPath();
-      ctx.arc(centerX, centerY, pulse, 0, Math.PI * 2);
+    for (let i = 0; i < barCount; i++) {
+      const energy = (Math.sin(t + i * 0.5) + 1) / 2 * 0.35 + 0.05;
+      const barH = energy * H;
       ctx.fillStyle = accent;
-      ctx.globalAlpha = 0.15;
-      ctx.fill();
-      ctx.globalAlpha = 1;
-      ctx.strokeStyle = accent2;
-      ctx.lineWidth = 1;
-      ctx.stroke();
-    } else if (style === 'dots') {
-      for (let i = 0; i < barCount; i++) {
-        const x = (i + 0.5) * barW;
-        const radius = 2 + 2 * ((Math.sin(t + i * 0.45) + 1) / 2);
-        const y = H / 2 + Math.sin(t + i * 0.4) * (H * 0.15);
-        ctx.beginPath();
-        ctx.arc(x, y, radius, 0, Math.PI * 2);
-        ctx.fillStyle = i % 2 ? accent : accent2;
-        ctx.globalAlpha = 0.7;
-        ctx.fill();
-      }
-      ctx.globalAlpha = 1;
-    } else {
-      for (let i = 0; i < barCount; i++) {
-        const energy = (Math.sin(t + i * 0.5) + 1) / 2 * 0.35 + 0.05;
-        const barH = energy * H;
-        ctx.fillStyle = i < barCount / 2 ? accent : accent2;
-        ctx.globalAlpha = 0.4;
-        ctx.fillRect(i * barW + 0.5, H - barH, barW - 1.5, barH);
-      }
+      ctx.globalAlpha = 0.4;
+      ctx.fillRect(i * barW + 0.5, H - barH, barW - 1.5, barH);
       ctx.globalAlpha = 1;
     }
   }
@@ -3189,7 +3230,8 @@ function runPlaylistVis() {
 
 function startPlaylistVis() {
   const pvEl = $('playlistVis');
-  if (!pvEl || !AQ_DEFAULTS.visualizer) return;
+  if (!pvEl) return;
+  // Always show the mini vis when embed is active (idle animation if no analyser)
   pvEl.classList.add('active');
   if (_plVisRAF) cancelAnimationFrame(_plVisRAF);
   runPlaylistVis();
@@ -3218,50 +3260,14 @@ function manageSleepTimer() {
 }
 
 // ─── Audio Quality Overlay events ─────────────────────────────────────────────
-$('audioQualityBtn').addEventListener('click', () => { playSfx('click'); $('audioOverlay').classList.add('open'); });
+$('audioQualityBtn').addEventListener('click', () => { playSfx('click'); $('audioOverlay').classList.add('open'); setTimeout(drawEQCurve, 30); updateAQEmbedNotice(); });
 $('audioClose').addEventListener('click', () => {
   playSfx('click');
   $('audioOverlay').classList.remove('open');
   updateAudioGraph();
+  applyAudioToLocalIfActive();
   saveAQ();
 });
-$('supportBtn').addEventListener('click', async () => {
-  playSfx('click');
-  $('supportOverlay').classList.add('open');
-  await loadSupportInfo();
-});
-$('supportClose').addEventListener('click', () => {
-  playSfx('click');
-  $('supportOverlay').classList.remove('open');
-});
-$('supportOverlay').addEventListener('click', e => { if (e.target === $('supportOverlay')) $('supportOverlay').classList.remove('open'); });
-
-async function loadSupportInfo() {
-  const content = $('supportContent');
-  if (!content) return;
-  content.innerHTML = '<div class="support-row"><strong>Loading support info…</strong></div>';
-  try {
-    const res  = await fetch('/api/support');
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Could not load support info');
-    const rows = [];
-    rows.push(`<div class="support-row"><strong>Status</strong><span>${data.status || 'unknown'}</span></div>`);
-    rows.push(`<div class="support-row"><strong>Version</strong><span>${data.version || '—'}</span></div>`);
-    rows.push(`<div class="support-row"><strong>Server Uptime</strong><span>${data.uptime ? data.uptime + 's' : '—'}</span></div>`);
-    rows.push(`<div class="support-row"><strong>Docs</strong><a class="support-link" href="${data.docsUrl || '#'}" target="_blank">Open Docs</a></div>`);
-    rows.push(`<div class="support-row"><strong>GitHub</strong><a class="support-link" href="${data.github || '#'}" target="_blank">View Repo</a></div>`);
-    rows.push(`<div class="support-row"><strong>Contact</strong><span>${data.contact || 'support@freq.app'}</span></div>`);
-    if (Array.isArray(data.indexes) && data.indexes.length) {
-      rows.push(`<div class="support-row" style="flex-direction:column;align-items:flex-start;"><strong>Server Indexes</strong><span style="margin-top:6px;color:var(--text);">${data.indexes.map(i => `<a class=\"support-link\" href=\"/api/index/${encodeURIComponent(i)}\" target=\"_blank\">${i}</a>`).join('')}</span></div>`);
-    }
-    if (Array.isArray(data.knownIssues) && data.knownIssues.length) {
-      rows.push(`<div class="support-row" style="flex-direction:column;align-items:flex-start;"><strong>Known Issues</strong><div class="support-details" style="margin-top:8px;">${data.knownIssues.map(i => `<div>• ${i}</div>`).join('')}</div></div>`);
-    }
-    content.innerHTML = rows.join('');
-  } catch (err) {
-    content.innerHTML = `<div class="support-row"><strong>Error loading support info</strong></div><div class="support-details">${err.message || 'Server unavailable.'}</div>`;
-  }
-}
 
 // ─── Tabs ─────────────────────────────────────────────────────────────────────
 document.querySelectorAll('.input-tab').forEach(tab => {
@@ -3628,11 +3634,13 @@ function playItem(index) {
       return;
     }
 
-    // Connect Web Audio graph (once)
-    if (audioCtx && !gainNode) connectAudioGraph();
+    // Connect Web Audio graph (once per element)
+    if (!audioCtx) setupAudioContext();
+    if (audioCtx && !_audioGraphConnected) connectAudioGraph();
+    else if (audioCtx && _audioGraphConnected) updateAudioGraph();
 
     localAudio.volume       = Math.min(1, AQ_DEFAULTS.volume / 100);
-    localAudio.playbackRate = AQ_DEFAULTS.speed;
+    localAudio.playbackRate = Math.min(9, Math.max(0.25, AQ_DEFAULTS.speed));
 
     if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
 
@@ -3653,6 +3661,8 @@ function playItem(index) {
     if (analyserNode && AQ_DEFAULTS.visualizer) runVisualizer();
     // Stop the embed playlist vis when playing local
     if (typeof stopPlaylistVis === 'function') stopPlaylistVis();
+    // Update audio panel embed notice (clears it for local)
+    if (typeof updateAQEmbedNotice === 'function') updateAQEmbedNotice();
 
   } else {
     // Stop local playback
@@ -3675,6 +3685,10 @@ function playItem(index) {
     if (typeof scheduleEmbedCheck === 'function') scheduleEmbedCheck(item);
     // Start playlist mini-visualizer
     if (typeof startPlaylistVis === 'function') startPlaylistVis();
+    // Update audio panel embed notice
+    if (typeof updateAQEmbedNotice === 'function') updateAQEmbedNotice();
+    // Apply volume/speed to new YT embed after it loads
+    setTimeout(() => applyAudioToLocalIfActive(), 2000);
   }
   renderQueue();
   scrollActiveIntoView();
@@ -4567,7 +4581,6 @@ function bindAdvanceDelaySlider() {
     const v = parseInt(sl.value);
     AQ_DEFAULTS.advanceDelay = v;
     val.textContent = v === 0 ? '0s (instant)' : v + 's';
-    saveAQ();
   });
 }
 
@@ -4612,10 +4625,10 @@ const _origClearBtnHandler = () => {
 
 
 authInit();
+initAQPanel();
 renderQueue();
 renderHistory();
 renderFavorites();
-initAQPanel();
 buildEQVisualizer();
 bindAdvanceDelaySlider();
 updatePageTitle();
