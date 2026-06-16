@@ -906,23 +906,46 @@ app.get('/api/index', (req, res) => {
   return res.json({ indexes });
 });
 
+// GET /index  — alias for /api/index to support legacy or direct index routes
+app.get('/index', (req, res) => {
+  const indexes = Object.entries(NAMED_INDEXES).map(([slug, idx]) => ({
+    slug,
+    label:       idx.label,
+    description: idx.description || '',
+    total:       idx.tracks.length,
+  }));
+  return res.json({ indexes });
+});
+
+function getNamedIndexResponse(slug) {
+  const idx = NAMED_INDEXES[slug];
+  if (!idx) {
+    return { status: 404, body: {
+      error: `No index named "${slug}". Available: ${Object.keys(NAMED_INDEXES).join(', ')}`,
+    } };
+  }
+  return { status: 200, body: {
+    name:        slug,
+    label:       idx.label,
+    description: idx.description || '',
+    tracks:      idx.tracks,
+    total:       idx.tracks.length,
+    fetchedAt:   Date.now(),
+  } };
+}
+
 // GET /api/index/:name  — fetch a named index by slug
 app.get('/api/index/:name', (req, res) => {
   const slug = req.params.name.toLowerCase().trim();
-  const idx  = NAMED_INDEXES[slug];
-  if (!idx) {
-    return res.status(404).json({
-      error: `No index named "${slug}". Available: ${Object.keys(NAMED_INDEXES).join(', ')}`,
-    });
-  }
-  return res.json({
-    name:      slug,
-    label:     idx.label,
-    description: idx.description || '',
-    tracks:    idx.tracks,
-    total:     idx.tracks.length,
-    fetchedAt: Date.now(),
-  });
+  const result = getNamedIndexResponse(slug);
+  return res.status(result.status).json(result.body);
+});
+
+// GET /index/:name  — alias for /api/index/:name
+app.get('/index/:name', (req, res) => {
+  const slug = req.params.name.toLowerCase().trim();
+  const result = getNamedIndexResponse(slug);
+  return res.status(result.status).json(result.body);
 });
 
 // ─── Catch-all ────────────────────────────────────────────────────────────────
