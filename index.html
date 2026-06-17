@@ -10,6 +10,13 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400&family=Unbounded:wght@300;400;700;900&display=swap" rel="stylesheet" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jsmediatags/3.9.5/jsmediatags.min.js"></script>
+  <!-- EmailJS — FREQ Support System -->
+  <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
+  <script>
+    (function() {
+      emailjs.init({ publicKey: 'Gb2KEX0jVCP5CYuvR' });
+    })();
+  </script>
 <style>
 /* ═══════════════════════════════════════════════════════════════════
    FREQ v4.0  ·  Themes
@@ -1919,15 +1926,33 @@ body.oled-mode {
       <input type="text" class="support-field" id="supportTitle" placeholder="Brief summary of your issue…" style="margin-top:8px;" />
       <textarea class="support-field" id="supportBody" placeholder="Describe in detail what happened, what you expected, and any steps to reproduce…"></textarea>
       <input type="text" class="support-field" id="supportEmail" placeholder="Your email (optional, for follow-up)" style="margin-top:6px;" />
-      <button class="support-send-btn" onclick="sendSupportReport()">✉ Send to Developer</button>
-      <div id="supportSentMsg" style="display:none;text-align:center;font-size:0.52rem;color:var(--accent3);margin-top:8px;padding:8px;background:rgba(0,212,255,0.06);border-radius:var(--radius);border:1px solid rgba(0,212,255,0.2);">
-        ✓ Report sent! Thank you for helping improve FREQ.
+      <button class="support-send-btn" id="supportSendBtn" onclick="sendSupportReport()">✉ SEND REPORT</button>
+
+      <!-- SUCCESS -->
+      <div id="supportSentMsg" style="display:none;text-align:center;font-size:0.52rem;
+           color:var(--accent3);margin-top:8px;padding:10px 12px;
+           background:rgba(0,212,255,0.06);border-radius:var(--radius);
+           border:1px solid rgba(0,212,255,0.25);line-height:1.8;">
+        <div style="font-size:0.7rem;margin-bottom:3px;">✓</div>
+        Report transmitted. Thank you for helping improve FREQ.
+      </div>
+
+      <!-- ERROR -->
+      <div id="supportErrorMsg" style="display:none;text-align:center;font-size:0.52rem;
+           color:var(--accent2);margin-top:8px;padding:10px 12px;
+           background:rgba(255,71,87,0.06);border-radius:var(--radius);
+           border:1px solid rgba(255,71,87,0.25);line-height:1.8;">
+        <div style="font-size:0.7rem;margin-bottom:3px;">✕</div>
+        <span id="supportErrorText">Transmission failed. Try again.</span>
       </div>
     </div>
 
     <div class="support-section">
       <div class="support-section-title">Direct Contact</div>
-      <div class="support-contact-chip" onclick="window.open('mailto:slimey20017@gmail.com?subject=FREQ%20Support','_blank')">
+      <div class="support-contact-chip" id="supportContactChip"
+           onclick="$('supportTitle').focus();playSfx('click');"
+           title="Use the form above to send a report"
+           style="cursor:pointer;">
         ✉ Slimey2017
       </div>
       <div style="font-size:0.46rem;color:var(--text-muted);margin-top:7px;line-height:1.8;">
@@ -5724,35 +5749,158 @@ function initKeepAliveUI() {
 })();
 
 // ─── 2. Support Modal Functions ───────────────────────────────────────────────
+// ─── FREQ Support System · EmailJS ───────────────────────────────────────────
+//  Service  : service_4hd2w5n
+//  Template : template_wiyash9
+//  Init     : publicKey set in <head> via emailjs.init()
+// ─────────────────────────────────────────────────────────────────────────────
+
+const FREQ_SUPPORT = {
+  SERVICE_ID:  'service_4hd2w5n',
+  TEMPLATE_ID: 'template_wiyash9',
+};
+
 let _supportTags = [];
+
 function openSupportModal() {
   $('supportOverlay').classList.add('open');
-  $('supportSentMsg').style.display = 'none';
+  _supportResetStatus();
   playSfx('click');
 }
-function closeSupportModal() { $('supportOverlay').classList.remove('open'); playSfx('click'); }
+
+function closeSupportModal() {
+  $('supportOverlay').classList.remove('open');
+  _supportTags = [];
+  document.querySelectorAll('.support-tag').forEach(t => t.classList.remove('active'));
+  playSfx('click');
+}
+
 function toggleSupportTag(el, tag) {
   el.classList.toggle('active');
-  if (el.classList.contains('active')) _supportTags.push(tag);
-  else _supportTags = _supportTags.filter(t => t !== tag);
+  _supportTags = el.classList.contains('active')
+    ? [..._supportTags, tag]
+    : _supportTags.filter(t => t !== tag);
   playSfx('click');
 }
+
+function _supportResetStatus() {
+  $('supportSentMsg').style.display  = 'none';
+  $('supportErrorMsg').style.display = 'none';
+}
+
+function _supportSetLoading(on) {
+  const btn = $('supportSendBtn');
+  btn.disabled   = on;
+  btn.textContent = on ? '⟳ TRANSMITTING…' : '✉ SEND REPORT';
+  btn.style.opacity = on ? '0.6' : '1';
+}
+
+function _supportGetEnv() {
+  const ua  = navigator.userAgent;
+  const isChrome  = /Chrome\//.test(ua) && !/Edg\//.test(ua);
+  const isFirefox = /Firefox\//.test(ua);
+  const isSafari  = /Safari\//.test(ua) && !isChrome;
+  const isEdge    = /Edg\//.test(ua);
+
+  let browser = 'Unknown';
+  if (isChrome)  browser = `Chrome ${(ua.match(/Chrome\/([\d.]+)/)||[])[1]||''}`.trim();
+  if (isFirefox) browser = `Firefox ${(ua.match(/Firefox\/([\d.]+)/)||[])[1]||''}`.trim();
+  if (isSafari)  browser = `Safari ${(ua.match(/Version\/([\d.]+)/)||[])[1]||''}`.trim();
+  if (isEdge)    browser = `Edge ${(ua.match(/Edg\/([\d.]+)/)||[])[1]||''}`.trim();
+
+  const platform = navigator.platform ||
+    (ua.includes('Win') ? 'Windows' :
+     ua.includes('Mac') ? 'macOS'   :
+     ua.includes('Linux') ? 'Linux' : 'Unknown');
+
+  return { browser, platform };
+}
+
 async function sendSupportReport() {
-  const title = $('supportTitle').value.trim();
-  const body  = $('supportBody').value.trim();
-  const email = $('supportEmail').value.trim();
-  if (!title && !body) { showToast('Empty Report', 'Please describe your issue.', 'error'); return; }
-  const tags  = _supportTags.join(', ') || 'General';
-  const mailto = `mailto:slimey20017@gmail.com?subject=${encodeURIComponent('[FREQ ' + tags + '] ' + (title||'Bug Report'))}&body=${encodeURIComponent('Category: ' + tags + '\n\nSummary: ' + (title||'—') + '\n\nDetails:\n' + (body||'—') + '\n\nReply to: ' + (email||'Not provided') + '\n\n---\nFREQ v4.3 | ' + navigator.userAgent)}`;
-  window.location.href = mailto;
-  setTimeout(() => {
-    $('supportSentMsg').style.display = 'block';
+  const title  = $('supportTitle').value.trim();
+  const body   = $('supportBody').value.trim();
+  const email  = $('supportEmail').value.trim();
+
+  if (!title && !body) {
+    showToast('Empty Report', 'Please describe your issue first.', 'error');
+    return;
+  }
+
+  // Basic email format check
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    showToast('Invalid Email', 'Check your reply-to address and try again.', 'error');
+    return;
+  }
+
+  const reportType = _supportTags.length ? _supportTags.join(' · ') : 'General';
+  const env = _supportGetEnv();
+
+  // Queue context — what was playing when they hit send
+  const activeItem  = state.queue[state.activeIndex] || null;
+  const queueContext = activeItem
+    ? `${activeItem.title || activeItem.originalUrl || '?'} [${activeItem.platform || '?'} · ${activeItem.type || '?'}] (index ${state.activeIndex})`
+    : `Nothing playing · ${state.queue.length} item${state.queue.length !== 1 ? 's' : ''} in queue`;
+
+  // Compose the full message
+  const composedMessage =
+    (title ? `SUMMARY\n${title}\n\n` : '') +
+    (body  ? `DETAILS\n${body}`      : '') +
+    (email ? `\n\nREPLY TO\n${email}` : '');
+
+  // Unique ticket ID: base36 timestamp + 4-char random suffix
+  const _tsB36   = Date.now().toString(36).toUpperCase();
+  const _rand    = Math.random().toString(36).slice(2, 6).toUpperCase();
+  const ticketId = `${_tsB36}-${_rand}`;
+
+  // Template variables — must exactly match EmailJS template {{variables}}
+  const templateParams = {
+    report_type:   reportType,
+    message:       composedMessage,
+    timestamp:     new Date().toISOString().replace('T', ' ').slice(0, 19) + ' UTC',
+    platform:      env.platform,
+    browser:       env.browser,
+    page_url:      window.location.href,
+    ticket_id:     ticketId,
+    freq_version:  '4.3',
+    user_account:  AUTH.loggedIn ? AUTH.username : 'Guest',
+    queue_context: queueContext,
+  };
+
+  _supportResetStatus();
+  _supportSetLoading(true);
+
+  try {
+    await emailjs.send(
+      FREQ_SUPPORT.SERVICE_ID,
+      FREQ_SUPPORT.TEMPLATE_ID,
+      templateParams
+    );
+
+    // ── Success ──
+    const sentMsg = $('supportSentMsg');
+    sentMsg.innerHTML = `<div style="font-size:0.7rem;margin-bottom:3px;">✓</div>
+      Report transmitted. Thank you for helping improve FREQ.<br>
+      <span style="font-size:0.45rem;color:var(--text-muted);letter-spacing:0.06em;">Ticket: ${ticketId}</span>`;
+    sentMsg.style.display = 'block';
     $('supportTitle').value = '';
     $('supportBody').value  = '';
     $('supportEmail').value = '';
     _supportTags = [];
     document.querySelectorAll('.support-tag').forEach(t => t.classList.remove('active'));
-  }, 300);
+    showToast('Report Sent', `Ticket ${ticketId} — thanks for improving FREQ.`, 'success');
+    playSfx('success');
+
+  } catch (err) {
+    // ── Error ──
+    const errText = err?.text || err?.message || 'Unknown error';
+    $('supportErrorText').textContent = `Transmission failed: ${errText}`;
+    $('supportErrorMsg').style.display = 'block';
+    showToast('Send Failed', 'Could not transmit report. Try again.', 'error');
+    console.error('[FREQ Support] EmailJS error:', err);
+
+  } finally {
+    _supportSetLoading(false);
+  }
 }
 
 // ─── 3. About Modal ──────────────────────────────────────────────────────────
