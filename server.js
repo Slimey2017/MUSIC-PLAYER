@@ -276,6 +276,62 @@ function extractTracksFromYtData(data) {
     // richItemRenderer (home feed / shorts shelf)
     if (obj.richItemRenderer) walk(obj.richItemRenderer.content);
 
+    // ── YouTube Music renderers ──────────────────────────────────────────────
+    // musicVideoRenderer (YT Music search results / album tracks)
+    if (obj.musicVideoRenderer) {
+      const r  = obj.musicVideoRenderer;
+      const id = r.videoId;
+      if (id && !seen.has(id)) {
+        seen.add(id);
+        const title   = r.title?.runs?.[0]?.text || r.title?.simpleText || 'Unknown';
+        const durText = r.lengthText?.runs?.[0]?.text || r.lengthText?.simpleText || null;
+        const thumbs  = r.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails
+          || r.thumbnail?.thumbnails || [];
+        const thumb   = thumbs[thumbs.length - 1]?.url || `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
+        tracks.push({ id, title, duration: durText, thumb });
+      }
+    }
+    // musicTwoRowItemRenderer (YT Music playlists / album grid)
+    if (obj.musicTwoRowItemRenderer) {
+      const r         = obj.musicTwoRowItemRenderer;
+      const navEp     = r.navigationEndpoint?.watchEndpoint
+        || r.navigationEndpoint?.watchPlaylistEndpoint;
+      const id        = navEp?.videoId;
+      if (id && !seen.has(id)) {
+        seen.add(id);
+        const title   = r.title?.runs?.[0]?.text || r.title?.simpleText || 'Unknown';
+        const thumbs  = r.thumbnailRenderer?.musicThumbnailRenderer?.thumbnail?.thumbnails
+          || r.thumbnail?.thumbnails || [];
+        const thumb   = thumbs[thumbs.length - 1]?.url || `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
+        tracks.push({ id, title, duration: null, thumb });
+      }
+    }
+    // musicResponsiveListItemRenderer (YT Music queue / playlist page rows)
+    if (obj.musicResponsiveListItemRenderer) {
+      const r      = obj.musicResponsiveListItemRenderer;
+      const ovEp   = r.overlay?.musicItemThumbnailOverlayRenderer
+        ?.startMusicPlayCommand?.watchEndpoint;
+      const flexEp = r.flexColumns?.[0]?.musicResponsiveListItemFlexColumnRenderer
+        ?.text?.runs?.[0]?.navigationEndpoint?.watchEndpoint;
+      const id     = ovEp?.videoId || flexEp?.videoId;
+      if (id && !seen.has(id)) {
+        seen.add(id);
+        const titleRun = r.flexColumns?.[0]?.musicResponsiveListItemFlexColumnRenderer
+          ?.text?.runs?.[0];
+        const title    = titleRun?.text || 'Unknown';
+        // Duration is usually in flexColumns[1] or fixedColumns[0]
+        const durRun   = r.fixedColumns?.[0]?.musicResponsiveListItemFixedColumnRenderer
+          ?.text?.runs?.[0]
+          || r.flexColumns?.[1]?.musicResponsiveListItemFlexColumnRenderer
+          ?.text?.runs?.[0];
+        const durText  = durRun?.text || null;
+        const thumbs   = r.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails
+          || r.thumbnail?.thumbnails || [];
+        const thumb    = thumbs[thumbs.length - 1]?.url || `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
+        tracks.push({ id, title, duration: durText, thumb });
+      }
+    }
+
     // Recurse into arrays and objects
     if (Array.isArray(obj)) { obj.forEach(walk); return; }
     for (const key of Object.keys(obj)) {
@@ -587,7 +643,7 @@ app.get('/redirect', (req, res) => {
 app.get('/health', (req, res) => {
   res.json({
     status:   'ok',
-    version:  '4.2',
+    version:  '4.3',
     uptime:   Math.floor(process.uptime()),
     platform: process.platform,
     accounts: store.accounts.size,
@@ -718,6 +774,7 @@ app.post('/api/yt/tracks', rateLimit, async (req, res) => {
     // Build embedUrl for each track
     const tracksWithEmbed = tracks.map(t => ({
       ...t,
+      embedBlocked: false,    // default; player updates via /api/yt/embed-check at playback time
       embedUrl:   `https://www.youtube.com/embed/${t.id}?autoplay=1&controls=1&enablejsapi=1`,
       embedUrlNC: `https://www.youtube-nocookie.com/embed/${t.id}?autoplay=1&controls=1&enablejsapi=1`,
       originalUrl: `https://www.youtube.com/watch?v=${t.id}`,
@@ -957,7 +1014,7 @@ app.get('*', (req, res) => {
 loadStore();
 
 const server = app.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n🎵  FREQ v4.2 "The Extractor" is running`);
+  console.log(`\n🎵  FREQ v4.3 "The Extractor" is running`);
   console.log(`    Local:  http://localhost:${PORT}`);
   console.log(`    Health: http://localhost:${PORT}/health`);
   console.log(`    Data:   ${DATA_PATH}`);
