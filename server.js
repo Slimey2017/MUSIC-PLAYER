@@ -45,6 +45,7 @@ const cors     = require('cors');
 const path     = require('path');
 const crypto   = require('crypto');
 const fs       = require('fs');
+const multer   = require('multer');
 // node-fetch not needed — Node v18+ has native fetch built in
 const { createClient } = require('@supabase/supabase-js');
 
@@ -62,6 +63,21 @@ app.use(cors());
 app.use(express.json({ limit: '35mb' }));
 app.use(express.static(__dirname));
 
+// ─── Multer — memory storage for cloud file uploads ───────────────────────────
+// Files land in req.file.buffer; nothing touches disk on the server.
+// 20 MB limit mirrors CLOUD_FILE_MAX_BYTES below.
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 20 * 1048576 },   // 20 MB
+  fileFilter: (_req, file, cb) => {
+    // Accept audio/* and the common container types that browsers may label
+    // as application/octet-stream (e.g. .flac, .aiff from some OS pickers)
+    const ok = file.mimetype.startsWith('audio/')
+      || file.mimetype === 'application/octet-stream'
+      || /\.(mp3|flac|aiff?|aac|ogg|opus|wav|m4a|wma|alac)$/i.test(file.originalname);
+    cb(null, ok);
+  },
+});
 
 // ─── Supabase DB helpers ──────────────────────────────────────────────────────
 // All auth state now lives in Supabase. No local file, no in-memory Maps.
@@ -1044,13 +1060,19 @@ function parseDataUrl(dataUrl) {
   return { mimeType: match[1], buffer: Buffer.from(match[2], 'base64') };
 }
 
-app.post('/api/cloud-files', rateLimit, async (req, res, next) => {
+app.post('/api/cloud-files', rateLimit, (req, res, next) => {
   // ── multipart path (new) ──────────────────────────────────────────────────
   // Content-Type: multipart/form-data  →  fields: token, filename(optional)
   //                                        file:   the audio file
   const ct = req.headers['content-type'] || '';
- const token    = req.body.token || (req.headers.authorization || '').replace('Bearer ', '');
-const sess     = await dbGetSession(token);
+  if (ct.includes('multipart/form-data')) {
+    upload.single('file')(req, res, async (err) => {
+      if (err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE')
+        return res.status(413).json({ error: 'File exceeds 20 MB limit.' });
+      if (err) return res.status(400).json({ error: err.message });
+
+      const token    = req.body.token || (req.headers.authorization || '').replace('Bearer ', '');
+      const sess     = await dbGetSession(token);
       if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
 
       if (!req.file) return res.status(400).json({ error: 'No file received.' });
