@@ -1085,11 +1085,23 @@ app.post('/api/cloud-files', rateLimit, (req, res, next) => {
       const safeName    = String(originalName).replace(/[^a-zA-Z0-9._-]/g, '_').slice(-150);
       const storagePath = `${sess.username}/${Date.now()}-${crypto.randomBytes(4).toString('hex')}-${safeName}`;
 
-      try {
-        const { error: uploadErr } = await supabase.storage
-          .from(CLOUD_BUCKET)
-          .upload(storagePath, req.file.buffer, { contentType: mimeType, upsert: false });
-        if (uploadErr) throw new Error(uploadErr.message);
+    try {
+  console.log('Bucket:', CLOUD_BUCKET);
+  console.log('Storage Path:', storagePath);
+  console.log('Supabase URL:', process.env.SUPABASE_URL);
+
+  const uploadResult = await supabase.storage
+    .from(CLOUD_BUCKET)
+    .upload(storagePath, req.file.buffer, {
+      contentType: mimeType,
+      upsert: false
+    });
+
+  console.log('UPLOAD RESULT:', JSON.stringify(uploadResult, null, 2));
+
+  if (uploadResult.error) {
+    throw new Error(uploadResult.error.message);
+  }
 
         const row = await dbInsertCloudFile({
           owner:        sess.username,
