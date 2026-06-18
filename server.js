@@ -1044,7 +1044,7 @@ function parseDataUrl(dataUrl) {
   return { mimeType: match[1], buffer: Buffer.from(match[2], 'base64') };
 }
 
-app.post('/api/cloud-files', rateLimit, (req, res, next) => {
+app.post('/api/cloud-files', rateLimit, async (req, res, next) => {
   // ── multipart path (new) ──────────────────────────────────────────────────
   // Content-Type: multipart/form-data  →  fields: token, filename(optional)
   //                                        file:   the audio file
