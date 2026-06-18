@@ -46,67 +46,100 @@ const path     = require('path');
 const crypto   = require('crypto');
 const fs       = require('fs');
 // node-fetch not needed — Node v18+ has native fetch built in
+const { createClient } = require('@supabase/supabase-js');
+
+// ─── Supabase client (server-side only — uses service role key) ───────────────
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_KEY
+);
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
-
-// On Render.com (and similar hosts) the app directory may be read-only.
-// Prefer /tmp which is always writable; fall back to __dirname for local dev.
-function resolveDataPath() {
-  const preferred = path.join(__dirname, 'freq_data.json');
-  try { fs.accessSync(path.dirname(preferred), fs.constants.W_OK); return preferred; }
-  catch { return path.join('/tmp', 'freq_data.json'); }
-}
-const DATA_PATH = resolveDataPath();
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
 app.use(cors());
 app.use(express.json({ limit: '4mb' }));
 app.use(express.static(__dirname));
 
-// ─── In-Memory Data Store ─────────────────────────────────────────────────────
-const store = {
-  accounts:  new Map(),
-  playlists: new Map(),
-  sessions:  new Map(),
-};
+// ─── Supabase DB helpers ──────────────────────────────────────────────────────
+// All auth state now lives in Supabase. No local file, no in-memory Maps.
 
-// ─── Persistence ─────────────────────────────────────────────────────────────
-function persistStore() {
-  try {
-    const data = {
-      accounts:  Array.from(store.accounts.entries()),
-      playlists: Array.from(store.playlists.entries()),
-      sessions:  Array.from(store.sessions.entries()),
-    };
-    fs.writeFileSync(DATA_PATH, JSON.stringify(data), 'utf8');
-  } catch (err) {
-    console.error('[persist] Write failed:', err.message);
+async function dbGetAccount(username) {
+  const { data, error } = await supabase
+    .from('accounts')
+    .select('*')
+    .eq('username', username)
+    .single();
+  if (error && error.code !== 'PGRST116') console.error('[db] getAccount:', error.message);
+  return data || null;
+}
+
+async function dbCreateAccount(username, displayName, salt, hash) {
+  const { error } = await supabase.from('accounts').insert({
+    username, display_name: displayName, salt, hash, created_at: new Date().toISOString()
+  });
+  if (error) throw new Error(error.message);
+}
+
+async function dbDeleteAccount(username) {
+  await supabase.from('sessions').delete().eq('username', username);
+  await supabase.from('playlists').delete().eq('username', username);
+  await supabase.from('accounts').delete().eq('username', username);
+}
+
+async function dbCreateSession(token, username, expiresAt) {
+  const { error } = await supabase.from('sessions').insert({
+    token, username, expires_at: new Date(expiresAt).toISOString()
+  });
+  if (error) throw new Error(error.message);
+}
+
+async function dbGetSession(token) {
+  const { data, error } = await supabase
+    .from('sessions')
+    .select('*')
+    .eq('token', token)
+    .single();
+  if (error && error.code !== 'PGRST116') console.error('[db] getSession:', error.message);
+  if (!data) return null;
+  if (new Date(data.expires_at).getTime() < Date.now()) {
+    await supabase.from('sessions').delete().eq('token', token);
+    return null;
   }
+  return { username: data.username, expiresAt: new Date(data.expires_at).getTime() };
 }
 
-function loadStore() {
-  if (!fs.existsSync(DATA_PATH)) return;
-  try {
-    const data = JSON.parse(fs.readFileSync(DATA_PATH, 'utf8'));
-    if (data.accounts)  store.accounts  = new Map(data.accounts);
-    if (data.playlists) store.playlists = new Map(data.playlists);
-    if (data.sessions)  store.sessions  = new Map(data.sessions);
-    const now = Date.now();
-    for (const [tok, sess] of store.sessions) {
-      if (sess.expiresAt < now) store.sessions.delete(tok);
-    }
-    console.log(`[store] Loaded: ${store.accounts.size} accounts, ${store.sessions.size} active sessions`);
-  } catch (err) {
-    console.error('[store] Load failed:', err.message);
-  }
+async function dbRefreshSession(token, expiresAt) {
+  await supabase.from('sessions')
+    .update({ expires_at: new Date(expiresAt).toISOString() })
+    .eq('token', token);
 }
 
-let persistTimer = null;
-function schedulePersist() {
-  if (persistTimer) clearTimeout(persistTimer);
-  persistTimer = setTimeout(persistStore, 800);
+async function dbDeleteSession(token) {
+  await supabase.from('sessions').delete().eq('token', token);
 }
+
+async function dbGetPlaylists(username) {
+  const { data, error } = await supabase
+    .from('playlists')
+    .select('data')
+    .eq('username', username)
+    .single();
+  if (error && error.code !== 'PGRST116') console.error('[db] getPlaylists:', error.message);
+  return data?.data || [];
+}
+
+async function dbSetPlaylists(username, playlists) {
+  const { error } = await supabase.from('playlists').upsert(
+    { username, data: playlists, updated_at: new Date().toISOString() },
+    { onConflict: 'username' }
+  );
+  if (error) throw new Error(error.message);
+}
+
+// schedulePersist is a no-op now — kept so no call sites break
+function schedulePersist() {}
 
 // ─── Crypto helpers ───────────────────────────────────────────────────────────
 const PBKDF2_ITERS  = 100_000;
@@ -125,12 +158,11 @@ function generateToken() { return crypto.randomBytes(16).toString('hex'); }
 
 const TOKEN_TTL = 30 * 24 * 60 * 60 * 1000;
 
-function resolveToken(token) {
+// resolveToken is now a thin alias for dbGetSession — kept for any call sites
+// that were not auth routes (there are none, but just in case)
+async function resolveToken(token) {
   if (!token) return null;
-  const sess = store.sessions.get(token);
-  if (!sess) return null;
-  if (sess.expiresAt < Date.now()) { store.sessions.delete(token); schedulePersist(); return null; }
-  return sess;
+  return dbGetSession(token);
 }
 
 // ─── Rate limiting ────────────────────────────────────────────────────────────
@@ -640,14 +672,19 @@ app.get('/redirect', (req, res) => {
 });
 
 // ─── GET /health ──────────────────────────────────────────────────────────────
-app.get('/health', (req, res) => {
+app.get('/health', async (req, res) => {
+  // Live account count from Supabase (best-effort — don't fail the health check)
+  let accounts = 0;
+  try {
+    const { count } = await supabase.from('accounts').select('*', { count: 'exact', head: true });
+    accounts = count || 0;
+  } catch (_) {}
   res.json({
     status:   'ok',
     version:  '4.3',
     uptime:   Math.floor(process.uptime()),
     platform: process.platform,
-    accounts: store.accounts.size,
-    sessions: store.sessions.size,
+    accounts,
   });
 });
 
@@ -820,7 +857,7 @@ app.get('/api/yt/embed-check', rateLimit, async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  AUTH ROUTES  (unchanged from v4.0)
+//  AUTH ROUTES  — Supabase-backed
 // ═══════════════════════════════════════════════════════════════════════════════
 
 app.post('/api/auth/signup', rateLimit, async (req, res) => {
@@ -833,18 +870,22 @@ app.post('/api/auth/signup', rateLimit, async (req, res) => {
     return res.status(400).json({ error: 'Username must be 2+ alphanumeric chars or underscores.' });
   if (password.length < 4)
     return res.status(400).json({ error: 'Password must be at least 4 characters.' });
-  if (store.accounts.has(key))
-    return res.status(409).json({ error: 'Username already taken.' });
 
   try {
-    const salt = generateSalt();
-    const hash = await hashPassword(password, salt);
-    store.accounts.set(key, { username: key, displayName: (displayName || '').trim() || key, salt, hash, createdAt: Date.now() });
-    store.playlists.set(key, []);
-    const token = generateToken();
-    store.sessions.set(token, { username: key, expiresAt: Date.now() + TOKEN_TTL });
-    schedulePersist();
-    return res.status(201).json({ token, username: key, displayName: store.accounts.get(key).displayName });
+    const existing = await dbGetAccount(key);
+    if (existing) return res.status(409).json({ error: 'Username already taken.' });
+
+    const salt        = generateSalt();
+    const hash        = await hashPassword(password, salt);
+    const dName       = (displayName || '').trim() || key;
+    await dbCreateAccount(key, dName, salt, hash);
+    await dbSetPlaylists(key, []);
+
+    const token     = generateToken();
+    const expiresAt = Date.now() + TOKEN_TTL;
+    await dbCreateSession(token, key, expiresAt);
+
+    return res.status(201).json({ token, username: key, displayName: dName });
   } catch (err) {
     console.error('[signup]', err);
     return res.status(500).json({ error: 'Server error during signup.' });
@@ -857,69 +898,80 @@ app.post('/api/auth/signin', rateLimit, async (req, res) => {
     return res.status(400).json({ error: 'Username and password required.' });
 
   const key  = username.trim().toLowerCase();
-  const acct = store.accounts.get(key);
-  if (!acct) return res.status(401).json({ error: 'No account found with that username.' });
-
   try {
+    const acct = await dbGetAccount(key);
+    if (!acct) return res.status(401).json({ error: 'No account found with that username.' });
+
     const hash = await hashPassword(password, acct.salt);
     if (hash !== acct.hash) return res.status(401).json({ error: 'Incorrect password.' });
-    const token = generateToken();
-    store.sessions.set(token, { username: key, expiresAt: Date.now() + TOKEN_TTL });
-    schedulePersist();
-    return res.json({ token, username: key, displayName: acct.displayName, playlists: store.playlists.get(key) || [] });
+
+    const token     = generateToken();
+    const expiresAt = Date.now() + TOKEN_TTL;
+    await dbCreateSession(token, key, expiresAt);
+    const playlists = await dbGetPlaylists(key);
+
+    return res.json({ token, username: key, displayName: acct.display_name, playlists });
   } catch (err) {
     console.error('[signin]', err);
     return res.status(500).json({ error: 'Server error during sign in.' });
   }
 });
 
-app.post('/api/auth/token-refresh', (req, res) => {
+app.post('/api/auth/token-refresh', async (req, res) => {
   const { token } = req.body;
-  const sess = resolveToken(token);
+  const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token.' });
-  sess.expiresAt = Date.now() + TOKEN_TTL;
-  store.sessions.set(token, sess);
-  schedulePersist();
-  return res.json({ ok: true, expiresAt: sess.expiresAt });
+  const expiresAt = Date.now() + TOKEN_TTL;
+  await dbRefreshSession(token, expiresAt);
+  return res.json({ ok: true, expiresAt });
 });
 
-app.post('/api/auth/sync', (req, res) => {
+app.post('/api/auth/sync', async (req, res) => {
   const { token, playlists } = req.body;
-  const sess = resolveToken(token);
+  const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
   if (!Array.isArray(playlists)) return res.status(400).json({ error: '"playlists" must be an array.' });
   if (JSON.stringify(playlists).length > 2_000_000)
     return res.status(413).json({ error: 'Playlist data exceeds 2 MB limit.' });
-  store.playlists.set(sess.username, playlists);
-  schedulePersist();
-  return res.json({ ok: true, synced: playlists.length, syncedAt: Date.now() });
-});
-
-app.get('/api/auth/pull', (req, res) => {
-  const token = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
-  const sess  = resolveToken(token);
-  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
-  const acct = store.accounts.get(sess.username);
-  return res.json({
-    username:    sess.username,
-    displayName: acct ? acct.displayName : sess.username,
-    playlists:   store.playlists.get(sess.username) || [],
-    pulledAt:    Date.now(),
-  });
-});
-
-app.delete('/api/auth/account', (req, res) => {
-  const token = req.body.token || (req.headers.authorization || '').replace('Bearer ', '');
-  const sess  = resolveToken(token);
-  if (!sess) return res.status(401).json({ error: 'Invalid or expired token.' });
-  const username = sess.username;
-  store.accounts.delete(username);
-  store.playlists.delete(username);
-  for (const [tok, s] of store.sessions) {
-    if (s.username === username) store.sessions.delete(tok);
+  try {
+    await dbSetPlaylists(sess.username, playlists);
+    return res.json({ ok: true, synced: playlists.length, syncedAt: Date.now() });
+  } catch (err) {
+    console.error('[sync]', err);
+    return res.status(500).json({ error: 'Sync failed.' });
   }
-  schedulePersist();
-  return res.json({ ok: true, deleted: username });
+});
+
+app.get('/api/auth/pull', async (req, res) => {
+  const token = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
+  const sess  = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  try {
+    const acct      = await dbGetAccount(sess.username);
+    const playlists = await dbGetPlaylists(sess.username);
+    return res.json({
+      username:    sess.username,
+      displayName: acct?.display_name || sess.username,
+      playlists,
+      pulledAt:    Date.now(),
+    });
+  } catch (err) {
+    console.error('[pull]', err);
+    return res.status(500).json({ error: 'Pull failed.' });
+  }
+});
+
+app.delete('/api/auth/account', async (req, res) => {
+  const token = req.body.token || (req.headers.authorization || '').replace('Bearer ', '');
+  const sess  = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token.' });
+  try {
+    await dbDeleteAccount(sess.username);
+    return res.json({ ok: true, deleted: sess.username });
+  } catch (err) {
+    console.error('[delete-account]', err);
+    return res.status(500).json({ error: 'Account deletion failed.' });
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1011,13 +1063,11 @@ app.get('*', (req, res) => {
 });
 
 // ─── Start ────────────────────────────────────────────────────────────────────
-loadStore();
-
 const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`\n🎵  FREQ v4.3 "The Extractor" is running`);
   console.log(`    Local:  http://localhost:${PORT}`);
   console.log(`    Health: http://localhost:${PORT}/health`);
-  console.log(`    Data:   ${DATA_PATH}`);
+  console.log(`    Store:  Supabase (persistent)`);
   console.log(`    © 2025–2026 FREQ / Slimey2017. All rights reserved.\n`);
 });
 
@@ -1030,5 +1080,5 @@ server.on('error', err => {
   process.exit(1);
 });
 
-process.on('SIGINT',  () => { persistStore(); process.exit(0); });
-process.on('SIGTERM', () => { persistStore(); process.exit(0); });
+process.on('SIGINT',  () => process.exit(0));
+process.on('SIGTERM', () => process.exit(0));
