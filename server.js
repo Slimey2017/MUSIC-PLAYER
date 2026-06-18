@@ -59,7 +59,7 @@ const PORT = process.env.PORT || 3000;
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
 app.use(cors());
-app.use(express.json({ limit: '4mb' }));
+app.use(express.json({ limit: '35mb' }));
 app.use(express.static(__dirname));
 
 // ─── Supabase DB helpers ──────────────────────────────────────────────────────
@@ -83,6 +83,15 @@ async function dbCreateAccount(username, displayName, salt, hash) {
 }
 
 async function dbDeleteAccount(username) {
+  // Clean up Storage objects first — deleting the metadata rows without
+  // this would orphan the actual audio files in the bucket forever.
+  const files = await dbGetCloudFiles(username);
+  if (files.length) {
+    const paths = files.map(f => f.storage_path);
+    const { error } = await supabase.storage.from(CLOUD_BUCKET).remove(paths);
+    if (error) console.error('[db] deleteAccount storage cleanup:', error.message);
+  }
+  await supabase.from('cloud_files').delete().eq('owner', username);
   await supabase.from('sessions').delete().eq('username', username);
   await supabase.from('playlists').delete().eq('username', username);
   await supabase.from('accounts').delete().eq('username', username);
@@ -135,6 +144,49 @@ async function dbSetPlaylists(username, playlists) {
     { username, data: playlists, updated_at: new Date().toISOString() },
     { onConflict: 'username' }
   );
+  if (error) throw new Error(error.message);
+}
+
+// ─── Cloud Files (Supabase Storage + Postgres metadata) ───────────────────────
+const CLOUD_BUCKET = 'cloud-audio';
+
+async function dbGetCloudFiles(username) {
+  const { data, error } = await supabase
+    .from('cloud_files')
+    .select('*')
+    .eq('owner', username)
+    .order('uploaded_at', { ascending: false });
+  if (error) console.error('[db] getCloudFiles:', error.message);
+  return data || [];
+}
+
+async function dbGetCloudFile(id, username) {
+  const { data, error } = await supabase
+    .from('cloud_files')
+    .select('*')
+    .eq('id', id)
+    .eq('owner', username)   // ownership enforced in the query itself, not just checked after
+    .single();
+  if (error && error.code !== 'PGRST116') console.error('[db] getCloudFile:', error.message);
+  return data || null;
+}
+
+async function dbInsertCloudFile(row) {
+  const { data, error } = await supabase
+    .from('cloud_files')
+    .insert(row)
+    .select()
+    .single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+async function dbDeleteCloudFile(id, username) {
+  const { error } = await supabase
+    .from('cloud_files')
+    .delete()
+    .eq('id', id)
+    .eq('owner', username);  // same belt-and-suspenders ownership scoping
   if (error) throw new Error(error.message);
 }
 
@@ -971,6 +1023,126 @@ app.delete('/api/auth/account', async (req, res) => {
   } catch (err) {
     console.error('[delete-account]', err);
     return res.status(500).json({ error: 'Account deletion failed.' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  CLOUD FILES  — Supabase Storage (private bucket) + Postgres metadata
+//  POST   /api/cloud-files        { token, filename, mimeType, data }  data = base64 data URL
+//  GET    /api/cloud-files        ?token=...   → list of { id, filename, size, mimeType, uploadedAt }
+//  GET    /api/cloud-files/:id    ?token=...   → { ...metadata, url } url = short-lived signed URL
+//  DELETE /api/cloud-files/:id    { token }
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const CLOUD_FILE_MAX_BYTES = 20 * 1048576; // 20MB, matches client-side cap
+const SIGNED_URL_TTL_SECONDS = 60 * 10;    // 10 minutes — long enough to start playback, short enough to limit exposure if a link leaks
+
+function parseDataUrl(dataUrl) {
+  const match = /^data:([^;]+);base64,(.+)$/.exec(dataUrl || '');
+  if (!match) return null;
+  return { mimeType: match[1], buffer: Buffer.from(match[2], 'base64') };
+}
+
+app.post('/api/cloud-files', rateLimit, async (req, res) => {
+  const { token, filename, data } = req.body;
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  if (!filename || !data) return res.status(400).json({ error: '"filename" and "data" are required.' });
+
+  const parsed = parseDataUrl(data);
+  if (!parsed) return res.status(400).json({ error: '"data" must be a base64 data URL.' });
+  if (parsed.buffer.length > CLOUD_FILE_MAX_BYTES)
+    return res.status(413).json({ error: `File exceeds ${CLOUD_FILE_MAX_BYTES / 1048576}MB limit.` });
+
+  const safeName    = String(filename).replace(/[^a-zA-Z0-9._-]/g, '_').slice(-150);
+  const storagePath = `${sess.username}/${Date.now()}-${Math.random().toString(36).slice(2)}-${safeName}`;
+
+  try {
+    const { error: uploadErr } = await supabase.storage
+      .from(CLOUD_BUCKET)
+      .upload(storagePath, parsed.buffer, { contentType: parsed.mimeType, upsert: false });
+    if (uploadErr) throw new Error(uploadErr.message);
+
+    const row = await dbInsertCloudFile({
+      owner: sess.username,
+      filename: String(filename).slice(0, 255),
+      mime_type: parsed.mimeType,
+      size: parsed.buffer.length,
+      storage_path: storagePath,
+      uploaded_at: new Date().toISOString(),
+    });
+
+    return res.status(201).json({
+      id: row.id, filename: row.filename, size: row.size,
+      mimeType: row.mime_type, uploadedAt: row.uploaded_at,
+    });
+  } catch (err) {
+    console.error('[cloud-files upload]', err);
+    return res.status(500).json({ error: 'Upload failed.' });
+  }
+});
+
+app.get('/api/cloud-files', async (req, res) => {
+  const token = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
+  const sess  = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  try {
+    const files = await dbGetCloudFiles(sess.username);
+    return res.json({
+      files: files.map(f => ({
+        id: f.id, filename: f.filename, size: f.size,
+        mimeType: f.mime_type, uploadedAt: f.uploaded_at,
+      })),
+    });
+  } catch (err) {
+    console.error('[cloud-files list]', err);
+    return res.status(500).json({ error: 'Could not load cloud files.' });
+  }
+});
+
+app.get('/api/cloud-files/:id', async (req, res) => {
+  const token = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
+  const sess  = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  try {
+    // .eq('owner', sess.username) is inside dbGetCloudFile itself — a file that
+    // exists but belongs to someone else returns null here, identically to a
+    // file that doesn't exist at all. No way to distinguish the two by probing.
+    const file = await dbGetCloudFile(req.params.id, sess.username);
+    if (!file) return res.status(404).json({ error: 'File not found.' });
+
+    const { data, error } = await supabase.storage
+      .from(CLOUD_BUCKET)
+      .createSignedUrl(file.storage_path, SIGNED_URL_TTL_SECONDS);
+    if (error) throw new Error(error.message);
+
+    return res.json({
+      id: file.id, filename: file.filename, size: file.size,
+      mimeType: file.mime_type, uploadedAt: file.uploaded_at,
+      url: data.signedUrl, expiresIn: SIGNED_URL_TTL_SECONDS,
+    });
+  } catch (err) {
+    console.error('[cloud-files signed-url]', err);
+    return res.status(500).json({ error: 'Could not generate playback URL.' });
+  }
+});
+
+app.delete('/api/cloud-files/:id', async (req, res) => {
+  const token = req.body.token || (req.headers.authorization || '').replace('Bearer ', '');
+  const sess  = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token.' });
+  try {
+    const file = await dbGetCloudFile(req.params.id, sess.username);
+    if (!file) return res.status(404).json({ error: 'File not found.' });
+
+    const { error: removeErr } = await supabase.storage.from(CLOUD_BUCKET).remove([file.storage_path]);
+    if (removeErr) console.error('[cloud-files delete] storage:', removeErr.message);
+
+    await dbDeleteCloudFile(req.params.id, sess.username);
+    return res.json({ ok: true, deleted: file.filename });
+  } catch (err) {
+    console.error('[cloud-files delete]', err);
+    return res.status(500).json({ error: 'Delete failed.' });
   }
 });
 
