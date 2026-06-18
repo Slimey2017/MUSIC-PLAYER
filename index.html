@@ -1588,6 +1588,15 @@ body.oled-mode {
               <button id="cloudRefreshBtn" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.5rem;padding:7px 10px;border-radius:var(--radius);cursor:pointer;">⟳</button>
             </div>
             <input type="file" id="cloudFileInput" accept="audio/*,.flac,.aiff" multiple style="display:none" />
+            <div id="cloudUploadProgressWrap" style="display:none;margin-bottom:6px;">
+              <div style="font-size:0.46rem;color:var(--text-muted);margin-bottom:3px;display:flex;justify-content:space-between;">
+                <span id="cloudUploadStatus">Uploading…</span>
+                <span id="cloudUploadCount"></span>
+              </div>
+              <div class="cloud-upload-progress">
+                <div class="cloud-upload-bar" id="cloudUploadBar"></div>
+              </div>
+            </div>
             <div style="font-size:0.46rem;color:var(--text-muted);margin-bottom:6px;display:flex;justify-content:space-between;">
               <span id="cloudFileCount">0 files</span>
               <span id="cloudStorageUsed">0 MB used</span>
@@ -6059,8 +6068,11 @@ function updateTopbarVis(playing) {
   if (vis) vis.classList.toggle('active', !!playing);
 }
 
-// ─── 10. Cloud Files System ───────────────────────────────────────────────────
-const CLOUD_FILES = JSON.parse(localStorage.getItem('freq_cloud_files') || '[]');
+// ─── 10. Cloud Files System ────────────────────────────────────────────────
+// Backed by /api/cloud-files (Supabase Storage + Postgres metadata) — replaces
+// the old localStorage-only version, which never actually left the device.
+const CLOUD_FILES_BASE = '/api/cloud-files';
+let cloudFilesCache = []; // metadata only: { id, filename, size, mimeType, uploadedAt } — never holds audio bytes or URLs
 
 function switchLocalTab(tab) {
   const filesEl = $('localSubFiles');
@@ -6079,35 +6091,50 @@ function switchLocalTab(tab) {
   playSfx('click');
 }
 
-function updateCloudFilesUI() {
-  const loggedIn  = AUTH.loggedIn;
-  const inEl   = $('cloudFilesLoggedIn');
-  const outEl  = $('cloudFilesLoggedOut');
+async function updateCloudFilesUI() {
+  const loggedIn = AUTH.loggedIn;
+  const inEl  = $('cloudFilesLoggedIn');
+  const outEl = $('cloudFilesLoggedOut');
   if (!inEl || !outEl) return;
   inEl.style.display  = loggedIn ? 'block' : 'none';
   outEl.style.display = loggedIn ? 'none'  : 'block';
   if (!loggedIn) return;
-  // Show user's cloud files
-  const userFiles = CLOUD_FILES.filter(f => f.owner === AUTH.username);
-  $('cloudFileCount').textContent = userFiles.length + ' file' + (userFiles.length!==1?'s':'');
-  const totalMB = (userFiles.reduce((s,f) => s + (f.size||0), 0) / 1048576).toFixed(1);
-  $('cloudStorageUsed').textContent = totalMB + ' MB used';
+
   const list = $('cloudFilesList');
-  if (!userFiles.length) {
+  list.innerHTML = '<div style="font-size:0.52rem;color:var(--text-muted);text-align:center;padding:16px;">Loading…</div>';
+
+  try {
+    const res  = await fetch(`${CLOUD_FILES_BASE}?token=${encodeURIComponent(AUTH.token)}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not load cloud files.');
+    cloudFilesCache = data.files;
+  } catch (err) {
+    list.innerHTML = '<div style="font-size:0.52rem;color:var(--accent2);text-align:center;padding:16px;">Could not load cloud files. ' + (err.message || '') + '</div>';
+    return;
+  }
+
+  $('cloudFileCount').textContent = cloudFilesCache.length + ' file' + (cloudFilesCache.length !== 1 ? 's' : '');
+  const totalMB = (cloudFilesCache.reduce((s, f) => s + (f.size || 0), 0) / 1048576).toFixed(1);
+  $('cloudStorageUsed').textContent = totalMB + ' MB used';
+
+  if (!cloudFilesCache.length) {
     list.innerHTML = '<div style="font-size:0.52rem;color:var(--text-muted);text-align:center;padding:16px;">No cloud files yet. Upload audio files to access them anywhere.</div>';
     return;
   }
-  list.innerHTML = userFiles.map((f, i) => `
-    <div class="cloud-file-item" title="${f.name}">
-      <span class="cloud-file-name">🎵 ${f.name}</span>
+  list.innerHTML = cloudFilesCache.map((f, i) => `
+    <div class="cloud-file-item" title="${f.filename}">
+      <span class="cloud-file-name">🎵 ${f.filename}</span>
       <span class="cloud-file-size">${(f.size/1048576).toFixed(1)}MB</span>
-      <button class="cloud-file-play" onclick="playCloudFile(${i})" title="Play">▶</button>
+      <button class="cloud-file-play" onclick="playCloudFile(${i}, true)" title="Play Now">▶</button>
+      <button class="cloud-file-play" onclick="playCloudFile(${i}, false)" title="Add to Queue" style="font-size:0.6rem;padding:0 5px;">+Q</button>
       <button class="cloud-file-del" onclick="deleteCloudFile(${i})" title="Delete">✕</button>
     </div>
   `).join('');
 }
 
-// Cloud upload (stores in localStorage as base64 — up to ~5MB per file realistically)
+// Cloud upload — sends the file to the server as base64; server persists it
+// to Supabase Storage and writes the metadata row. Nothing audio-related
+// touches localStorage anymore.
 if ($('cloudUploadBtn')) {
   $('cloudUploadBtn').addEventListener('click', () => {
     if (!AUTH.loggedIn) { showToast('Sign in required','Please sign in to upload cloud files.','error'); return; }
@@ -6121,19 +6148,52 @@ if ($('cloudFileInput')) {
   $('cloudFileInput').addEventListener('change', async function() {
     const files = Array.from(this.files);
     if (!files.length) return;
-    let uploaded = 0;
-    for (const f of files) {
-      if (f.size > 10 * 1048576) { showToast('File Too Large', f.name + ' exceeds 10MB limit.', 'error'); continue; }
+    const MAX_BYTES = 20 * 1048576; // keep in sync with CLOUD_FILE_MAX_BYTES in server.js
+
+    // Lock UI during upload
+    const uploadBtn = $('cloudUploadBtn');
+    const progressWrap = $('cloudUploadProgressWrap');
+    const bar = $('cloudUploadBar');
+    const statusEl = $('cloudUploadStatus');
+    const countEl = $('cloudUploadCount');
+    if (uploadBtn) { uploadBtn.disabled = true; uploadBtn.textContent = '↑ Uploading…'; }
+    if (progressWrap) progressWrap.style.display = 'block';
+
+    let uploaded = 0, failed = 0;
+    const eligible = files.filter(f => {
+      if (f.size > MAX_BYTES) { showToast('File Too Large', f.name + ' exceeds 20MB limit.', 'error'); failed++; return false; }
+      return true;
+    });
+
+    for (let i = 0; i < eligible.length; i++) {
+      const f = eligible[i];
+      // Update progress bar and label
+      if (statusEl) statusEl.textContent = f.name.length > 28 ? f.name.slice(0, 25) + '…' : f.name;
+      if (countEl) countEl.textContent = `${i + 1} / ${eligible.length}`;
+      if (bar) bar.style.width = Math.round((i / eligible.length) * 100) + '%';
       try {
         const b64 = await fileToBase64(f);
-        const entry = { id: Date.now() + Math.random().toString(36).slice(2), name: f.name, size: f.size, type: f.type, data: b64, owner: AUTH.username, uploadedAt: Date.now() };
-        CLOUD_FILES.push(entry);
+        const res  = await fetch(CLOUD_FILES_BASE, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: AUTH.token, filename: f.name, data: b64 }),
+        });
+        const result = await res.json();
+        if (!res.ok) throw new Error(result.error || 'Upload failed.');
         uploaded++;
-      } catch(e) { showToast('Upload Error', f.name + ' failed.', 'error'); }
+      } catch(e) { showToast('Upload Error', f.name + ' — ' + (e.message || 'failed.'), 'error'); failed++; }
     }
-    localStorage.setItem('freq_cloud_files', JSON.stringify(CLOUD_FILES));
-    updateCloudFilesUI();
+
+    // Fill bar to 100% briefly, then hide
+    if (bar) bar.style.width = '100%';
+    await new Promise(r => setTimeout(r, 400));
+    if (progressWrap) progressWrap.style.display = 'none';
+    if (bar) bar.style.width = '0%';
+
+    // Restore button
+    if (uploadBtn) { uploadBtn.disabled = false; uploadBtn.textContent = '↑ Upload Files'; }
+
     if (uploaded) showToast('Uploaded!', uploaded + ' file' + (uploaded!==1?'s':'')+' added to cloud.', 'success');
+    updateCloudFilesUI();
     this.value = '';
   });
 }
@@ -6145,39 +6205,56 @@ function fileToBase64(file) {
     r.readAsDataURL(file);
   });
 }
-function playCloudFile(index) {
-  const userFiles = CLOUD_FILES.filter(f => f.owner === AUTH.username);
-  const f = userFiles[index];
+
+// Fetches a fresh short-lived signed URL right before queueing, rather than
+// caching one — signed URLs expire (10 min server-side), so each press of
+// play resolves a new one. playItem() itself is unchanged: it just reads
+// item.blobUrl off the queue object, same as it always has for local files.
+// playNow=true  → play immediately (default ▶ button)
+// playNow=false → append to queue only (+Q button)
+async function playCloudFile(index, playNow = true) {
+  const f = cloudFilesCache[index];
   if (!f) return;
-  const blob = dataURLToBlob(f.data, f.type);
-  const blobUrl = URL.createObjectURL(blob);
-  const item = {
-    platform: 'local', type: 'local', title: f.name.replace(/\.[^.]+$/,''),
-    originalUrl: f.name, id: f.id, blobUrl, size: f.size,
-    fileType: f.type, customLabel: f.name,
-  };
-  state.queue.push(item);
-  save(); renderQueue();
-  playItem(state.queue.length - 1);
-  showToast('Playing Cloud File', f.name, 'success');
-  switchLocalTab('files');
+  showToast('Loading…', f.filename, 'info');
+  try {
+    const res  = await fetch(`${CLOUD_FILES_BASE}/${f.id}?token=${encodeURIComponent(AUTH.token)}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not load file.');
+
+    const item = {
+      platform: 'local', type: 'local', title: f.filename.replace(/\.[^.]+$/, ''),
+      originalUrl: f.filename, id: f.id, blobUrl: data.url, size: f.size,
+      fileType: f.mimeType, customLabel: f.filename,
+    };
+    state.queue.push(item);
+    save(); renderQueue();
+    if (playNow) {
+      playItem(state.queue.length - 1);
+      showToast('Playing Cloud File', f.filename, 'success');
+      switchLocalTab('files');
+    } else {
+      showToast('Added to Queue', f.filename, 'success');
+    }
+  } catch (err) {
+    showToast('Playback Error', err.message || 'Could not play file.', 'error');
+  }
 }
-function dataURLToBlob(dataUrl, type) {
-  const byteString = atob(dataUrl.split(',')[1]);
-  const ab = new ArrayBuffer(byteString.length);
-  const ia = new Uint8Array(ab);
-  for (let i = 0; i < byteString.length; i++) ia[i] = byteString.charCodeAt(i);
-  return new Blob([ab], {type});
-}
-function deleteCloudFile(index) {
-  const userFiles = CLOUD_FILES.filter(f => f.owner === AUTH.username);
-  const f = userFiles[index];
-  if (!f || !confirm('Delete "' + f.name + '" from cloud?')) return;
-  const globalIdx = CLOUD_FILES.findIndex(cf => cf.id === f.id);
-  if (globalIdx >= 0) CLOUD_FILES.splice(globalIdx, 1);
-  localStorage.setItem('freq_cloud_files', JSON.stringify(CLOUD_FILES));
-  updateCloudFilesUI();
-  showToast('Deleted', f.name + ' removed from cloud.', 'info');
+
+async function deleteCloudFile(index) {
+  const f = cloudFilesCache[index];
+  if (!f || !confirm('Delete "' + f.filename + '" from cloud?')) return;
+  try {
+    const res  = await fetch(`${CLOUD_FILES_BASE}/${f.id}`, {
+      method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: AUTH.token }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Delete failed.');
+    showToast('Deleted', f.filename + ' removed from cloud.', 'info');
+    updateCloudFilesUI();
+  } catch (err) {
+    showToast('Delete Error', err.message || 'Could not delete file.', 'error');
+  }
 }
 
 // ─── 11. Artwork hover overlay ────────────────────────────────────────────────
