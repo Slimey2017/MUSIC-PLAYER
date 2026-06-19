@@ -167,14 +167,77 @@ async function dbSetPlaylists(username, playlists) {
 // ─── Cloud Files (Supabase Storage + Postgres metadata) ───────────────────────
 const CLOUD_BUCKET = 'cloud-audio';
 
-async function dbGetCloudFiles(username) {
-  const { data, error } = await supabase
-    .from('cloud_files')
-    .select('*')
-    .eq('owner', username)
-    .order('uploaded_at', { ascending: false });
+// opts: { folder, search, sort, dir }
+//   folder — exact folder match. Pass null/undefined for "all folders".
+//            Pass '' (empty string) to mean "root only" (folder IS NULL).
+//   search — case-insensitive substring match against filename/title/artist.
+//   sort   — 'name' | 'artist' | 'uploaded' | 'duration'  (default 'uploaded')
+//   dir    — 'asc' | 'desc'  (default depends on sort: 'uploaded' defaults desc, others asc)
+async function dbGetCloudFiles(username, opts = {}) {
+  const { folder, search, sort = 'uploaded', dir } = opts;
+
+  let q = supabase.from('cloud_files').select('*').eq('owner', username);
+
+  if (folder === '') q = q.is('folder', null);
+  else if (folder)   q = q.eq('folder', folder);
+
+  if (search && search.trim()) {
+    const term = search.trim().replace(/[%,]/g, ''); // strip PostgREST-significant chars
+    q = q.or(`filename.ilike.%${term}%,title.ilike.%${term}%,artist.ilike.%${term}%`);
+  }
+
+  const sortCol = { name: 'filename', artist: 'artist', uploaded: 'uploaded_at', duration: 'duration' }[sort] || 'uploaded_at';
+  const ascending = dir ? dir === 'asc' : sortCol !== 'uploaded_at';
+  q = q.order(sortCol, { ascending, nullsFirst: false });
+
+  const { data, error } = await q;
   if (error) console.error('[db] getCloudFiles:', error.message);
   return data || [];
+}
+
+async function dbGetCloudFolders(username) {
+  const { data, error } = await supabase
+    .from('cloud_files')
+    .select('folder')
+    .eq('owner', username)
+    .not('folder', 'is', null);
+  if (error) { console.error('[db] getCloudFolders:', error.message); return []; }
+  return [...new Set(data.map(r => r.folder))].sort((a, b) => a.localeCompare(b));
+}
+
+async function dbMoveCloudFiles(ids, username, folder) {
+  const { data, error } = await supabase
+    .from('cloud_files')
+    .update({ folder: folder || null })
+    .in('id', ids)
+    .eq('owner', username)   // ownership enforced here too — can't move someone else's files
+    .select();
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+
+async function dbDeleteCloudFilesBulk(ids, username) {
+  // Look up storage paths first so we know what to remove from the bucket.
+  const { data: rows, error: selErr } = await supabase
+    .from('cloud_files')
+    .select('id, storage_path')
+    .in('id', ids)
+    .eq('owner', username);
+  if (selErr) throw new Error(selErr.message);
+  if (!rows.length) return { deletedIds: [], failedStorage: false };
+
+  const paths = rows.map(r => r.storage_path);
+  const { error: storageErr } = await supabase.storage.from(CLOUD_BUCKET).remove(paths);
+  if (storageErr) console.error('[db] deleteCloudFilesBulk storage:', storageErr.message);
+
+  const { error: delErr } = await supabase
+    .from('cloud_files')
+    .delete()
+    .in('id', rows.map(r => r.id))
+    .eq('owner', username);
+  if (delErr) throw new Error(delErr.message);
+
+  return { deletedIds: rows.map(r => r.id), failedStorage: !!storageErr };
 }
 
 async function dbGetCloudFile(id, username) {
@@ -1085,23 +1148,25 @@ app.post('/api/cloud-files', rateLimit, (req, res, next) => {
       const safeName    = String(originalName).replace(/[^a-zA-Z0-9._-]/g, '_').slice(-150);
       const storagePath = `${sess.username}/${Date.now()}-${crypto.randomBytes(4).toString('hex')}-${safeName}`;
 
-    try {
-  console.log('Bucket:', CLOUD_BUCKET);
-  console.log('Storage Path:', storagePath);
-  console.log('Supabase URL:', process.env.SUPABASE_URL);
+      // Optional metadata — client extracts these via jsmediatags/Audio element
+      // before upload, since parsing ID3 server-side would mean a new dependency.
+      // All are nullable; the UI falls back to filename when title/artist are absent.
+      const folder   = normalizeFolder(req.body.folder);
+      const title    = (req.body.title || '').trim().slice(0, 255) || null;
+      const artist   = (req.body.artist || '').trim().slice(0, 255) || null;
+      const duration = req.body.duration !== undefined ? parseDurationField(req.body.duration) : null;
 
-  const uploadResult = await supabase.storage
-    .from(CLOUD_BUCKET)
-    .upload(storagePath, req.file.buffer, {
-      contentType: mimeType,
-      upsert: false
-    });
+      try {
+        const uploadResult = await supabase.storage
+          .from(CLOUD_BUCKET)
+          .upload(storagePath, req.file.buffer, {
+            contentType: mimeType,
+            upsert: false
+          });
 
-  console.log('UPLOAD RESULT:', JSON.stringify(uploadResult, null, 2));
-
-  if (uploadResult.error) {
-    throw new Error(uploadResult.error.message);
-  }
+        if (uploadResult.error) {
+          throw new Error(uploadResult.error.message);
+        }
 
         const row = await dbInsertCloudFile({
           owner:        sess.username,
@@ -1110,12 +1175,10 @@ app.post('/api/cloud-files', rateLimit, (req, res, next) => {
           size:         req.file.size,
           storage_path: storagePath,
           uploaded_at:  new Date().toISOString(),
+          folder, title, artist, duration,
         });
 
-        return res.status(201).json({
-          id: row.id, filename: row.filename, size: row.size,
-          mimeType: row.mime_type, uploadedAt: row.uploaded_at,
-        });
+        return res.status(201).json({ ...cloudFileToJSON(row) });
       } catch (e) {
         console.error('[cloud-files multipart upload]', e);
         return res.status(500).json({ error: 'Upload failed: ' + e.message });
