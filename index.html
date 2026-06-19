@@ -836,6 +836,9 @@ footer{text-align:center;padding:7px;font-size:0.47rem;color:var(--text-muted);l
 }
 .fpb-btn:hover { color:var(--accent);transform:scale(1.1); }
 .fpb-btn.active-mode { color:var(--accent); }
+.fpb-download { margin-left:4px;font-size:0.95rem; }
+.fpb-download.downloading { color:var(--accent);animation:fpbDownloadPulse 0.8s ease-in-out infinite; }
+@keyframes fpbDownloadPulse { 0%,100%{opacity:1;} 50%{opacity:0.4;} }
 .fpb-prev,.fpb-next { font-size:1rem; }
 .fpb-play {
   width:40px;height:40px;border-radius:50% !important;
@@ -1799,6 +1802,7 @@ body.oled-mode {
             <span class="fpb-vol-icon">🔈</span>
             <input type="range" class="fpb-vol-slider" id="fpbVolume" min="0" max="100" value="100" title="Volume" />
             <span class="fpb-vol-pct" id="fpbVolPct">100%</span>
+            <button class="fpb-btn fpb-download" id="fpbDownload" title="Download file">⭳</button>
           </div>
         </div>
         <!-- Waveform/spectrum row -->
@@ -4545,12 +4549,6 @@ function playItem(index) {
     // Ensure audio context is set up
     setupAudioContext();
 
-    // Cross-origin sources (Supabase signed URLs) must have crossOrigin set
-    // BEFORE assigning .src, or createMediaElementSource() taints the output
-    // and the Web Audio graph plays back silently with no error of any kind.
-    // blob: URLs (true local files) are same-origin and unaffected by this.
-    localAudio.crossOrigin = item.blobUrl && item.blobUrl.startsWith('blob:') ? null : 'anonymous';
-
     localAudio.src = item.blobUrl || '';
     if (!localAudio.src) {
       showToast('Local file unavailable', 'Blob URL expired. Re-add the file.', 'error');
@@ -5693,6 +5691,7 @@ function initKeepAliveUI() {
   const progress = $('fpbProgressWrap');
   const fpbShuf  = $('fpbShuffle');
   const fpbRep   = $('fpbRepeat');
+  const fpbDl    = $('fpbDownload');
 
   if (!playBtn) return;
 
@@ -5761,6 +5760,43 @@ function initKeepAliveUI() {
   // Shuffle/Repeat mirror
   if (fpbShuf) fpbShuf.addEventListener('click', () => shuffleBtn && shuffleBtn.click());
   if (fpbRep)  fpbRep.addEventListener('click',  () => { repeatBtn && repeatBtn.click(); fpbRep.classList.toggle('active-mode', state.repeat > 0); });
+
+  // Download current local/cloud file
+  if (fpbDl) {
+    fpbDl.addEventListener('click', async () => {
+      const item = state.activeIndex >= 0 ? state.queue[state.activeIndex] : null;
+      if (!item || item.platform !== 'local' || !item.blobUrl) {
+        showToast('Nothing to download', 'Play a local or cloud file first.', 'error');
+        return;
+      }
+      const rawName = item.customLabel || item.title || 'track';
+      const hasExt  = /\.[a-z0-9]{2,4}$/i.test(rawName);
+      const ext = (item.format || '').toLowerCase().replace(/^\./, '');
+      const filename = hasExt ? rawName : (ext ? `${rawName}.${ext}` : rawName);
+
+      fpbDl.classList.add('downloading');
+      try {
+        // blobUrl may already be a blob: URL (local file) or a remote/signed URL (cloud file)
+        let href = item.blobUrl;
+        if (!href.startsWith('blob:')) {
+          const res  = await fetch(href);
+          const blob = await res.blob();
+          href = URL.createObjectURL(blob);
+        }
+        const a = document.createElement('a');
+        a.href = href;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        showToast('Downloading…', filename, 'success');
+      } catch (err) {
+        showToast('Download failed', err.message || 'Could not download file.', 'error');
+      } finally {
+        fpbDl.classList.remove('downloading');
+      }
+    });
+  }
 })();
 
 // ─── 2. Support Modal Functions ───────────────────────────────────────────────
