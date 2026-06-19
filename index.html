@@ -4549,6 +4549,12 @@ function playItem(index) {
     // Ensure audio context is set up
     setupAudioContext();
 
+    // Cross-origin sources (Supabase signed URLs) must have crossOrigin set
+    // BEFORE assigning .src, or createMediaElementSource() taints the output
+    // and the Web Audio graph plays back silently with no error of any kind.
+    // blob: URLs (true local files) are same-origin and unaffected by this.
+    localAudio.crossOrigin = item.blobUrl && item.blobUrl.startsWith('blob:') ? null : 'anonymous';
+
     localAudio.src = item.blobUrl || '';
     if (!localAudio.src) {
       showToast('Local file unavailable', 'Blob URL expired. Re-add the file.', 'error');
