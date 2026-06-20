@@ -29,6 +29,14 @@
  * GET  /api/auth/pull
  * DELETE /api/auth/account       { token }
  *
+ * GET    /api/profiles/:username            → public profile (404 if private/missing)
+ * PATCH  /api/profiles/me        { token, bio?, displayName?, isPublic? }
+ *
+ * POST   /api/follows/:username              { token }  → follow
+ * DELETE /api/follows/:username              { token }  → unfollow
+ * GET    /api/follows/:username/followers    ?limit=&offset=
+ * GET    /api/follows/:username/following    ?limit=&offset=
+ *
  * ─── New in v4.1 ─────────────────────────────────────────────────────────────
  *   - POST /api/yt/tracks  — scrapes YouTube playlist/video tracks, no API key
  *   - GET  /api/yt/embed-check — detects embed-blocked videos via oEmbed
@@ -99,12 +107,127 @@ async function dbCreateAccount(username, displayName, salt, hash) {
   if (error) throw new Error(error.message);
 }
 
+// ─── Profiles (public-facing, deliberately separate from accounts) ───────────
+// accounts holds salt/hash — credential material that must never be
+// reachable via a "get public profile" code path. profiles holds only what's
+// safe to show a stranger, so a careless select('*') here can't ever leak a
+// password hash, today or after any future refactor.
+
+// Creates a profile row at signup, public by default, seeded with the same
+// display name the account starts with. Best-effort — a missing profile row
+// degrades gracefully (dbGetProfile returns null, the API 404s) rather than
+// failing signup outright over a non-critical insert.
+async function dbCreateProfile(username, displayName) {
+  const { error } = await supabase.from('profiles').insert({
+    username, display_name: displayName,
+  });
+  if (error) console.error('[db] createProfile:', error.message);
+}
+
+async function dbGetProfile(username) {
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('*')
+    .eq('username', username)
+    .single();
+  if (error && error.code !== 'PGRST116') console.error('[db] getProfile:', error.message);
+  return data || null;
+}
+
+// Partial update — only fields present in `patch` are touched. Used by
+// PATCH /api/profiles/me so the client can send just { bio } or just
+// { isPublic } without clobbering the rest of the row.
+async function dbUpdateProfile(username, patch) {
+  const { data, error } = await supabase
+    .from('profiles')
+    .update({ ...patch, updated_at: new Date().toISOString() })
+    .eq('username', username)
+    .select()
+    .single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+// ─── Follows ──────────────────────────────────────────────────────────────────
+// follower_count/following_count on `profiles` are maintained by a Postgres
+// trigger (trg_follow_counts) on every insert/delete here — never count(*)
+// live from the server, the trigger already keeps profiles in sync.
+
+// Returns true on a new follow, false if the follow already existed (treated
+// as a harmless no-op by the route, not an error — clicking "follow" twice
+// shouldn't surface a failure to the user).
+async function dbFollowUser(followerUsername, followedUsername) {
+  const { error } = await supabase.from('follows').insert({
+    follower_username: followerUsername, followed_username: followedUsername,
+  });
+  if (error) {
+    if (error.code === '23505') return false; // unique violation — already following
+    throw new Error(error.message);
+  }
+  return true;
+}
+
+async function dbUnfollowUser(followerUsername, followedUsername) {
+  const { error } = await supabase.from('follows')
+    .delete()
+    .eq('follower_username', followerUsername)
+    .eq('followed_username', followedUsername);
+  if (error) throw new Error(error.message);
+}
+
+async function dbIsFollowing(followerUsername, followedUsername) {
+  const { data, error } = await supabase.from('follows')
+    .select('follower_username')
+    .eq('follower_username', followerUsername)
+    .eq('followed_username', followedUsername)
+    .maybeSingle();
+  if (error) { console.error('[db] isFollowing:', error.message); return false; }
+  return !!data;
+}
+
+// Paginated list of usernames following / followed by `username`, joined
+// against profiles for display data. Simple offset pagination — follower
+// lists don't grow anywhere near the size where keyset pagination's extra
+// complexity would pay for itself at this app's scale.
+async function dbGetFollowers(username, { limit = 50, offset = 0 } = {}) {
+  const { data, error } = await supabase
+    .from('follows')
+    .select('follower_username, created_at, profiles:follower_username(username, display_name, bio, is_public)')
+    .eq('followed_username', username)
+    .order('created_at', { ascending: false })
+    .range(offset, offset + limit - 1);
+  if (error) { console.error('[db] getFollowers:', error.message); return []; }
+  return (data || []).map(r => r.profiles).filter(Boolean);
+}
+
+async function dbGetFollowing(username, { limit = 50, offset = 0 } = {}) {
+  const { data, error } = await supabase
+    .from('follows')
+    .select('followed_username, created_at, profiles:followed_username(username, display_name, bio, is_public)')
+    .eq('follower_username', username)
+    .order('created_at', { ascending: false })
+    .range(offset, offset + limit - 1);
+  if (error) { console.error('[db] getFollowing:', error.message); return []; }
+  return (data || []).map(r => r.profiles).filter(Boolean);
+}
+
+// Unpaginated by design — account deletion needs every storage_path to clean
+// up the bucket fully, not one page of dbGetCloudFiles' results. Selecting
+// only storage_path (not '*') keeps this cheap even for large libraries.
+async function dbGetAllCloudStoragePaths(username) {
+  const { data, error } = await supabase
+    .from('cloud_files')
+    .select('storage_path')
+    .eq('owner', username);
+  if (error) { console.error('[db] getAllCloudStoragePaths:', error.message); return []; }
+  return (data || []).map(r => r.storage_path).filter(Boolean);
+}
+
 async function dbDeleteAccount(username) {
   // Clean up Storage objects first — deleting the metadata rows without
   // this would orphan the actual audio files in the bucket forever.
-  const files = await dbGetCloudFiles(username);
-  if (files.length) {
-    const paths = files.map(f => f.storage_path);
+  const paths = await dbGetAllCloudStoragePaths(username);
+  if (paths.length) {
     const { error } = await supabase.storage.from(CLOUD_BUCKET).remove(paths);
     if (error) console.error('[db] deleteAccount storage cleanup:', error.message);
   }
@@ -167,32 +290,118 @@ async function dbSetPlaylists(username, playlists) {
 // ─── Cloud Files (Supabase Storage + Postgres metadata) ───────────────────────
 const CLOUD_BUCKET = 'cloud-audio';
 
-// opts: { folder, search, sort, dir }
-//   folder — exact folder match. Pass null/undefined for "all folders".
-//            Pass '' (empty string) to mean "root only" (folder IS NULL).
-//   search — case-insensitive substring match against filename/title/artist.
-//   sort   — 'name' | 'artist' | 'uploaded' | 'duration'  (default 'uploaded')
-//   dir    — 'asc' | 'desc'  (default depends on sort: 'uploaded' defaults desc, others asc)
+// Columns the client is allowed to sort by, mapped to the actual DB column.
+// 'name' sorts by filename since that's always populated; title is used as
+// a secondary tiebreaker when present so ID3-tagged files still feel sorted
+// by their real title where available.
+const CLOUD_SORT_COLUMNS = {
+  name:     'filename',
+  artist:   'artist',
+  date:     'uploaded_at',
+  duration: 'duration',
+};
+
+// Cursor shape for keyset-capable columns: { v: <sort col value of last row
+// of previous page>, id: <id of that row> }. id is always the tiebreaker so
+// rows sharing an identical uploaded_at (batch uploads) or filename never
+// get skipped or duplicated across page boundaries.
+//
+// Cursor shape for offset-fallback columns: { o: <row offset> }.
+//
+// Only 'date' and 'name' are keyset-paginated — backed by the two composite
+// indexes added in migration_scale.sql (idx_cloud_files_owner_uploaded,
+// idx_cloud_files_owner_filename). 'artist' and 'duration' have no dedicated
+// composite index yet, so they fall back to offset pagination — slower at
+// very large counts but still correct and unbounded, unlike capping at one
+// page. Revisit with a real composite index if either becomes a hot sort.
+function encodeCursor(row, col, keysetCapable) {
+  return keysetCapable
+    ? Buffer.from(JSON.stringify({ v: row[col], id: row.id })).toString('base64url')
+    : null;
+}
+function encodeOffsetCursor(offset) {
+  return Buffer.from(JSON.stringify({ o: offset })).toString('base64url');
+}
+function decodeCursor(raw) {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8'));
+    if (parsed && (parsed.id != null || parsed.o != null)) return parsed;
+  } catch (_) { /* malformed cursor — treat as no cursor, start from page 1 */ }
+  return null;
+}
+
+const KEYSET_SORT_COLUMNS = new Set(['uploaded_at', 'filename']); // backed by composite indexes
+
 async function dbGetCloudFiles(username, opts = {}) {
-  const { folder, search, sort = 'uploaded', dir } = opts;
+  const { folder, search, sort, dir, cursor, limit } = opts;
 
-  let q = supabase.from('cloud_files').select('*').eq('owner', username);
-
-  if (folder === '') q = q.is('folder', null);
-  else if (folder)   q = q.eq('folder', folder);
-
-  if (search && search.trim()) {
-    const term = search.trim().replace(/[%,]/g, ''); // strip PostgREST-significant chars
-    q = q.or(`filename.ilike.%${term}%,title.ilike.%${term}%,artist.ilike.%${term}%`);
+  function applyFolder(q) {
+    // folder === undefined  → no filter (all files, any folder)
+    // folder === ''  or '__unfiled__' → only files with no folder
+    // folder === '<name>'   → only that folder
+    if (folder === '__unfiled__' || folder === '') return q.is('folder', null);
+    if (folder) return q.eq('folder', folder);
+    return q;
   }
 
-  const sortCol = { name: 'filename', artist: 'artist', uploaded: 'uploaded_at', duration: 'duration' }[sort] || 'uploaded_at';
-  const ascending = dir ? dir === 'asc' : sortCol !== 'uploaded_at';
-  q = q.order(sortCol, { ascending, nullsFirst: false });
+  const col = CLOUD_SORT_COLUMNS[sort] || 'uploaded_at';
+  const ascending = dir === 'asc';
+  const pageSize = Math.min(Math.max(Number(limit) || 50, 1), 200);
+  const decodedCursor = decodeCursor(cursor);
+  const keysetCapable = KEYSET_SORT_COLUMNS.has(col);
+
+  let q = supabase.from('cloud_files').select('*').eq('owner', username);
+  q = applyFolder(q);
+
+  if (search) {
+    // Single full-text query against the generated tsvector column —
+    // replaces the old 3x .ilike() merge-and-sort-in-JS approach. 'websearch'
+    // mode gives free quoted-phrase and -exclude support with no extra
+    // parsing on our end.
+    q = q.textSearch('search_vector', search, { type: 'websearch' })
+         .order('uploaded_at', { ascending: false })
+         .limit(pageSize);
+    const { data, error } = await q;
+    if (error) { console.error('[db] getCloudFiles search:', error.message); return { rows: [], nextCursor: null }; }
+    // Search result sets aren't paginated (ranked by FTS match, not a stable
+    // sort column) — capped at one page, the right tradeoff since search
+    // result sets are naturally small.
+    return { rows: data || [], nextCursor: null };
+  }
+
+  q = q.order(col, { ascending }).order('id', { ascending });
+
+  if (keysetCapable && decodedCursor?.id != null) {
+    // Keyset predicate: (col, id) strictly past the cursor row, respecting
+    // sort direction. Matches the composite index column order exactly.
+    const op = ascending ? 'gt' : 'lt';
+    const valLiteral = `"${String(decodedCursor.v).replace(/"/g, '\\"')}"`;
+    q = q.or(
+      `${col}.${op}.${valLiteral},and(${col}.eq.${valLiteral},id.${op}.${decodedCursor.id})`
+    );
+  }
+
+  const offset = (!keysetCapable && decodedCursor?.o) ? decodedCursor.o : 0;
+  if (!keysetCapable) {
+    // No composite index for artist/duration — fall back to range() offset
+    // paging. Unbounded and correct, just O(offset) scan cost server-side;
+    // acceptable until one of these becomes a frequently-used sort.
+    q = q.range(offset, offset + pageSize - 1);
+  } else {
+    q = q.limit(pageSize);
+  }
 
   const { data, error } = await q;
-  if (error) console.error('[db] getCloudFiles:', error.message);
-  return data || [];
+  if (error) { console.error('[db] getCloudFiles:', error.message); return { rows: [], nextCursor: null }; }
+  const rows = data || [];
+  let nextCursor = null;
+  if (rows.length === pageSize) {
+    nextCursor = keysetCapable
+      ? encodeCursor(rows[rows.length - 1], col, true)
+      : encodeOffsetCursor(offset + pageSize);
+  }
+  return { rows, nextCursor };
 }
 
 async function dbGetCloudFolders(username) {
@@ -202,42 +411,8 @@ async function dbGetCloudFolders(username) {
     .eq('owner', username)
     .not('folder', 'is', null);
   if (error) { console.error('[db] getCloudFolders:', error.message); return []; }
-  return [...new Set(data.map(r => r.folder))].sort((a, b) => a.localeCompare(b));
-}
-
-async function dbMoveCloudFiles(ids, username, folder) {
-  const { data, error } = await supabase
-    .from('cloud_files')
-    .update({ folder: folder || null })
-    .in('id', ids)
-    .eq('owner', username)   // ownership enforced here too — can't move someone else's files
-    .select();
-  if (error) throw new Error(error.message);
-  return data || [];
-}
-
-async function dbDeleteCloudFilesBulk(ids, username) {
-  // Look up storage paths first so we know what to remove from the bucket.
-  const { data: rows, error: selErr } = await supabase
-    .from('cloud_files')
-    .select('id, storage_path')
-    .in('id', ids)
-    .eq('owner', username);
-  if (selErr) throw new Error(selErr.message);
-  if (!rows.length) return { deletedIds: [], failedStorage: false };
-
-  const paths = rows.map(r => r.storage_path);
-  const { error: storageErr } = await supabase.storage.from(CLOUD_BUCKET).remove(paths);
-  if (storageErr) console.error('[db] deleteCloudFilesBulk storage:', storageErr.message);
-
-  const { error: delErr } = await supabase
-    .from('cloud_files')
-    .delete()
-    .in('id', rows.map(r => r.id))
-    .eq('owner', username);
-  if (delErr) throw new Error(delErr.message);
-
-  return { deletedIds: rows.map(r => r.id), failedStorage: !!storageErr };
+  const set = new Set(data.map(r => r.folder).filter(Boolean));
+  return [...set].sort((a, b) => a.localeCompare(b));
 }
 
 async function dbGetCloudFile(id, username) {
@@ -249,6 +424,20 @@ async function dbGetCloudFile(id, username) {
     .single();
   if (error && error.code !== 'PGRST116') console.error('[db] getCloudFile:', error.message);
   return data || null;
+}
+
+// Fetches multiple files by id, scoped to owner. Used by bulk delete so we
+// can resolve storage_paths for files that actually belong to the caller —
+// any ids in the request that aren't theirs are silently dropped, not erred.
+async function dbGetCloudFilesByIds(ids, username) {
+  if (!ids.length) return [];
+  const { data, error } = await supabase
+    .from('cloud_files')
+    .select('*')
+    .in('id', ids)
+    .eq('owner', username);
+  if (error) { console.error('[db] getCloudFilesByIds:', error.message); return []; }
+  return data || [];
 }
 
 async function dbInsertCloudFile(row) {
@@ -268,6 +457,32 @@ async function dbDeleteCloudFile(id, username) {
     .eq('id', id)
     .eq('owner', username);  // same belt-and-suspenders ownership scoping
   if (error) throw new Error(error.message);
+}
+
+// Bulk delete by id, scoped to owner — same ownership guarantee as the
+// single-file path, just expressed with .in() instead of .eq().
+async function dbDeleteCloudFiles(ids, username) {
+  if (!ids.length) return;
+  const { error } = await supabase
+    .from('cloud_files')
+    .delete()
+    .in('id', ids)
+    .eq('owner', username);
+  if (error) throw new Error(error.message);
+}
+
+// Partial update for rename / move-to-folder. Only the fields present in
+// `patch` are touched. Returns the updated row.
+async function dbUpdateCloudFile(id, username, patch) {
+  const { data, error } = await supabase
+    .from('cloud_files')
+    .update(patch)
+    .eq('id', id)
+    .eq('owner', username)
+    .select()
+    .single();
+  if (error) throw new Error(error.message);
+  return data;
 }
 
 // schedulePersist is a no-op now — kept so no call sites break
@@ -318,6 +533,44 @@ setInterval(() => {
     if (!fresh.length) rateLimitMap.delete(ip); else rateLimitMap.set(ip, fresh);
   }
 }, 300_000);
+
+// Generic factory for tighter, per-action limiters distinct from the global
+// per-IP backstop above. Keyed by whatever `keyFn` returns for the request —
+// for follow/unfollow that's the caller's username (set after dbGetSession
+// resolves), not their IP, since a logged-in abuser can rotate IPs far more
+// easily than usernames. Reusable for future per-action limits (likes,
+// comments, chat) without duplicating the sliding-window logic each time.
+function makeActionRateLimit({ windowMs, max, keyFn, message }) {
+  const hits = new Map();
+  setInterval(() => {
+    const now = Date.now();
+    for (const [key, times] of hits) {
+      const fresh = times.filter(t => now - t < windowMs);
+      if (!fresh.length) hits.delete(key); else hits.set(key, fresh);
+    }
+  }, Math.max(windowMs, 60_000));
+  return function actionRateLimit(req, res, next) {
+    const key = keyFn(req);
+    if (!key) return next(); // no key yet (e.g. unauthenticated) — let the route's own auth check reject it
+    const now = Date.now();
+    const times = (hits.get(key) || []).filter(t => now - t < windowMs);
+    times.push(now);
+    hits.set(key, times);
+    if (times.length > max) return res.status(429).json({ error: message || 'Rate limit exceeded. Please slow down.' });
+    next();
+  };
+}
+
+// Follow/unfollow specifically: tighter than the global 120/min-per-IP
+// backstop, and keyed by the *target* username's session token (resolved
+// just-in-time from the request body) rather than IP — follow-spam is the
+// single most common abuse vector on any social feature, per-account, not
+// per-connection.
+const followRateLimit = makeActionRateLimit({
+  windowMs: 60_000, max: 30,
+  keyFn: (req) => req.body?.token || null,
+  message: 'Too many follow/unfollow actions. Please slow down.',
+});
 
 // ─── HTTP fetch helper (spoofs browser UA so YT doesn't block) ────────────────
 const YT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
@@ -1011,6 +1264,7 @@ app.post('/api/auth/signup', rateLimit, async (req, res) => {
     const hash        = await hashPassword(password, salt);
     const dName       = (displayName || '').trim() || key;
     await dbCreateAccount(key, dName, salt, hash);
+    await dbCreateProfile(key, dName);
     await dbSetPlaylists(key, []);
 
     const token     = generateToken();
@@ -1107,6 +1361,193 @@ app.delete('/api/auth/account', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
+//  PROFILES — public-facing profile data, backed by the `profiles` table
+//  (separate from `accounts`, see dbCreateProfile comment — credentials
+//  never live anywhere a "get public profile" code path could reach them)
+//
+//  GET   /api/profiles/:username   → { username, displayName, bio, isPublic }
+//                                     404 if no profile, or profile is private
+//                                     and requester isn't its owner
+//  PATCH /api/profiles/me          { token, bio?, displayName?, isPublic? }
+// ═══════════════════════════════════════════════════════════════════════════════
+
+app.get('/api/profiles/:username', async (req, res) => {
+  const key = (req.params.username || '').trim().toLowerCase();
+  if (!key) return res.status(400).json({ error: 'Username required.' });
+  try {
+    const profile = await dbGetProfile(key);
+    if (!profile) return res.status(404).json({ error: 'No profile found for that username.' });
+
+    // Private profiles are only visible to their own owner — checked against
+    // the requester's session, never against anything the client merely
+    // claims. An expired/missing token on a private profile request is
+    // treated the same as "not the owner": a 404, not a 401, so a private
+    // profile's existence can't be probed by an unauthenticated request.
+    const token = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
+    const sess  = await dbGetSession(token);
+    if (!profile.is_public) {
+      if (!sess || sess.username !== key) {
+        return res.status(404).json({ error: 'No profile found for that username.' });
+      }
+    }
+
+    // isFollowing is relative to whoever's asking — null (not false) for an
+    // unauthenticated request, so the frontend can distinguish "you aren't
+    // following them" from "we don't know, you're not signed in" and hide
+    // the follow button rather than show it in a misleading state.
+    const isFollowing = (sess && sess.username !== key) ? await dbIsFollowing(sess.username, key) : null;
+
+    return res.json({
+      username:       profile.username,
+      displayName:    profile.display_name,
+      bio:            profile.bio,
+      isPublic:       profile.is_public,
+      followerCount:  profile.follower_count,
+      followingCount: profile.following_count,
+      isFollowing,
+      isSelf: !!(sess && sess.username === key),
+    });
+  } catch (err) {
+    console.error('[profiles get]', err);
+    return res.status(500).json({ error: 'Could not load profile.' });
+  }
+});
+
+app.patch('/api/profiles/me', rateLimit, async (req, res) => {
+  const { token, bio, displayName, isPublic } = req.body;
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+
+  const patch = {};
+  if (bio !== undefined) {
+    if (typeof bio !== 'string') return res.status(400).json({ error: '"bio" must be a string.' });
+    const trimmed = bio.trim();
+    if (trimmed.length > 280) return res.status(400).json({ error: 'Bio must be 280 characters or fewer.' });
+    patch.bio = trimmed || null;
+  }
+  if (displayName !== undefined) {
+    const trimmed = String(displayName).trim().slice(0, 60);
+    if (!trimmed) return res.status(400).json({ error: 'Display name cannot be empty.' });
+    patch.display_name = trimmed;
+  }
+  if (isPublic !== undefined) {
+    if (typeof isPublic !== 'boolean') return res.status(400).json({ error: '"isPublic" must be a boolean.' });
+    patch.is_public = isPublic;
+  }
+  if (!Object.keys(patch).length) return res.status(400).json({ error: 'Nothing to update.' });
+
+  try {
+    const updated = await dbUpdateProfile(sess.username, patch);
+    return res.json({
+      username:    updated.username,
+      displayName: updated.display_name,
+      bio:         updated.bio,
+      isPublic:    updated.is_public,
+    });
+  } catch (err) {
+    console.error('[profiles patch]', err);
+    return res.status(500).json({ error: 'Could not update profile.' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  FOLLOWS — public, no RLS write policy (server-only via service key).
+//  follower_count / following_count on `profiles` stay in sync via the
+//  trg_follow_counts Postgres trigger — never recomputed here.
+//
+//  POST   /api/follows/:username             { token }  → follow
+//  DELETE /api/follows/:username              { token }  → unfollow
+//  GET    /api/follows/:username/followers    ?limit=&offset=
+//  GET    /api/follows/:username/following    ?limit=&offset=
+// ═══════════════════════════════════════════════════════════════════════════════
+
+app.post('/api/follows/:username', followRateLimit, async (req, res) => {
+  const target = (req.params.username || '').trim().toLowerCase();
+  const { token } = req.body;
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  if (!target) return res.status(400).json({ error: 'Username required.' });
+  if (sess.username === target) return res.status(400).json({ error: "You can't follow yourself." });
+
+  try {
+    const account = await dbGetAccount(target);
+    if (!account) return res.status(404).json({ error: 'No account found with that username.' });
+
+    const created = await dbFollowUser(sess.username, target);
+    const profile = await dbGetProfile(target);
+    return res.status(created ? 201 : 200).json({
+      following: true,
+      followerCount: profile?.follower_count ?? null,
+    });
+  } catch (err) {
+    console.error('[follows create]', err);
+    return res.status(500).json({ error: 'Could not follow user.' });
+  }
+});
+
+app.delete('/api/follows/:username', followRateLimit, async (req, res) => {
+  const target = (req.params.username || '').trim().toLowerCase();
+  const token  = req.body.token || (req.headers.authorization || '').replace('Bearer ', '');
+  const sess   = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  if (!target) return res.status(400).json({ error: 'Username required.' });
+
+  try {
+    await dbUnfollowUser(sess.username, target);
+    const profile = await dbGetProfile(target);
+    return res.json({
+      following: false,
+      followerCount: profile?.follower_count ?? null,
+    });
+  } catch (err) {
+    console.error('[follows delete]', err);
+    return res.status(500).json({ error: 'Could not unfollow user.' });
+  }
+});
+
+// Followers/following lists only ever show public profiles, plus the
+// requester's own profile if they happen to appear in their own list (e.g.
+// viewing who follows you includes a private-profile follower's *public*
+// fields only — we never leak someone's private bio/displayName choice
+// through someone else's follower list. Simplest correct rule: filter to
+// is_public, full stop, even for the list owner viewing their own followers.
+app.get('/api/follows/:username/followers', async (req, res) => {
+  const key = (req.params.username || '').trim().toLowerCase();
+  if (!key) return res.status(400).json({ error: 'Username required.' });
+  const limit  = Math.min(Math.max(Number(req.query.limit) || 50, 1), 100);
+  const offset = Math.max(Number(req.query.offset) || 0, 0);
+  try {
+    const rows = await dbGetFollowers(key, { limit, offset });
+    return res.json({
+      users: rows.filter(p => p.is_public).map(p => ({
+        username: p.username, displayName: p.display_name, bio: p.bio,
+      })),
+    });
+  } catch (err) {
+    console.error('[follows followers]', err);
+    return res.status(500).json({ error: 'Could not load followers.' });
+  }
+});
+
+app.get('/api/follows/:username/following', async (req, res) => {
+  const key = (req.params.username || '').trim().toLowerCase();
+  if (!key) return res.status(400).json({ error: 'Username required.' });
+  const limit  = Math.min(Math.max(Number(req.query.limit) || 50, 1), 100);
+  const offset = Math.max(Number(req.query.offset) || 0, 0);
+  try {
+    const rows = await dbGetFollowing(key, { limit, offset });
+    return res.json({
+      users: rows.filter(p => p.is_public).map(p => ({
+        username: p.username, displayName: p.display_name, bio: p.bio,
+      })),
+    });
+  } catch (err) {
+    console.error('[follows following]', err);
+    return res.status(500).json({ error: 'Could not load following.' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
 //  CLOUD FILES  — Supabase Storage (private bucket) + Postgres metadata
 //  POST   /api/cloud-files        { token, filename, mimeType, data }  data = base64 data URL
 //  GET    /api/cloud-files        ?token=...   → list of { id, filename, size, mimeType, uploadedAt }
@@ -1121,6 +1562,15 @@ function parseDataUrl(dataUrl) {
   const match = /^data:([^;]+);base64,(.+)$/.exec(dataUrl || '');
   if (!match) return null;
   return { mimeType: match[1], buffer: Buffer.from(match[2], 'base64') };
+}
+
+// Folders are a flat, single-level string per file (no nested paths).
+// Trims whitespace, collapses internal whitespace, caps length, and
+// treats empty string the same as "no folder" (stored as null).
+function normalizeFolderName(raw) {
+  if (raw == null) return null;
+  const cleaned = String(raw).trim().replace(/\s+/g, ' ').slice(0, 100);
+  return cleaned || null;
 }
 
 app.post('/api/cloud-files', rateLimit, (req, res, next) => {
@@ -1148,25 +1598,22 @@ app.post('/api/cloud-files', rateLimit, (req, res, next) => {
       const safeName    = String(originalName).replace(/[^a-zA-Z0-9._-]/g, '_').slice(-150);
       const storagePath = `${sess.username}/${Date.now()}-${crypto.randomBytes(4).toString('hex')}-${safeName}`;
 
-      // Optional metadata — client extracts these via jsmediatags/Audio element
-      // before upload, since parsing ID3 server-side would mean a new dependency.
-      // All are nullable; the UI falls back to filename when title/artist are absent.
-      const folder   = normalizeFolder(req.body.folder);
-      const title    = (req.body.title || '').trim().slice(0, 255) || null;
+      // Optional ID3 metadata, read client-side and sent alongside the file.
+      // All are optional — anything missing just lands as null in the row.
+      const folder   = normalizeFolderName(req.body.folder);
+      const title    = (req.body.title  || '').trim().slice(0, 255) || null;
       const artist   = (req.body.artist || '').trim().slice(0, 255) || null;
-      const duration = req.body.duration !== undefined ? parseDurationField(req.body.duration) : null;
+      const duration = req.body.duration != null && req.body.duration !== ''
+        ? Number(req.body.duration) : null;
 
       try {
         const uploadResult = await supabase.storage
           .from(CLOUD_BUCKET)
           .upload(storagePath, req.file.buffer, {
             contentType: mimeType,
-            upsert: false
+            upsert: false,
           });
-
-        if (uploadResult.error) {
-          throw new Error(uploadResult.error.message);
-        }
+        if (uploadResult.error) throw new Error(uploadResult.error.message);
 
         const row = await dbInsertCloudFile({
           owner:        sess.username,
@@ -1175,10 +1622,15 @@ app.post('/api/cloud-files', rateLimit, (req, res, next) => {
           size:         req.file.size,
           storage_path: storagePath,
           uploaded_at:  new Date().toISOString(),
-          folder, title, artist, duration,
+          folder, title, artist,
+          duration: (duration != null && Number.isFinite(duration)) ? duration : null,
         });
 
-        return res.status(201).json({ ...cloudFileToJSON(row) });
+        return res.status(201).json({
+          id: row.id, filename: row.filename, size: row.size,
+          mimeType: row.mime_type, uploadedAt: row.uploaded_at,
+          folder: row.folder, title: row.title, artist: row.artist, duration: row.duration,
+        });
       } catch (e) {
         console.error('[cloud-files multipart upload]', e);
         return res.status(500).json({ error: 'Upload failed: ' + e.message });
@@ -1191,7 +1643,7 @@ app.post('/api/cloud-files', rateLimit, (req, res, next) => {
   // Content-Type: application/json  →  { token, filename, data: "data:audio/...;base64,..." }
   next();
 }, async (req, res) => {
-  const { token, filename, data } = req.body;
+  const { token, filename, data, folder, title, artist, duration } = req.body;
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
   if (!filename || !data) return res.status(400).json({ error: '"filename" and "data" are required.' });
@@ -1203,6 +1655,12 @@ app.post('/api/cloud-files', rateLimit, (req, res, next) => {
 
   const safeName    = String(filename).replace(/[^a-zA-Z0-9._-]/g, '_').slice(-150);
   const storagePath = `${sess.username}/${Date.now()}-${Math.random().toString(36).slice(2)}-${safeName}`;
+
+  const folderClean   = normalizeFolderName(folder);
+  const titleClean    = (title  || '').trim().slice(0, 255) || null;
+  const artistClean   = (artist || '').trim().slice(0, 255) || null;
+  const durationClean = duration != null && duration !== '' && Number.isFinite(Number(duration))
+    ? Number(duration) : null;
 
   try {
     const { error: uploadErr } = await supabase.storage
@@ -1217,11 +1675,13 @@ app.post('/api/cloud-files', rateLimit, (req, res, next) => {
       size: parsed.buffer.length,
       storage_path: storagePath,
       uploaded_at: new Date().toISOString(),
+      folder: folderClean, title: titleClean, artist: artistClean, duration: durationClean,
     });
 
     return res.status(201).json({
       id: row.id, filename: row.filename, size: row.size,
       mimeType: row.mime_type, uploadedAt: row.uploaded_at,
+      folder: row.folder, title: row.title, artist: row.artist, duration: row.duration,
     });
   } catch (err) {
     console.error('[cloud-files upload]', err);
@@ -1234,16 +1694,110 @@ app.get('/api/cloud-files', async (req, res) => {
   const sess  = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
   try {
-    const files = await dbGetCloudFiles(sess.username);
+    // folder: omit = all files; '' or '__unfiled__' = no-folder files only; '<name>' = that folder
+    // search: full-text match against filename / title / artist (single page, not paginated)
+    // sort:   name | artist | date | duration   (default: date)
+    // dir:    asc | desc                        (default: desc)
+    // cursor: opaque string from a previous response's nextCursor — omit for page 1
+    // limit:  page size, 1-200 (default: 50)
+    const { rows, nextCursor } = await dbGetCloudFiles(sess.username, {
+      folder: req.query.folder,
+      search: (req.query.search || '').trim() || undefined,
+      sort:   req.query.sort,
+      dir:    req.query.dir,
+      cursor: req.query.cursor || undefined,
+      limit:  req.query.limit,
+    });
     return res.json({
-      files: files.map(f => ({
+      files: rows.map(f => ({
         id: f.id, filename: f.filename, size: f.size,
         mimeType: f.mime_type, uploadedAt: f.uploaded_at,
+        folder: f.folder, title: f.title, artist: f.artist, duration: f.duration,
       })),
+      nextCursor,
     });
   } catch (err) {
     console.error('[cloud-files list]', err);
     return res.status(500).json({ error: 'Could not load cloud files.' });
+  }
+});
+
+// GET /api/cloud-files/folders  — distinct folder names for the signed-in user,
+// used to populate folder nav / a "move to folder" picker on the client.
+// Registered before the /:id routes so 'folders' is never read as an id.
+app.get('/api/cloud-files/folders', async (req, res) => {
+  const token = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
+  const sess  = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  try {
+    const folders = await dbGetCloudFolders(sess.username);
+    return res.json({ folders });
+  } catch (err) {
+    console.error('[cloud-files folders]', err);
+    return res.status(500).json({ error: 'Could not load folders.' });
+  }
+});
+
+// DELETE /api/cloud-files  { token, ids: [1,2,3] }  — bulk delete.
+// Registered before /:id so this exact path (no id segment) matches first.
+app.delete('/api/cloud-files', async (req, res) => {
+  const token = req.body.token || (req.headers.authorization || '').replace('Bearer ', '');
+  const sess  = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token.' });
+
+  const ids = Array.isArray(req.body.ids) ? req.body.ids.filter(n => Number.isFinite(Number(n))) : [];
+  if (!ids.length) return res.status(400).json({ error: '"ids" must be a non-empty array.' });
+
+  try {
+    // Resolve to rows the caller actually owns first — ids for someone else's
+    // files (or ids that don't exist) are dropped here, not erred on, since a
+    // mixed-ownership bulk request shouldn't fail the whole batch.
+    const files = await dbGetCloudFilesByIds(ids, sess.username);
+    if (!files.length) return res.status(404).json({ error: 'No matching files found.' });
+
+    const paths = files.map(f => f.storage_path);
+    const { error: removeErr } = await supabase.storage.from(CLOUD_BUCKET).remove(paths);
+    if (removeErr) console.error('[cloud-files bulk delete] storage:', removeErr.message);
+
+    await dbDeleteCloudFiles(files.map(f => f.id), sess.username);
+    return res.json({ ok: true, deleted: files.length, filenames: files.map(f => f.filename) });
+  } catch (err) {
+    console.error('[cloud-files bulk delete]', err);
+    return res.status(500).json({ error: 'Bulk delete failed.' });
+  }
+});
+
+// PATCH /api/cloud-files/:id  { token, filename?, folder? }  — rename and/or move.
+// Registered before the generic /:id GET/DELETE just for readability; method
+// differs so there's no actual routing ambiguity.
+app.patch('/api/cloud-files/:id', async (req, res) => {
+  const token = req.body.token || (req.headers.authorization || '').replace('Bearer ', '');
+  const sess  = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token.' });
+
+  const patch = {};
+  if (req.body.filename != null) {
+    const name = String(req.body.filename).trim().slice(0, 255);
+    if (!name) return res.status(400).json({ error: 'Filename cannot be empty.' });
+    patch.filename = name;
+  }
+  if (req.body.folder !== undefined) {
+    patch.folder = normalizeFolderName(req.body.folder);
+  }
+  if (!Object.keys(patch).length) return res.status(400).json({ error: 'Nothing to update.' });
+
+  try {
+    const existing = await dbGetCloudFile(req.params.id, sess.username);
+    if (!existing) return res.status(404).json({ error: 'File not found.' });
+
+    const row = await dbUpdateCloudFile(req.params.id, sess.username, patch);
+    return res.json({
+      id: row.id, filename: row.filename, folder: row.folder,
+      title: row.title, artist: row.artist, duration: row.duration,
+    });
+  } catch (err) {
+    console.error('[cloud-files patch]', err);
+    return res.status(500).json({ error: 'Update failed.' });
   }
 });
 
@@ -1266,6 +1820,7 @@ app.get('/api/cloud-files/:id', async (req, res) => {
     return res.json({
       id: file.id, filename: file.filename, size: file.size,
       mimeType: file.mime_type, uploadedAt: file.uploaded_at,
+      folder: file.folder, title: file.title, artist: file.artist, duration: file.duration,
       url: data.signedUrl, expiresIn: SIGNED_URL_TTL_SECONDS,
     });
   } catch (err) {
