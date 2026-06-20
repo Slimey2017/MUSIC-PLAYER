@@ -1009,6 +1009,65 @@ textarea.support-field { height:90px;resize:vertical; }
   height:100%;background:var(--accent3);border-radius:2px;
   transition:width 0.3s;width:0%;
 }
+.cloud-file-item.selected { border-color:var(--accent); background:var(--surface2); }
+.cloud-file-check {
+  width:13px;height:13px;flex-shrink:0;cursor:pointer;accent-color:var(--accent);
+}
+.cloud-file-meta {
+  display:flex;flex-direction:column;flex:1;overflow:hidden;gap:1px;
+}
+.cloud-file-sub {
+  font-size:0.4rem;color:var(--text-muted);overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap;
+}
+.cloud-toolbar {
+  display:flex;gap:5px;margin-bottom:6px;
+}
+.cloud-search-input {
+  flex:1;background:var(--surface3);border:1px solid var(--border);
+  border-radius:var(--radius);color:var(--text);font-family:'Space Mono',monospace;
+  font-size:0.5rem;padding:6px 8px;outline:none;
+}
+.cloud-search-input:focus { border-color:var(--accent3); }
+.cloud-sort-select {
+  background:var(--surface3);border:1px solid var(--border);color:var(--text-muted);
+  font-family:'Space Mono',monospace;font-size:0.46rem;border-radius:var(--radius);
+  padding:6px 4px;cursor:pointer;outline:none;
+}
+.cloud-sort-dir-btn {
+  background:var(--surface3);border:1px solid var(--border);color:var(--text-muted);
+  border-radius:var(--radius);padding:6px 8px;cursor:pointer;font-size:0.5rem;
+}
+.cloud-folder-row {
+  display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px;
+}
+.cloud-folder-chip {
+  background:var(--surface3);border:1px solid var(--border);color:var(--text-muted);
+  font-family:'Space Mono',monospace;font-size:0.42rem;letter-spacing:0.04em;
+  padding:4px 8px;border-radius:999px;cursor:pointer;white-space:nowrap;
+  transition:color 0.15s,border-color 0.15s;
+}
+.cloud-folder-chip:hover { color:var(--text); }
+.cloud-folder-chip.active { color:var(--accent); border-color:var(--accent); }
+.cloud-bulk-bar {
+  display:none;align-items:center;gap:6px;margin-bottom:6px;
+  background:var(--surface2);border:1px solid var(--accent);border-radius:var(--radius);
+  padding:6px 8px;font-size:0.46rem;color:var(--text-muted);
+}
+.cloud-bulk-bar.active { display:flex; }
+.cloud-bulk-bar button {
+  background:none;border:1px solid var(--border);color:var(--text);
+  border-radius:var(--radius);padding:4px 7px;cursor:pointer;font-size:0.44rem;
+  font-family:'Space Mono',monospace;white-space:nowrap;
+}
+.cloud-bulk-bar button:hover { border-color:var(--accent3); }
+.cloud-bulk-bar button.danger:hover { border-color:var(--accent2); color:var(--accent2); }
+.cloud-bulk-spacer { flex:1; }
+.cloud-file-rename-input {
+  font-size:0.55rem;background:var(--surface);border:1px solid var(--accent3);
+  border-radius:3px;color:var(--text);padding:2px 4px;flex:1;font-family:inherit;
+  outline:none;min-width:0;
+}
 
 /* ─── Settings Panel (new) ───────────────────────────────────────── */
 .settings-overlay {
@@ -1591,6 +1650,16 @@ body.oled-mode {
               <button id="cloudRefreshBtn" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.5rem;padding:7px 10px;border-radius:var(--radius);cursor:pointer;">⟳</button>
             </div>
             <input type="file" id="cloudFileInput" accept="audio/*,.flac,.aiff" multiple style="display:none" />
+
+            <!-- Folder to upload into -->
+            <div style="display:flex;gap:5px;align-items:center;margin-bottom:8px;">
+              <span style="font-size:0.43rem;color:var(--text-muted);white-space:nowrap;">Upload to:</span>
+              <select id="cloudUploadFolderSelect" class="cloud-sort-select" style="flex:1;font-size:0.46rem;">
+                <option value="">No folder</option>
+              </select>
+              <button id="cloudNewFolderBtn" title="New folder" style="background:none;border:1px solid var(--border);color:var(--text-muted);border-radius:var(--radius);padding:6px 8px;cursor:pointer;font-size:0.5rem;">+</button>
+            </div>
+
             <div id="cloudUploadProgressWrap" style="display:none;margin-bottom:6px;">
               <div style="font-size:0.46rem;color:var(--text-muted);margin-bottom:3px;display:flex;justify-content:space-between;">
                 <span id="cloudUploadStatus">Uploading…</span>
@@ -1600,11 +1669,38 @@ body.oled-mode {
                 <div class="cloud-upload-bar" id="cloudUploadBar"></div>
               </div>
             </div>
+
+            <!-- Search + Sort toolbar -->
+            <div class="cloud-toolbar">
+              <input type="text" id="cloudSearchInput" class="cloud-search-input" placeholder="Search files, title, artist…" />
+              <select id="cloudSortSelect" class="cloud-sort-select" title="Sort by">
+                <option value="date">Date</option>
+                <option value="name">Name</option>
+                <option value="artist">Artist</option>
+                <option value="duration">Duration</option>
+              </select>
+              <button id="cloudSortDirBtn" class="cloud-sort-dir-btn" title="Toggle sort direction">↓</button>
+            </div>
+
+            <!-- Folder filter chips -->
+            <div class="cloud-folder-row" id="cloudFolderRow">
+              <button class="cloud-folder-chip active" data-folder="" id="cloudFolderAll">All</button>
+            </div>
+
+            <!-- Bulk selection bar -->
+            <div class="cloud-bulk-bar" id="cloudBulkBar">
+              <span id="cloudBulkCount">0 selected</span>
+              <div class="cloud-bulk-spacer"></div>
+              <button id="cloudBulkMoveBtn">Move to…</button>
+              <button id="cloudBulkDeleteBtn" class="danger">Delete</button>
+              <button id="cloudBulkClearBtn">Cancel</button>
+            </div>
+
             <div style="font-size:0.46rem;color:var(--text-muted);margin-bottom:6px;display:flex;justify-content:space-between;">
               <span id="cloudFileCount">0 files</span>
               <span id="cloudStorageUsed">0 MB used</span>
             </div>
-            <div id="cloudFilesList" style="max-height:200px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--border) transparent;"></div>
+            <div id="cloudFilesList" style="max-height:260px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--border) transparent;"></div>
           </div>
         </div>
       </div><!-- end panelLocal -->
@@ -2256,6 +2352,25 @@ body.oled-mode {
   </div>
 </div>
 
+<!-- User Profile Viewer -->
+<div class="lyrics-overlay" id="userProfileOverlay">
+  <div class="lyrics-panel" style="max-width:380px;">
+    <div id="userProfileLoading" style="text-align:center;padding:24px;color:var(--text-muted);font-size:0.6rem;">Loading profile…</div>
+    <div id="userProfileContent" style="display:none;">
+      <div class="lyrics-title" id="userProfileName">—</div>
+      <div class="lyrics-artist" id="userProfileUsername">@—</div>
+      <div style="display:flex;gap:14px;margin:10px 0;font-size:0.48rem;color:var(--text-muted);">
+        <span><strong id="userProfileFollowerCount" style="color:var(--text-main);">0</strong> followers</span>
+        <span><strong id="userProfileFollowingCount" style="color:var(--text-main);">0</strong> following</span>
+      </div>
+      <div id="userProfileBio" style="font-size:0.55rem;color:var(--text);line-height:1.8;white-space:pre-wrap;margin-bottom:14px;">—</div>
+      <button id="userProfileFollowBtn" style="width:100%;background:none;border:1px solid var(--accent3);color:var(--accent3);font-family:'Space Mono',monospace;font-size:0.5rem;padding:8px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.06em;text-transform:uppercase;">Follow</button>
+    </div>
+    <div id="userProfileError" style="display:none;text-align:center;padding:24px;color:var(--text-muted);font-size:0.55rem;"></div>
+    <button class="support-close-btn" onclick="closeUserProfileModal()" style="margin-top:16px;">Close</button>
+  </div>
+</div>
+
 <!-- ─── EQ Presets Gallery (added inside audio panel via JS) ──── -->
 
 <!-- Shortcuts Overlay -->
@@ -2618,6 +2733,45 @@ body.oled-mode {
           <button class="save-playlist-btn" id="savePlaylistBtn">Save Queue</button>
         </div>
       </div>
+      <!-- Public Profile -->
+      <div style="border-top:1px solid var(--border);margin-top:14px;padding-top:14px;">
+        <div class="aq-section-title" style="margin-bottom:8px;">⊙ Public Profile</div>
+        <div style="font-size:0.5rem;color:var(--text-muted);line-height:1.8;margin-bottom:10px;">
+          A short, public bio other FREQ users can see. You can set it up now and toggle visibility any time.
+        </div>
+        <div style="display:flex;gap:10px;margin-bottom:8px;font-size:0.46rem;color:var(--text-muted);">
+          <span><strong id="profileFollowerCount" style="color:var(--text-main);">0</strong> followers</span>
+          <span><strong id="profileFollowingCount" style="color:var(--text-main);">0</strong> following</span>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;padding:7px 9px;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:var(--radius);">
+          <span style="font-size:0.48rem;color:var(--text-dim);letter-spacing:0.05em;text-transform:uppercase;">Profile visibility</span>
+          <label style="display:flex;align-items:center;gap:5px;cursor:pointer;">
+            <span id="profilePublicLabel" style="font-size:0.45rem;color:var(--text-muted);">Public</span>
+            <div class="toggle-wrap">
+              <input type="checkbox" id="profilePublicToggle" checked style="display:none;" />
+              <div class="toggle-track" id="profilePublicTrack" style="width:28px;height:14px;background:var(--accent3);border-radius:7px;cursor:pointer;position:relative;transition:background 0.2s;">
+                <div class="toggle-thumb" id="profilePublicThumb" style="position:absolute;top:2px;left:2px;width:10px;height:10px;background:#fff;border-radius:50%;transition:transform 0.2s;transform:translateX(14px);"></div>
+              </div>
+            </div>
+          </label>
+        </div>
+        <textarea id="profileBioInput" maxlength="280" placeholder="Tell people what you're into…" style="width:100%;min-height:52px;resize:vertical;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-main);font-family:'Space Mono',monospace;font-size:0.5rem;padding:7px 9px;line-height:1.6;box-sizing:border-box;"></textarea>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:5px;">
+          <span id="profileBioCount" style="font-size:0.42rem;color:var(--text-muted);">0 / 280</span>
+          <button id="profileSaveBtn" style="background:none;border:1px solid var(--accent3);color:var(--accent3);font-family:'Space Mono',monospace;font-size:0.46rem;padding:5px 12px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.06em;text-transform:uppercase;">Save Profile</button>
+        </div>
+        <div id="profileSaveStatus" style="font-size:0.42rem;color:var(--text-muted);margin-top:6px;text-align:center;min-height:1.2em;"></div>
+
+        <!-- Find another user's profile -->
+        <div style="margin-top:12px;border-top:1px solid var(--border);padding-top:10px;">
+          <div style="font-size:0.46rem;color:var(--text-dim);letter-spacing:0.05em;text-transform:uppercase;margin-bottom:6px;">Find a User</div>
+          <div style="display:flex;gap:6px;">
+            <input type="text" id="profileLookupInput" placeholder="username…" style="flex:1;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-main);font-family:'Space Mono',monospace;font-size:0.5rem;padding:6px 9px;box-sizing:border-box;" />
+            <button id="profileLookupBtn" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.46rem;padding:5px 12px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.06em;text-transform:uppercase;">View</button>
+          </div>
+          <div id="profileLookupStatus" style="font-size:0.42rem;color:var(--text-muted);margin-top:6px;min-height:1.2em;"></div>
+        </div>
+      </div>
       <!-- Cross-device sync via server -->
       <div style="border-top:1px solid var(--border);margin-top:14px;padding-top:14px;">
         <div class="aq-section-title" style="margin-bottom:8px;">↔ Cross-Device Sync</div>
@@ -2634,6 +2788,7 @@ body.oled-mode {
         <div id="keepAlivePanel" style="margin-top:10px;padding:8px 10px;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:var(--radius);">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
             <span style="font-size:0.48rem;color:var(--text-dim);letter-spacing:0.06em;text-transform:uppercase;">⟳ Keep Server Awake</span>
+
             <label style="display:flex;align-items:center;gap:5px;cursor:pointer;">
               <span style="font-size:0.42rem;color:var(--text-muted);">Enable</span>
               <div class="toggle-wrap">
@@ -2861,6 +3016,7 @@ function updateAuthUI() {
     const badge = $('authSyncBadge');
     if (badge) { badge.style.display = 'inline'; badge.textContent = '● server'; badge.style.color = 'var(--accent3)'; badge.style.borderColor = 'var(--accent3)'; }
     renderSavedPlaylists();
+    loadOwnProfile();
   } else {
     userBadge.textContent = '⊡ Account';
     $('authLoggedInSection').style.display = 'none';
@@ -2901,6 +3057,216 @@ async function deleteSavedPlaylist(i) {
   renderSavedPlaylists();
   await serverSync();
 }
+
+// ─── Public Profile ─────────────────────────────────────────────────────────
+const PROFILE_BASE = '/api/profiles';
+let ownProfile = null; // { username, displayName, bio, isPublic } — null until loadOwnProfile resolves
+
+function setProfileSaveStatus(msg, color) {
+  const el = $('profileSaveStatus');
+  if (!el) return;
+  el.textContent = msg;
+  el.style.color = color || 'var(--text-muted)';
+}
+
+function setProfilePublicToggleVisual(isPublic) {
+  const track = $('profilePublicTrack');
+  const thumb = $('profilePublicThumb');
+  const label = $('profilePublicLabel');
+  if (!track || !thumb) return;
+  if (isPublic) {
+    track.style.background = 'var(--accent3)';
+    thumb.style.transform  = 'translateX(14px)';
+    if (label) label.textContent = 'Public';
+  } else {
+    track.style.background = 'var(--border)';
+    thumb.style.transform  = 'translateX(0)';
+    if (label) label.textContent = 'Private';
+  }
+}
+
+function updateProfileBioCount() {
+  const input = $('profileBioInput');
+  const countEl = $('profileBioCount');
+  if (!input || !countEl) return;
+  countEl.textContent = `${input.value.length} / 280`;
+}
+
+// Loads the signed-in user's own profile into the editor. Uses the
+// :username route (not a separate "me" GET) since the server already
+// resolves private-profile visibility against the caller's own session —
+// requesting your own username always succeeds regardless of isPublic.
+async function loadOwnProfile() {
+  if (!AUTH.loggedIn || !AUTH.username) return;
+  try {
+    const res  = await fetch(`${PROFILE_BASE}/${encodeURIComponent(AUTH.username)}?token=${encodeURIComponent(AUTH.token)}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not load profile.');
+    ownProfile = data;
+    const bioInput = $('profileBioInput');
+    if (bioInput) { bioInput.value = data.bio || ''; updateProfileBioCount(); }
+    setProfilePublicToggleVisual(data.isPublic);
+    if ($('profileFollowerCount'))  $('profileFollowerCount').textContent  = data.followerCount  ?? 0;
+    if ($('profileFollowingCount')) $('profileFollowingCount').textContent = data.followingCount ?? 0;
+  } catch (err) {
+    // Non-fatal — profile editor just stays at its defaults; the rest of
+    // the Account overlay (playlists, sync) still works fine without this.
+    console.error('[loadOwnProfile]', err);
+  }
+}
+
+$('profileBioInput')?.addEventListener('input', updateProfileBioCount);
+
+$('profilePublicTrack')?.addEventListener('click', () => {
+  const nowPublic = !($('profilePublicToggle').checked);
+  $('profilePublicToggle').checked = nowPublic;
+  setProfilePublicToggleVisual(nowPublic);
+});
+
+$('profileSaveBtn')?.addEventListener('click', async () => {
+  if (!AUTH.loggedIn) return;
+  const bio = $('profileBioInput')?.value || '';
+  const isPublic = !!$('profilePublicToggle')?.checked;
+  const btn = $('profileSaveBtn');
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+  setProfileSaveStatus('Saving…', 'var(--accent3)');
+  try {
+    const res  = await fetch(`${PROFILE_BASE}/me`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: AUTH.token, bio, isPublic }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      if (res.status === 401) { handleTokenExpiry(); return; }
+      throw new Error(data.error || 'Could not save profile.');
+    }
+    ownProfile = data;
+    setProfileSaveStatus('✓ Profile saved', 'var(--accent3)');
+    showToast('Profile Saved', isPublic ? 'Your profile is public.' : 'Your profile is private.', 'success');
+  } catch (err) {
+    setProfileSaveStatus(err.message || 'Save failed.', 'var(--accent2)');
+    showToast('Save Error', err.message || 'Could not save profile.', 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Save Profile'; }
+  }
+});
+
+// ─── Follow Users ───────────────────────────────────────────────────────────
+const FOLLOWS_BASE = '/api/follows';
+let viewedProfileUsername = null; // username currently shown in the viewer modal — used by the follow button handler
+
+function setProfileLookupStatus(msg, color) {
+  const el = $('profileLookupStatus');
+  if (!el) return;
+  el.textContent = msg;
+  el.style.color = color || 'var(--text-muted)';
+}
+
+function closeUserProfileModal() {
+  $('userProfileOverlay')?.classList.remove('open');
+  viewedProfileUsername = null;
+}
+
+// Opens the viewer modal and loads `username`'s public profile. Handles its
+// own loading/error states inside the modal rather than the lookup status
+// line, since by the time this runs the modal is already open.
+async function openUserProfile(username) {
+  const key = (username || '').trim().toLowerCase();
+  if (!key) return;
+  $('userProfileOverlay')?.classList.add('open');
+  $('userProfileLoading').style.display = 'block';
+  $('userProfileContent').style.display = 'none';
+  $('userProfileError').style.display   = 'none';
+  viewedProfileUsername = key;
+
+  try {
+    const params = new URLSearchParams(AUTH.token ? { token: AUTH.token } : {});
+    const res  = await fetch(`${PROFILE_BASE}/${encodeURIComponent(key)}?${params}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(res.status === 404 ? 'No public profile found for that username.' : (data.error || 'Could not load profile.'));
+
+    $('userProfileLoading').style.display = 'none';
+    $('userProfileContent').style.display = 'block';
+    $('userProfileName').textContent      = data.displayName || data.username;
+    $('userProfileUsername').textContent  = '@' + data.username;
+    $('userProfileBio').textContent       = data.bio || '(no bio set)';
+    $('userProfileFollowerCount').textContent  = data.followerCount  ?? 0;
+    $('userProfileFollowingCount').textContent = data.followingCount ?? 0;
+
+    const followBtn = $('userProfileFollowBtn');
+    if (data.isSelf) {
+      // Viewing your own profile through the lookup — there's nothing to
+      // follow, so the button is hidden rather than shown disabled.
+      followBtn.style.display = 'none';
+    } else if (data.isFollowing === null) {
+      // Not signed in — show the button but make it clear signing in is required,
+      // rather than letting a guest tap it and silently fail.
+      followBtn.style.display = '';
+      followBtn.textContent = 'Sign in to Follow';
+      followBtn.disabled = true;
+      followBtn.style.opacity = '0.5';
+    } else {
+      followBtn.style.display = '';
+      followBtn.disabled = false;
+      followBtn.style.opacity = '1';
+      setFollowButtonState(data.isFollowing);
+    }
+  } catch (err) {
+    $('userProfileLoading').style.display = 'none';
+    $('userProfileError').style.display   = 'block';
+    $('userProfileError').textContent     = err.message || 'Could not load profile.';
+  }
+}
+
+function setFollowButtonState(isFollowing) {
+  const btn = $('userProfileFollowBtn');
+  if (!btn) return;
+  if (isFollowing) {
+    btn.textContent = 'Following ✓';
+    btn.style.background = 'var(--accent3)';
+    btn.style.color = 'var(--bg)';
+  } else {
+    btn.textContent = 'Follow';
+    btn.style.background = 'none';
+    btn.style.color = 'var(--accent3)';
+  }
+}
+
+$('userProfileFollowBtn')?.addEventListener('click', async () => {
+  if (!AUTH.loggedIn || !viewedProfileUsername) return;
+  const btn = $('userProfileFollowBtn');
+  const currentlyFollowing = btn.textContent.startsWith('Following');
+  btn.disabled = true;
+  try {
+    const res = await fetch(`${FOLLOWS_BASE}/${encodeURIComponent(viewedProfileUsername)}`, {
+      method: currentlyFollowing ? 'DELETE' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: AUTH.token }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      if (res.status === 401) { handleTokenExpiry(); return; }
+      throw new Error(data.error || 'Action failed.');
+    }
+    setFollowButtonState(data.following);
+    if (data.followerCount != null) $('userProfileFollowerCount').textContent = data.followerCount;
+    showToast(data.following ? 'Followed' : 'Unfollowed', '@' + viewedProfileUsername, 'success');
+  } catch (err) {
+    showToast('Error', err.message || 'Could not update follow status.', 'error');
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+$('profileLookupBtn')?.addEventListener('click', () => {
+  const val = $('profileLookupInput')?.value.trim();
+  if (!val) { setProfileLookupStatus('Enter a username first.', 'var(--accent2)'); return; }
+  setProfileLookupStatus('');
+  openUserProfile(val);
+});
+$('profileLookupInput')?.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') $('profileLookupBtn')?.click();
+});
 
 // ─── Server sync helpers ──────────────────────────────────────────────────────
 async function serverSync(silent) {
@@ -4667,7 +5033,46 @@ localAudio.addEventListener('ended', () => {
   }
 });
 
-// ─── Remove Item ──────────────────────────────────────────────────────────────
+// ─── Upcoming-track signed URL refresh ─────────────────────────────────────
+// Cloud-file queue items carry a Supabase signed URL that was resolved once,
+// at the moment they were added to the queue (see playCloudFile). That URL
+// expires after SIGNED_URL_TTL_SECONDS (10 min server-side) — fine for a
+// track about to play immediately, but a track that's been sitting further
+// down the queue for a while can go stale before its turn comes up.
+//
+// Rather than caching/prefetching audio bytes (the browser already buffers
+// ahead once .src is set, so there's nothing to gain there), this refreshes
+// just the URL itself a few seconds before the current track ends, so the
+// next track always has a fresh, working link by the time playItem() needs
+// it. cloudFileId marks which queue items are refreshable; non-cloud items
+// (local blob: URLs, YouTube) are left untouched.
+let _refreshedAheadForIndex = -1; // guards against re-refreshing the same upcoming track every timeupdate tick
+
+async function refreshUpcomingCloudUrl() {
+  const nextIndex = state.activeIndex + 1;
+  if (nextIndex >= state.queue.length || nextIndex === _refreshedAheadForIndex) return;
+  const next = state.queue[nextIndex];
+  if (!next || next.platform !== 'local' || !next.cloudFileId) return; // not a cloud file, nothing to refresh
+
+  _refreshedAheadForIndex = nextIndex;
+  try {
+    const res  = await fetch(`${CLOUD_FILES_BASE}/${next.cloudFileId}?token=${encodeURIComponent(AUTH.token)}`);
+    const data = await res.json();
+    if (res.ok && data.url) next.blobUrl = data.url;
+  } catch (_) {
+    // Non-fatal — if this fails, playItem() will surface the real error
+    // (expired link) when the track's turn actually comes up.
+    _refreshedAheadForIndex = -1; // allow a retry on the next tick
+  }
+}
+
+localAudio.addEventListener('timeupdate', () => {
+  if (!isFinite(localAudio.duration) || !localAudio.duration) return;
+  const remaining = localAudio.duration - localAudio.currentTime;
+  if (remaining <= 15) refreshUpcomingCloudUrl();
+});
+
+
 function removeItem(index) {
   playSfx('remove');
   const item = state.queue[index];
@@ -4937,6 +5342,7 @@ document.addEventListener('keydown', e => {
     if ($('aboutOverlay'))    $('aboutOverlay').classList.remove('open');
     if ($('settingsOverlay')) $('settingsOverlay').classList.remove('open');
     if ($('lyricsOverlay'))   $('lyricsOverlay').classList.remove('open');
+    if ($('userProfileOverlay')) $('userProfileOverlay').classList.remove('open');
     ctxMenu.classList.remove('open');
     return;
   }
@@ -6116,11 +6522,33 @@ function updateTopbarVis(playing) {
   if (vis) vis.classList.toggle('active', !!playing);
 }
 
+// Minimal HTML-escaping for any user-controlled text (filenames, folder
+// names, ID3 title/artist) interpolated into innerHTML below — filenames in
+// particular are fully attacker/user-controlled strings.
+function escapeHtml(str) {
+  return String(str ?? '').replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[c]));
+}
+
 // ─── 10. Cloud Files System ────────────────────────────────────────────────
 // Backed by /api/cloud-files (Supabase Storage + Postgres metadata) — replaces
 // the old localStorage-only version, which never actually left the device.
 const CLOUD_FILES_BASE = '/api/cloud-files';
-let cloudFilesCache = []; // metadata only: { id, filename, size, mimeType, uploadedAt } — never holds audio bytes or URLs
+let cloudFilesCache = []; // metadata only: { id, filename, size, mimeType, uploadedAt, folder, title, artist, duration } — never holds audio bytes or URLs
+let cloudFolders = [];    // distinct folder names for this user, from GET /api/cloud-files/folders
+let cloudSelected = new Set(); // ids currently checked for bulk actions
+const cloudFilter = { folder: '', search: '', sort: 'date', dir: 'desc' };
+
+// Pagination state for the cloud files list. nextCursor is the opaque
+// string the server returns once more rows exist past the current page;
+// null means either "not loaded yet" or "no more pages" (cloudFilesLoadedOnce
+// disambiguates the two). isLoadingMore guards against duplicate fetches if
+// the user scrolls faster than a request resolves.
+let cloudNextCursor = null;
+let cloudFilesLoadedOnce = false;
+let isLoadingMoreCloudFiles = false;
+const CLOUD_PAGE_SIZE = 50;
 
 function switchLocalTab(tab) {
   const filesEl = $('localSubFiles');
@@ -6135,10 +6563,71 @@ function switchLocalTab(tab) {
     filesEl.style.display = 'none'; cloudEl.style.display = '';
     filesBtn?.classList.remove('active'); cloudBtn?.classList.add('active');
     updateCloudFilesUI();
+    updateCloudFoldersUI();
   }
   playSfx('click');
 }
 
+// Reads ID3 title/artist/duration off a File before upload, mirroring the
+// artwork-only extraction already used for local files in addLocalFiles().
+// Duration comes from decoding the audio itself (jsmediatags doesn't expose
+// it reliably across formats), title/artist come from ID3 tags.
+function extractID3Meta(file) {
+  return new Promise(resolve => {
+    const out = { title: null, artist: null, duration: null };
+    const finishDuration = () => {
+      const blobUrl = URL.createObjectURL(file);
+      const a = new Audio();
+      a.preload = 'metadata';
+      const cleanup = () => { URL.revokeObjectURL(blobUrl); };
+      a.onloadedmetadata = () => { out.duration = isFinite(a.duration) ? a.duration : null; cleanup(); resolve(out); };
+      a.onerror = () => { cleanup(); resolve(out); };
+      a.src = blobUrl;
+    };
+    if (typeof jsmediatags === 'undefined') { finishDuration(); return; }
+    try {
+      jsmediatags.read(file, {
+        onSuccess: tag => {
+          out.title  = (tag.tags.title  || '').trim() || null;
+          out.artist = (tag.tags.artist || '').trim() || null;
+          finishDuration();
+        },
+        onError: () => finishDuration(),
+      });
+    } catch (e) { finishDuration(); }
+  });
+}
+
+// Renders a single cloud file row. i = index into cloudFilesCache (not the
+// row's db id) — playCloudFile/deleteCloudFile take that index, same
+// contract as before pagination. Pulled out of updateCloudFilesUI so the
+// initial-page render and the infinite-scroll append path share one template.
+function renderCloudFileRow(f, i) {
+  const checked = cloudSelected.has(f.id) ? 'checked' : '';
+  const selectedClass = cloudSelected.has(f.id) ? ' selected' : '';
+  const displayName = escapeHtml(f.title || f.filename);
+  const subParts = [];
+  if (f.title && f.artist) subParts.push(escapeHtml(f.artist));
+  else if (!f.title) subParts.push((f.size/1048576).toFixed(1) + 'MB');
+  if (f.duration) subParts.push(formatDuration(f.duration));
+  if (f.folder) subParts.push('📁 ' + escapeHtml(f.folder));
+  return `
+    <div class="cloud-file-item${selectedClass}" title="${escapeHtml(f.filename)}" data-id="${f.id}">
+      <input type="checkbox" class="cloud-file-check" ${checked} onclick="event.stopPropagation();toggleCloudSelect(${f.id})" />
+      <span class="cloud-file-meta" onclick="renameCloudFile(${f.id})">
+        <span class="cloud-file-name">🎵 ${displayName}</span>
+        <span class="cloud-file-sub">${subParts.join(' · ')}</span>
+      </span>
+      <button class="cloud-file-play" onclick="playCloudFile(${i}, true)" title="Play Now">▶</button>
+      <button class="cloud-file-play" onclick="playCloudFile(${i}, false)" title="Add to Queue" style="font-size:0.6rem;padding:0 5px;">+Q</button>
+      <button class="cloud-file-del" onclick="deleteCloudFile(${i})" title="Delete">✕</button>
+    </div>
+  `;
+}
+
+// Loads page 1 — called on tab switch, filter change, folder change, search.
+// Always replaces cloudFilesCache wholesale and resets pagination state,
+// since any of those changes the underlying query, not just the page offset.
 async function updateCloudFilesUI() {
   const loggedIn = AUTH.loggedIn;
   const inEl  = $('cloudFilesLoggedIn');
@@ -6150,39 +6639,282 @@ async function updateCloudFilesUI() {
 
   const list = $('cloudFilesList');
   list.innerHTML = '<div style="font-size:0.52rem;color:var(--text-muted);text-align:center;padding:16px;">Loading…</div>';
+  cloudNextCursor = null;
+  cloudFilesLoadedOnce = false;
 
   try {
-    const res  = await fetch(`${CLOUD_FILES_BASE}?token=${encodeURIComponent(AUTH.token)}`);
+    const params = new URLSearchParams({
+      token: AUTH.token, sort: cloudFilter.sort, dir: cloudFilter.dir,
+      limit: String(CLOUD_PAGE_SIZE),
+    });
+    if (cloudFilter.folder) params.set('folder', cloudFilter.folder);
+    if (cloudFilter.search) params.set('search', cloudFilter.search);
+    const res  = await fetch(`${CLOUD_FILES_BASE}?${params}`);
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Could not load cloud files.');
     cloudFilesCache = data.files;
+    cloudNextCursor = data.nextCursor || null;
+    cloudFilesLoadedOnce = true;
   } catch (err) {
     list.innerHTML = '<div style="font-size:0.52rem;color:var(--accent2);text-align:center;padding:16px;">Could not load cloud files. ' + (err.message || '') + '</div>';
     return;
   }
 
-  $('cloudFileCount').textContent = cloudFilesCache.length + ' file' + (cloudFilesCache.length !== 1 ? 's' : '');
+  // Drop selections for files no longer in view (deleted, filtered out, etc.)
+  const visibleIds = new Set(cloudFilesCache.map(f => f.id));
+  for (const id of cloudSelected) if (!visibleIds.has(id)) cloudSelected.delete(id);
+  updateCloudBulkBar();
+
+  renderCloudFilesList();
+  attachCloudScrollListener();
+}
+
+// Repaints the list + counters from the current cloudFilesCache. Separated
+// from the fetch logic so loadMoreCloudFiles can call it after appending a
+// page without re-fetching or resetting scroll position.
+function renderCloudFilesList() {
+  const list = $('cloudFilesList');
+  $('cloudFileCount').textContent = cloudFilesCache.length + ' file' + (cloudFilesCache.length !== 1 ? 's' : '') + (cloudNextCursor ? '+' : '');
   const totalMB = (cloudFilesCache.reduce((s, f) => s + (f.size || 0), 0) / 1048576).toFixed(1);
   $('cloudStorageUsed').textContent = totalMB + ' MB used';
 
   if (!cloudFilesCache.length) {
-    list.innerHTML = '<div style="font-size:0.52rem;color:var(--text-muted);text-align:center;padding:16px;">No cloud files yet. Upload audio files to access them anywhere.</div>';
+    const msg = (cloudFilter.search || cloudFilter.folder)
+      ? 'No files match this filter.'
+      : 'No cloud files yet. Upload audio files to access them anywhere.';
+    list.innerHTML = `<div style="font-size:0.52rem;color:var(--text-muted);text-align:center;padding:16px;">${msg}</div>`;
     return;
   }
-  list.innerHTML = cloudFilesCache.map((f, i) => `
-    <div class="cloud-file-item" title="${f.filename}">
-      <span class="cloud-file-name">🎵 ${f.filename}</span>
-      <span class="cloud-file-size">${(f.size/1048576).toFixed(1)}MB</span>
-      <button class="cloud-file-play" onclick="playCloudFile(${i}, true)" title="Play Now">▶</button>
-      <button class="cloud-file-play" onclick="playCloudFile(${i}, false)" title="Add to Queue" style="font-size:0.6rem;padding:0 5px;">+Q</button>
-      <button class="cloud-file-del" onclick="deleteCloudFile(${i})" title="Delete">✕</button>
-    </div>
-  `).join('');
+  const rowsHtml = cloudFilesCache.map((f, i) => renderCloudFileRow(f, i)).join('');
+  const loadingMoreHtml = isLoadingMoreCloudFiles
+    ? '<div class="cloud-files-loading-more" style="font-size:0.48rem;color:var(--text-muted);text-align:center;padding:10px;">Loading more…</div>'
+    : '';
+  list.innerHTML = rowsHtml + loadingMoreHtml;
 }
 
-// Cloud upload — sends the file to the server as base64; server persists it
-// to Supabase Storage and writes the metadata row. Nothing audio-related
-// touches localStorage anymore.
+// Fetches the next page using cloudNextCursor and appends to cloudFilesCache.
+// Appending (never replacing or re-sorting) is what keeps every existing
+// index-based call — playCloudFile(i), deleteCloudFile(i) — pointing at the
+// right row after a page lands; splicing or re-sorting here would silently
+// break those.
+async function loadMoreCloudFiles() {
+  if (isLoadingMoreCloudFiles || !cloudNextCursor || !cloudFilesLoadedOnce) return;
+  isLoadingMoreCloudFiles = true;
+  renderCloudFilesList(); // shows the "Loading more…" footer immediately
+
+  try {
+    const params = new URLSearchParams({
+      token: AUTH.token, sort: cloudFilter.sort, dir: cloudFilter.dir,
+      limit: String(CLOUD_PAGE_SIZE), cursor: cloudNextCursor,
+    });
+    if (cloudFilter.folder) params.set('folder', cloudFilter.folder);
+    if (cloudFilter.search) params.set('search', cloudFilter.search);
+    const res  = await fetch(`${CLOUD_FILES_BASE}?${params}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not load more files.');
+    cloudFilesCache = cloudFilesCache.concat(data.files);
+    cloudNextCursor = data.nextCursor || null;
+  } catch (err) {
+    console.error('[loadMoreCloudFiles]', err);
+    // Leave cloudNextCursor as-is so scrolling again retries the same page
+    // rather than silently giving up on the rest of the library.
+  } finally {
+    isLoadingMoreCloudFiles = false;
+    renderCloudFilesList();
+  }
+}
+
+// Attaches the scroll-near-bottom listener exactly once per list element.
+// Re-running updateCloudFilesUI() repaints innerHTML but doesn't recreate the
+// #cloudFilesList element itself, so a dataset flag prevents stacking up
+// duplicate listeners across repeated filter/folder/tab switches.
+function attachCloudScrollListener() {
+  const list = $('cloudFilesList');
+  if (!list || list.dataset.scrollBound) return;
+  list.dataset.scrollBound = '1';
+  list.addEventListener('scroll', () => {
+    const nearBottom = list.scrollTop + list.clientHeight >= list.scrollHeight - 80;
+    if (nearBottom) loadMoreCloudFiles();
+  });
+}
+
+function formatDuration(seconds) {
+  const s = Math.round(seconds);
+  const m = Math.floor(s / 60);
+  const r = (s % 60).toString().padStart(2, '0');
+  return `${m}:${r}`;
+}
+
+// ─── Folder nav ─────────────────────────────────────────────────────────────
+async function updateCloudFoldersUI() {
+  if (!AUTH.loggedIn) return;
+  try {
+    const res  = await fetch(`${CLOUD_FILES_BASE}/folders?token=${encodeURIComponent(AUTH.token)}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not load folders.');
+    cloudFolders = data.folders;
+  } catch (e) { cloudFolders = []; }
+
+  const row = $('cloudFolderRow');
+  if (!row) return;
+  const chips = [`<button class="cloud-folder-chip${cloudFilter.folder===''?' active':''}" data-folder="" onclick="setCloudFolder('')">All</button>`];
+  chips.push(`<button class="cloud-folder-chip${cloudFilter.folder==='__unfiled__'?' active':''}" data-folder="__unfiled__" onclick="setCloudFolder('__unfiled__')">Unfiled</button>`);
+  for (const folder of cloudFolders) {
+    const active = cloudFilter.folder === folder ? ' active' : '';
+    const safeName = escapeHtml(folder);
+    const jsEscaped = folder.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    chips.push(`<button class="cloud-folder-chip${active}" data-folder="${safeName}" onclick="setCloudFolder('${jsEscaped}')">${safeName}</button>`);
+  }
+  row.innerHTML = chips.join('');
+
+  // Keep the upload-folder <select> in sync too.
+  const sel = $('cloudUploadFolderSelect');
+  if (sel) {
+    const current = sel.value;
+    sel.innerHTML = '<option value="">No folder</option>' +
+      cloudFolders.map(f => `<option value="${escapeHtml(f)}">${escapeHtml(f)}</option>`).join('');
+    if (cloudFolders.includes(current)) sel.value = current;
+  }
+}
+
+function setCloudFolder(folder) {
+  cloudFilter.folder = folder;
+  playSfx('click');
+  updateCloudFilesUI();
+  updateCloudFoldersUI();
+}
+
+$('cloudSearchInput')?.addEventListener('input', debounceCloudSearch(e => {
+  cloudFilter.search = e.target.value.trim();
+  updateCloudFilesUI();
+}, 350));
+
+function debounceCloudSearch(fn, ms) {
+  let t;
+  return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
+}
+
+$('cloudSortSelect')?.addEventListener('change', e => {
+  cloudFilter.sort = e.target.value;
+  updateCloudFilesUI();
+});
+$('cloudSortDirBtn')?.addEventListener('click', e => {
+  cloudFilter.dir = cloudFilter.dir === 'asc' ? 'desc' : 'asc';
+  e.target.textContent = cloudFilter.dir === 'asc' ? '↑' : '↓';
+  updateCloudFilesUI();
+});
+
+$('cloudNewFolderBtn')?.addEventListener('click', () => {
+  const name = prompt('New folder name:');
+  if (!name || !name.trim()) return;
+  const clean = name.trim().slice(0, 100);
+  const sel = $('cloudUploadFolderSelect');
+  if (sel) {
+    if (!Array.from(sel.options).some(o => o.value === clean)) {
+      const opt = document.createElement('option');
+      opt.value = clean; opt.textContent = clean;
+      sel.appendChild(opt);
+    }
+    sel.value = clean;
+  }
+  // Folder won't actually exist server-side until a file is uploaded into it
+  // (folder is just a column on cloud_files, not its own table) — that's fine,
+  // it'll show up in the chip row on the next refresh after upload.
+});
+
+// ─── Bulk selection ─────────────────────────────────────────────────────────
+function toggleCloudSelect(id) {
+  if (cloudSelected.has(id)) cloudSelected.delete(id); else cloudSelected.add(id);
+  updateCloudBulkBar();
+  // Just toggle the row's visual state rather than a full re-fetch/re-render.
+  const row = document.querySelector(`.cloud-file-item[data-id="${id}"]`);
+  if (row) row.classList.toggle('selected', cloudSelected.has(id));
+}
+
+function updateCloudBulkBar() {
+  const bar = $('cloudBulkBar');
+  if (!bar) return;
+  bar.classList.toggle('active', cloudSelected.size > 0);
+  $('cloudBulkCount').textContent = cloudSelected.size + ' selected';
+}
+
+$('cloudBulkClearBtn')?.addEventListener('click', () => {
+  cloudSelected.clear();
+  updateCloudBulkBar();
+  document.querySelectorAll('.cloud-file-item.selected').forEach(el => el.classList.remove('selected'));
+  document.querySelectorAll('.cloud-file-check').forEach(el => el.checked = false);
+});
+
+$('cloudBulkDeleteBtn')?.addEventListener('click', async () => {
+  const ids = [...cloudSelected];
+  if (!ids.length) return;
+  if (!confirm(`Delete ${ids.length} file${ids.length>1?'s':''} from cloud? This can't be undone.`)) return;
+  try {
+    const res  = await fetch(CLOUD_FILES_BASE, {
+      method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: AUTH.token, ids }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Bulk delete failed.');
+    showToast('Deleted', `${data.deleted} file${data.deleted!==1?'s':''} removed from cloud.`, 'info');
+    cloudSelected.clear();
+    updateCloudFilesUI();
+    updateCloudFoldersUI();
+  } catch (err) {
+    showToast('Delete Error', err.message || 'Bulk delete failed.', 'error');
+  }
+});
+
+$('cloudBulkMoveBtn')?.addEventListener('click', async () => {
+  const ids = [...cloudSelected];
+  if (!ids.length) return;
+  const name = prompt('Move selected files to folder (leave blank to remove from folder):', '');
+  if (name === null) return; // cancelled
+  const folder = name.trim().slice(0, 100);
+  try {
+    // No bulk-PATCH endpoint exists server-side, so each move is a single
+    // PATCH — fine at personal-library scale, and each one is independently
+    // ownership-checked the same way single-file rename/delete already is.
+    await Promise.all(ids.map(id => fetch(`${CLOUD_FILES_BASE}/${id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: AUTH.token, folder }),
+    })));
+    showToast('Moved', `${ids.length} file${ids.length!==1?'s':''} moved.`, 'success');
+    cloudSelected.clear();
+    updateCloudFilesUI();
+    updateCloudFoldersUI();
+  } catch (err) {
+    showToast('Move Error', err.message || 'Move failed.', 'error');
+  }
+});
+
+// Inline rename — click a file's name/meta area to rename it. Folder moves
+// happen via bulk-select + "Move to…" rather than per-row, since per-row
+// would need its own folder picker UI; bulk covers both single and multi.
+async function renameCloudFile(id) {
+  const f = cloudFilesCache.find(x => x.id === id);
+  if (!f) return;
+  const next = prompt('Rename file:', f.filename);
+  if (next === null) return;
+  const clean = next.trim();
+  if (!clean || clean === f.filename) return;
+  try {
+    const res  = await fetch(`${CLOUD_FILES_BASE}/${id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: AUTH.token, filename: clean }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Rename failed.');
+    showToast('Renamed', clean, 'success');
+    updateCloudFilesUI();
+  } catch (err) {
+    showToast('Rename Error', err.message || 'Rename failed.', 'error');
+  }
+}
+
+// Cloud upload — sends the file via multipart so we get real per-file byte
+// upload progress through XMLHttpRequest (fetch can't report upload progress).
+// ID3 title/artist/duration are read client-side first and sent alongside.
 if ($('cloudUploadBtn')) {
   $('cloudUploadBtn').addEventListener('click', () => {
     if (!AUTH.loggedIn) { showToast('Sign in required','Please sign in to upload cloud files.','error'); return; }
@@ -6190,15 +6922,44 @@ if ($('cloudUploadBtn')) {
   });
 }
 if ($('cloudRefreshBtn')) {
-  $('cloudRefreshBtn').addEventListener('click', () => updateCloudFilesUI());
+  $('cloudRefreshBtn').addEventListener('click', () => { updateCloudFilesUI(); updateCloudFoldersUI(); });
 }
+
+function uploadCloudFileXHR(file, meta, folder, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    const form = new FormData();
+    form.append('token', AUTH.token);
+    form.append('filename', file.name);
+    form.append('file', file);
+    if (folder) form.append('folder', folder);
+    if (meta.title)    form.append('title', meta.title);
+    if (meta.artist)   form.append('artist', meta.artist);
+    if (meta.duration != null) form.append('duration', String(meta.duration));
+
+    xhr.upload.addEventListener('progress', e => {
+      if (e.lengthComputable) onProgress(e.loaded / e.total);
+    });
+    xhr.addEventListener('load', () => {
+      try {
+        const data = JSON.parse(xhr.responseText);
+        if (xhr.status >= 200 && xhr.status < 300) resolve(data);
+        else reject(new Error(data.error || `Upload failed (${xhr.status}).`));
+      } catch (e) { reject(new Error('Upload failed — bad server response.')); }
+    });
+    xhr.addEventListener('error', () => reject(new Error('Network error during upload.')));
+    xhr.open('POST', CLOUD_FILES_BASE);
+    xhr.send(form);
+  });
+}
+
 if ($('cloudFileInput')) {
   $('cloudFileInput').addEventListener('change', async function() {
     const files = Array.from(this.files);
     if (!files.length) return;
     const MAX_BYTES = 20 * 1048576; // keep in sync with CLOUD_FILE_MAX_BYTES in server.js
+    const folder = $('cloudUploadFolderSelect')?.value || '';
 
-    // Lock UI during upload
     const uploadBtn = $('cloudUploadBtn');
     const progressWrap = $('cloudUploadProgressWrap');
     const bar = $('cloudUploadBar');
@@ -6215,33 +6976,29 @@ if ($('cloudFileInput')) {
 
     for (let i = 0; i < eligible.length; i++) {
       const f = eligible[i];
-      // Update progress bar and label
       if (statusEl) statusEl.textContent = f.name.length > 28 ? f.name.slice(0, 25) + '…' : f.name;
       if (countEl) countEl.textContent = `${i + 1} / ${eligible.length}`;
-      if (bar) bar.style.width = Math.round((i / eligible.length) * 100) + '%';
       try {
-        const b64 = await fileToBase64(f);
-        const res  = await fetch(CLOUD_FILES_BASE, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ token: AUTH.token, filename: f.name, data: b64 }),
+        const meta = await extractID3Meta(f);
+        await uploadCloudFileXHR(f, meta, folder, frac => {
+          // Per-file fractional progress blended into the overall bar so it
+          // moves continuously instead of jumping once per completed file.
+          if (bar) bar.style.width = Math.round(((i + frac) / eligible.length) * 100) + '%';
         });
-        const result = await res.json();
-        if (!res.ok) throw new Error(result.error || 'Upload failed.');
         uploaded++;
-      } catch(e) { showToast('Upload Error', f.name + ' — ' + (e.message || 'failed.'), 'error'); failed++; }
+      } catch (e) { showToast('Upload Error', f.name + ' — ' + (e.message || 'failed.'), 'error'); failed++; }
     }
 
-    // Fill bar to 100% briefly, then hide
     if (bar) bar.style.width = '100%';
     await new Promise(r => setTimeout(r, 400));
     if (progressWrap) progressWrap.style.display = 'none';
     if (bar) bar.style.width = '0%';
 
-    // Restore button
     if (uploadBtn) { uploadBtn.disabled = false; uploadBtn.textContent = '↑ Upload Files'; }
 
     if (uploaded) showToast('Uploaded!', uploaded + ' file' + (uploaded!==1?'s':'')+' added to cloud.', 'success');
     updateCloudFilesUI();
+    updateCloudFoldersUI();
     this.value = '';
   });
 }
@@ -6270,9 +7027,11 @@ async function playCloudFile(index, playNow = true) {
     if (!res.ok) throw new Error(data.error || 'Could not load file.');
 
     const item = {
-      platform: 'local', type: 'local', title: f.filename.replace(/\.[^.]+$/, ''),
+      platform: 'local', type: 'local', title: f.title || f.filename.replace(/\.[^.]+$/, ''),
       originalUrl: f.filename, id: f.id, blobUrl: data.url, size: f.size,
-      fileType: f.mimeType, customLabel: f.filename,
+      fileType: f.mimeType, customLabel: f.filename, artist: f.artist || undefined,
+      cloudFileId: f.id, // marks this as a cloud item with a refreshable signed URL,
+                          // distinct from true local blob: files which also use platform:'local'
     };
     state.queue.push(item);
     save(); renderQueue();
@@ -6299,7 +7058,9 @@ async function deleteCloudFile(index) {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Delete failed.');
     showToast('Deleted', f.filename + ' removed from cloud.', 'info');
+    cloudSelected.delete(f.id);
     updateCloudFilesUI();
+    updateCloudFoldersUI();
   } catch (err) {
     showToast('Delete Error', err.message || 'Could not delete file.', 'error');
   }
@@ -6624,7 +7385,7 @@ document.addEventListener('keydown', e => {
 })();
 
 // ─── Patch: Close new overlays via clicking outside ──────────────────────────
-['supportOverlay','aboutOverlay','settingsOverlay','lyricsOverlay'].forEach(id => {
+['supportOverlay','aboutOverlay','settingsOverlay','lyricsOverlay','userProfileOverlay'].forEach(id => {
   const el = $(id);
   if (!el) return;
   el.addEventListener('click', e => { if (e.target === el) el.classList.remove('open'); });
