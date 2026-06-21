@@ -133,14 +133,42 @@ async function dbCreateAccount(username, displayName, salt, hash) {
 // password hash, today or after any future refactor.
 
 // Creates a profile row at signup, public by default, seeded with the same
-// display name the account starts with. Best-effort — a missing profile row
-// degrades gracefully (dbGetProfile returns null, the API 404s) rather than
-// failing signup outright over a non-critical insert.
+// display name the account starts with. This now THROWS on failure rather
+// than logging and continuing — a previous version treated this as
+// best-effort ("a missing profile row degrades gracefully"), but in
+// practice a missing row doesn't degrade anything gracefully: the account
+// works fine for playback/playlists, but silently never appears in Find a
+// User or Discovery, and its own visibility/bio toggle has nothing to
+// update. That's exactly what happened to one real account before this
+// fix — confusing for the user, invisible to them, and only debuggable by
+// querying the database directly. Better to fail signup loudly (the
+// account row can simply be re-created by signing up again) than succeed
+// with a half-broken account that looks fine until someone tries to find it.
 async function dbCreateProfile(username, displayName) {
   const { error } = await supabase.from('profiles').insert({
     username, display_name: displayName,
   });
-  if (error) console.error('[db] createProfile:', error.message);
+  if (error) throw new Error(error.message);
+}
+
+// Idempotent safety net: ensures a profile row exists for `username`,
+// creating one with sane defaults if it's missing. Called on every signin
+// (cheap — one indexed SELECT in the common case where the row already
+// exists) so that if dbCreateProfile's signup-time throw is ever somehow
+// bypassed, or a profile row is lost some other way in the future, the
+// account self-heals on next login rather than staying invisible until
+// someone notices and runs a manual SQL backfill.
+async function dbEnsureProfile(username, displayName) {
+  const existing = await dbGetProfile(username);
+  if (existing) return;
+  try {
+    await dbCreateProfile(username, displayName);
+    console.log(`[db] ensureProfile: backfilled missing profile row for ${username}`);
+  } catch (err) {
+    // Don't block signin over this — log loudly so it's noticed, but a
+    // signin must still succeed even if the backfill attempt itself fails.
+    console.error(`[db] ensureProfile: failed to backfill profile for ${username}:`, err.message);
+  }
 }
 
 async function dbGetProfile(username) {
@@ -1883,7 +1911,21 @@ app.post('/api/auth/signup', rateLimit, async (req, res) => {
     const hash        = await hashPassword(password, salt);
     const dName       = (displayName || '').trim() || key;
     await dbCreateAccount(key, dName, salt, hash);
-    await dbCreateProfile(key, dName);
+    try {
+      await dbCreateProfile(key, dName);
+    } catch (profileErr) {
+      // dbCreateProfile now throws instead of silently logging (see the
+      // comment above its definition) — this is exactly the failure mode
+      // that previously left an account with no profile row, invisible to
+      // Find a User/Discovery with no way for the user to tell why. Roll
+      // the account back rather than leave that same half-created state:
+      // accounts.username -> profiles.username is ON DELETE CASCADE, and
+      // nothing else has been written yet (no session, no playlists row),
+      // so this delete is a clean, complete undo of dbCreateAccount above.
+      console.error('[signup] profile creation failed, rolling back account:', profileErr.message);
+      await supabase.from('accounts').delete().eq('username', key);
+      throw new Error('Could not finish creating your account. Please try again.');
+    }
     await dbSetPlaylists(key, []);
 
     const token     = generateToken();
@@ -1914,6 +1956,7 @@ app.post('/api/auth/signin', rateLimit, async (req, res) => {
     const expiresAt = Date.now() + TOKEN_TTL;
     await dbCreateSession(token, key, expiresAt);
     const playlists = await dbGetPlaylists(key);
+    dbEnsureProfile(key, acct.display_name); // fire-and-forget self-heal — see dbEnsureProfile's comment
 
     return res.json({ token, username: key, displayName: acct.display_name, playlists });
   } catch (err) {
@@ -1954,6 +1997,7 @@ app.get('/api/auth/pull', async (req, res) => {
   try {
     const acct      = await dbGetAccount(sess.username);
     const playlists = await dbGetPlaylists(sess.username);
+    dbEnsureProfile(sess.username, acct?.display_name || sess.username); // fire-and-forget self-heal
     return res.json({
       username:    sess.username,
       displayName: acct?.display_name || sess.username,
