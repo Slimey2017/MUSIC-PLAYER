@@ -1541,6 +1541,7 @@ body.oled-mode {
       </div>
     </div>
     <button class="header-tag" id="supportBtn" style="cursor:pointer;background:none;color:var(--accent3);border-color:rgba(0,212,255,0.3);" title="Support / Bug Report">⚑ Help</button>
+    <button class="header-tag" id="discoverBtn" style="cursor:pointer;background:none;color:var(--accent3);border-color:rgba(0,212,255,0.3);" title="Discover — trending tracks, playlists, people">⊛ Discover</button>
     <button class="header-tag" id="settingsBtn" style="cursor:pointer;background:none;" title="Settings">⊞ Settings</button>
     <button class="header-tag" id="lyricsBtn" style="cursor:pointer;background:none;" title="Lyrics">♪ Lyrics</button>
     <button class="header-tag" id="audioQualityBtn" style="cursor:pointer;background:none;" title="Audio Quality & EQ">⚙ Audio</button>
@@ -2453,6 +2454,53 @@ body.oled-mode {
   </div>
 </div>
 
+<!-- Discovery Overlay — what's trending across all of FREQ: tracks, public
+     playlists, and active profiles. Wider panel than the other lyrics-
+     overlay instances since it holds three full sub-views rather than one
+     focused detail, same reasoning as why Charts got a sidebar tab rather
+     than living inside a 380px modal. -->
+<div class="lyrics-overlay" id="discoverOverlay">
+  <div class="lyrics-panel" style="max-width:560px;">
+    <div class="lyrics-title">⊛ Discover</div>
+    <div class="lyrics-artist" style="margin-bottom:12px;">What's happening across FREQ right now.</div>
+
+    <!-- Sub-tabs -->
+    <div style="display:flex;gap:6px;margin-bottom:14px;">
+      <button id="discoverTabTracks" onclick="setDiscoverTab('tracks')" class="discover-tab-btn discover-tab-active" style="flex:1;background:none;border:1px solid var(--accent3);color:var(--accent3);font-family:'Space Mono',monospace;font-size:0.44rem;letter-spacing:0.05em;text-transform:uppercase;padding:7px 4px;border-radius:var(--radius);cursor:pointer;transition:color 0.15s,border-color 0.15s;">♪ Tracks</button>
+      <button id="discoverTabPlaylists" onclick="setDiscoverTab('playlists')" class="discover-tab-btn" style="flex:1;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.44rem;letter-spacing:0.05em;text-transform:uppercase;padding:7px 4px;border-radius:var(--radius);cursor:pointer;transition:color 0.15s,border-color 0.15s;">⊞ Playlists</button>
+      <button id="discoverTabPeople" onclick="setDiscoverTab('people')" class="discover-tab-btn" style="flex:1;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.44rem;letter-spacing:0.05em;text-transform:uppercase;padding:7px 4px;border-radius:var(--radius);cursor:pointer;transition:color 0.15s,border-color 0.15s;">⊕ People</button>
+    </div>
+
+    <!-- Tracks sub-view (reuses Charts data) -->
+    <div id="discoverPaneTracks" class="discover-pane">
+      <div style="display:flex;gap:6px;margin-bottom:10px;">
+        <button id="discoverTracksAll" onclick="setDiscoverTracksWindow('all')" style="flex:1;background:none;border:1px solid var(--accent3);color:var(--accent3);font-family:'Space Mono',monospace;font-size:0.4rem;letter-spacing:0.05em;text-transform:uppercase;padding:5px 4px;border-radius:var(--radius);cursor:pointer;">All-Time</button>
+        <button id="discoverTracks7d" onclick="setDiscoverTracksWindow('7d')" style="flex:1;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.4rem;letter-spacing:0.05em;text-transform:uppercase;padding:5px 4px;border-radius:var(--radius);cursor:pointer;">Trending · 7d</button>
+      </div>
+      <div id="discoverTracksList" style="max-height:380px;overflow-y:auto;"><div class="empty-panel">Loading…</div></div>
+    </div>
+
+    <!-- Playlists sub-view -->
+    <div id="discoverPanePlaylists" class="discover-pane" style="display:none;">
+      <div style="display:flex;gap:6px;margin-bottom:10px;">
+        <button id="discoverPlaylistsLikes" onclick="setDiscoverPlaylistsSort('likes')" style="flex:1;background:none;border:1px solid var(--accent3);color:var(--accent3);font-family:'Space Mono',monospace;font-size:0.4rem;letter-spacing:0.05em;text-transform:uppercase;padding:5px 4px;border-radius:var(--radius);cursor:pointer;">Most Liked</button>
+        <button id="discoverPlaylistsRecent" onclick="setDiscoverPlaylistsSort('recent')" style="flex:1;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.4rem;letter-spacing:0.05em;text-transform:uppercase;padding:5px 4px;border-radius:var(--radius);cursor:pointer;">Recently Updated</button>
+      </div>
+      <div id="discoverPlaylistsList" style="max-height:380px;overflow-y:auto;"><div class="empty-panel">Loading…</div></div>
+    </div>
+
+    <!-- People sub-view -->
+    <div id="discoverPanePeople" class="discover-pane" style="display:none;">
+      <div style="font-size:0.42rem;color:var(--text-muted);line-height:1.8;margin-bottom:10px;">
+        Public profiles, ranked by followers.
+      </div>
+      <div id="discoverPeopleList" style="max-height:380px;overflow-y:auto;"><div class="empty-panel">Loading…</div></div>
+    </div>
+
+    <button class="support-close-btn" onclick="closeDiscoverOverlay()" style="margin-top:16px;">Close</button>
+  </div>
+</div>
+
 <!-- ─── EQ Presets Gallery (added inside audio panel via JS) ──── -->
 
 <!-- Shortcuts Overlay -->
@@ -2980,6 +3028,51 @@ body.oled-mode {
 <script>
 'use strict';
 
+// ─── Network resilience: make every res.json() call safe ─────────────────────
+// Every fetch() call site in this file follows the same shape:
+//   const res = await fetch(...);
+//   const data = await res.json();
+//   if (!res.ok) throw new Error(data.error || '...');
+// That's fine when the server actually answers — even an error response is
+// still JSON. It breaks the moment the server is unreachable, mid-restart,
+// or sitting behind a proxy/host that returns an HTML error page (Render's
+// default 502 page, a dev-server "offline" page, a captive portal, etc):
+// res.json() throws a raw "Unexpected token '<'" SyntaxError instead of the
+// readable message every catch block downstream is written to expect.
+//
+// Rather than rewrite all ~40 call sites (and risk missing one, or
+// introducing a typo in a mechanical edit at that scale), we patch fetch
+// once at the top of the file: if a response's content-type isn't JSON,
+// .json() now throws a clear, catchable Error instead of letting the
+// browser's native SyntaxError leak through. Every existing call site's
+// `catch (err) { ... err.message ... }` already does the right thing with
+// this — no call site needs to change.
+const _nativeFetch = window.fetch.bind(window);
+window.fetch = async function(...args) {
+  let res;
+  try {
+    res = await _nativeFetch(...args);
+  } catch (err) {
+    // Network-level failure (DNS, connection refused, server fully down,
+    // offline browser) — fetch() itself rejects rather than resolving with
+    // a bad response. Re-throw with a consistent, friendly message rather
+    // than the browser's "Failed to fetch", which isn't always clear that
+    // it means "the server is unreachable."
+    throw new Error('Server unreachable. It may be offline or restarting — please try again shortly.');
+  }
+  const originalJson = res.json.bind(res);
+  res.json = async function() {
+    const contentType = res.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) {
+      // The server answered, but not with JSON — almost always an HTML
+      // error page (502/504 from the host, a proxy's offline page, etc).
+      throw new Error(`Server returned an unexpected response (${res.status}). It may be offline or restarting.`);
+    }
+    return originalJson();
+  };
+  return res;
+};
+
 // ─── Boot Intro + Disclaimer ──────────────────────────────────────────────────
 (function() {
   const INTRO_SESSION_KEY = 'freq_intro_played';
@@ -3422,18 +3515,9 @@ async function loadCharts() {
   if (!list) return;
   list.innerHTML = '<div class="empty-panel">Loading charts…</div>';
   try {
-    const res = await fetch(`${CHARTS_BASE}/tracks?window=${encodeURIComponent(chartsWindow)}&limit=50`);
-    // Check ok — and that the response actually looks like JSON — before
-    // parsing. A dead/unreachable server, a 404 for an unrecognized route,
-    // or any proxy in between can hand back an HTML error page instead of
-    // JSON; calling res.json() on that throws a SyntaxError ("Unexpected
-    // token '<'") rather than the readable error this catch block is meant
-    // to surface, so we head that off explicitly.
-    const contentType = res.headers.get('content-type') || '';
-    if (!res.ok || !contentType.includes('application/json')) {
-      throw new Error(`Server unavailable (${res.status}). Charts couldn't load.`);
-    }
-    const data = await res.json();
+    const res  = await fetch(`${CHARTS_BASE}/tracks?window=${encodeURIComponent(chartsWindow)}&limit=50`);
+    const data = await res.json(); // non-JSON responses (offline server, HTML error pages) are caught globally — see the fetch patch at the top of this script
+    if (!res.ok) throw new Error(data.error || 'Could not load charts.');
     chartsTracks = data.tracks || [];
     renderCharts();
   } catch (err) {
@@ -3485,11 +3569,8 @@ async function resolveChartTrack(t) {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ url: t.originalUrl }),
   });
-  const contentType = res.headers.get('content-type') || '';
-  if (!res.ok || !contentType.includes('application/json')) {
-    throw new Error(`Server unavailable (${res.status}). Could not resolve this track.`);
-  }
-  const data = await res.json();
+  const data = await res.json(); // non-JSON responses are caught globally — see the fetch patch at the top of this script
+  if (!res.ok) throw new Error(data.error || 'Could not resolve this track.');
   return { ...data, title: data.title || t.title };
 }
 
@@ -3527,6 +3608,206 @@ async function queueFromChart(i) {
     showToast('Error', err.message || 'Could not add this track.', 'error');
   }
 }
+
+// ─── Discovery ────────────────────────────────────────────────────────────────
+// Three independent sub-views (tracks / playlists / people) sharing one
+// overlay. Each pane lazy-loads the first time its tab is opened, then
+// caches in module-level state (discoverTracksData etc) so switching tabs
+// back and forth doesn't re-fetch — only the explicit window/sort toggles
+// inside a pane trigger a fresh load. The overlay itself defaults to the
+// Tracks pane (set in the HTML) since "what's playing right now" is the
+// most immediately graspable answer to "what's happening on FREQ."
+let discoverTab           = 'tracks';
+let discoverTracksWindow  = 'all';
+let discoverPlaylistsSort = 'likes';
+let discoverTracksLoaded    = false;
+let discoverPlaylistsLoaded = false;
+let discoverPeopleLoaded    = false;
+let discoverTracksData    = []; // separate cache from chartsTracks — same shape, different lifecycle/UI
+
+function openDiscoverOverlay() {
+  $('discoverOverlay')?.classList.add('open');
+  if (!discoverTracksLoaded) loadDiscoverTracks();
+}
+
+function closeDiscoverOverlay() {
+  $('discoverOverlay')?.classList.remove('open');
+}
+
+function setDiscoverTab(tab) {
+  if (discoverTab === tab) return;
+  discoverTab = tab;
+  ['Tracks', 'Playlists', 'People'].forEach(name => {
+    const isActive = name.toLowerCase() === tab;
+    const btn = $(`discoverTab${name}`);
+    const pane = $(`discoverPane${name}`);
+    if (btn) {
+      btn.style.color = isActive ? 'var(--accent3)' : 'var(--text-muted)';
+      btn.style.borderColor = isActive ? 'var(--accent3)' : 'var(--border)';
+    }
+    if (pane) pane.style.display = isActive ? 'block' : 'none';
+  });
+  if (tab === 'tracks' && !discoverTracksLoaded) loadDiscoverTracks();
+  if (tab === 'playlists' && !discoverPlaylistsLoaded) loadDiscoverPlaylists();
+  if (tab === 'people' && !discoverPeopleLoaded) loadDiscoverPeople();
+}
+
+function setDiscoverTracksWindow(win) {
+  if (discoverTracksWindow === win) return;
+  discoverTracksWindow = win;
+  const allBtn = $('discoverTracksAll'), weekBtn = $('discoverTracks7d');
+  if (allBtn)  { allBtn.style.color = win === 'all' ? 'var(--accent3)' : 'var(--text-muted)'; allBtn.style.borderColor = win === 'all' ? 'var(--accent3)' : 'var(--border)'; }
+  if (weekBtn) { weekBtn.style.color = win === '7d' ? 'var(--accent3)' : 'var(--text-muted)'; weekBtn.style.borderColor = win === '7d' ? 'var(--accent3)' : 'var(--border)'; }
+  loadDiscoverTracks();
+}
+
+function setDiscoverPlaylistsSort(sort) {
+  if (discoverPlaylistsSort === sort) return;
+  discoverPlaylistsSort = sort;
+  const likesBtn = $('discoverPlaylistsLikes'), recentBtn = $('discoverPlaylistsRecent');
+  if (likesBtn)  { likesBtn.style.color = sort === 'likes' ? 'var(--accent3)' : 'var(--text-muted)'; likesBtn.style.borderColor = sort === 'likes' ? 'var(--accent3)' : 'var(--border)'; }
+  if (recentBtn) { recentBtn.style.color = sort === 'recent' ? 'var(--accent3)' : 'var(--text-muted)'; recentBtn.style.borderColor = sort === 'recent' ? 'var(--accent3)' : 'var(--border)'; }
+  loadDiscoverPlaylists();
+}
+
+async function loadDiscoverTracks() {
+  const list = $('discoverTracksList');
+  if (!list) return;
+  list.innerHTML = '<div class="empty-panel">Loading…</div>';
+  try {
+    const res  = await fetch(`${CHARTS_BASE}/tracks?window=${encodeURIComponent(discoverTracksWindow)}&limit=30`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not load tracks.');
+    discoverTracksData = data.tracks || [];
+    discoverTracksLoaded = true;
+    renderDiscoverTracks();
+  } catch (err) {
+    console.error('[loadDiscoverTracks]', err);
+    list.innerHTML = '<div class="empty-panel">Could not load tracks — server may be offline.</div>';
+  }
+}
+
+function renderDiscoverTracks() {
+  const list = $('discoverTracksList');
+  if (!list) return;
+  if (!discoverTracksData.length) {
+    list.innerHTML = `<div class="empty-panel">${discoverTracksWindow === '7d' ? 'No plays in the last 7 days yet.' : 'No plays tracked yet.'}</div>`;
+    return;
+  }
+  list.innerHTML = discoverTracksData.map((t, i) => {
+    const cfg = PLATFORM_CONFIG[t.platform] || { label: t.platform || '?', color: 'var(--text-muted)' };
+    return `
+      <div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--border);">
+        <div style="width:22px;flex-shrink:0;text-align:right;font-size:0.5rem;color:var(--text-dim);font-weight:600;">${t.rank}</div>
+        <div style="flex:1;min-width:0;cursor:pointer;" onclick="playFromDiscoverTracks(${i})">
+          <div style="font-size:0.55rem;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(t.title)}</div>
+          <div style="font-size:0.42rem;color:var(--text-muted);"><span style="color:${cfg.color};">${escapeHtml(cfg.label)}</span> · ${t.playCount} play${t.playCount === 1 ? '' : 's'}${discoverTracksWindow === '7d' ? ' this week' : ''}</div>
+        </div>
+        <button onclick="event.stopPropagation(); queueFromDiscoverTracks(${i})" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.4rem;padding:4px 8px;border-radius:var(--radius);cursor:pointer;flex-shrink:0;text-transform:uppercase;" title="Add to queue">+ Queue</button>
+      </div>
+    `;
+  }).join('');
+}
+
+// Discovery's track pane shares resolveChartTrack with the Charts sidebar
+// tab — same underlying data shape (rank/originalUrl/platform/title), so
+// re-resolving through /api/resolve before playing/queueing is identical
+// logic. Only the source array (discoverTracksData vs chartsTracks)
+// differs, which is why these are separate i-indexed wrappers rather than
+// one shared function juggling two arrays.
+async function playFromDiscoverTracks(i) {
+  const t = discoverTracksData[i];
+  if (!t) return;
+  try {
+    const item = await resolveChartTrack(t);
+    if (!state.allowDups && state.queue.some(q => q.originalUrl === item.originalUrl)) {
+      const qi = state.queue.findIndex(q => q.originalUrl === item.originalUrl);
+      playItem(qi);
+      return;
+    }
+    state.queue.push(item);
+    save(); renderQueue();
+    playItem(state.queue.length - 1);
+  } catch (err) {
+    showToast('Error', err.message || 'Could not play this track.', 'error');
+  }
+}
+
+async function queueFromDiscoverTracks(i) {
+  const t = discoverTracksData[i];
+  if (!t) return;
+  try {
+    const item = await resolveChartTrack(t);
+    if (!state.allowDups && state.queue.some(q => q.originalUrl === item.originalUrl)) {
+      showToast('Already in Queue', t.title, 'info');
+      return;
+    }
+    state.queue.push(item);
+    save(); renderQueue();
+    showToast('Added to Queue', t.title, 'success');
+  } catch (err) {
+    showToast('Error', err.message || 'Could not add this track.', 'error');
+  }
+}
+
+async function loadDiscoverPlaylists() {
+  const list = $('discoverPlaylistsList');
+  if (!list) return;
+  list.innerHTML = '<div class="empty-panel">Loading…</div>';
+  try {
+    const res  = await fetch(`/api/discover/playlists?sort=${encodeURIComponent(discoverPlaylistsSort)}&limit=30`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not load playlists.');
+    discoverPlaylistsLoaded = true;
+    const playlists = data.playlists || [];
+    if (!playlists.length) {
+      list.innerHTML = '<div class="empty-panel">No public playlists yet — be the first to share one!</div>';
+      return;
+    }
+    list.innerHTML = playlists.map(pl => `
+      <div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border);cursor:pointer;" onclick="closeDiscoverOverlay(); openPlaylistViewer('${pl.id}')">
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:0.55rem;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(pl.name)}</div>
+          <div style="font-size:0.42rem;color:var(--text-muted);">by @${escapeHtml(pl.owner)} · ${pl.trackCount} track${pl.trackCount === 1 ? '' : 's'}${pl.likeCount ? ` · ♥ ${pl.likeCount}` : ''}</div>
+        </div>
+      </div>
+    `).join('');
+  } catch (err) {
+    console.error('[loadDiscoverPlaylists]', err);
+    list.innerHTML = '<div class="empty-panel">Could not load playlists — server may be offline.</div>';
+  }
+}
+
+async function loadDiscoverPeople() {
+  const list = $('discoverPeopleList');
+  if (!list) return;
+  list.innerHTML = '<div class="empty-panel">Loading…</div>';
+  try {
+    const params = new URLSearchParams({ limit: 30, ...(AUTH.loggedIn && AUTH.token ? { token: AUTH.token } : {}) });
+    const res  = await fetch(`/api/discover/profiles?${params}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not load people.');
+    discoverPeopleLoaded = true;
+    const profiles = data.profiles || [];
+    if (!profiles.length) {
+      list.innerHTML = '<div class="empty-panel">No public profiles yet.</div>';
+      return;
+    }
+    list.innerHTML = profiles.map(p => `
+      <div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border);cursor:pointer;" onclick="closeDiscoverOverlay(); openUserProfile('${p.username}')">
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:0.55rem;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(p.displayName || p.username)}</div>
+          <div style="font-size:0.42rem;color:var(--text-muted);">@${escapeHtml(p.username)} · ${p.followerCount} follower${p.followerCount === 1 ? '' : 's'}</div>
+        </div>
+      </div>
+    `).join('');
+  } catch (err) {
+    console.error('[loadDiscoverPeople]', err);
+    list.innerHTML = '<div class="empty-panel">Could not load people — server may be offline.</div>';
+  }
+}
+
+$('discoverBtn')?.addEventListener('click', openDiscoverOverlay);
 
 // ─── Public Playlists (relational, playlists_v2 — separate from the legacy
 // AUTH.playlists blob used by Saved Playlists / serverSync above) ───────────
@@ -7659,10 +7940,11 @@ if ($('supportBtn')) $('supportBtn').addEventListener('click', openSupportModal)
 const _origEscHandler = document.onkeydown;
 document.addEventListener('keydown', e => {
   if (e.key !== 'Escape') return;
-  if ($('supportOverlay')?.classList.contains('open'))  { closeSupportModal(); return; }
-  if ($('aboutOverlay')?.classList.contains('open'))    { closeAboutModal(); return; }
-  if ($('settingsOverlay')?.classList.contains('open')) { closeSettingsModal(); return; }
-  if ($('lyricsOverlay')?.classList.contains('open'))   { closeLyricsModal(); return; }
+  if ($('supportOverlay')?.classList.contains('open'))   { closeSupportModal(); return; }
+  if ($('aboutOverlay')?.classList.contains('open'))     { closeAboutModal(); return; }
+  if ($('settingsOverlay')?.classList.contains('open'))  { closeSettingsModal(); return; }
+  if ($('lyricsOverlay')?.classList.contains('open'))    { closeLyricsModal(); return; }
+  if ($('discoverOverlay')?.classList.contains('open'))  { closeDiscoverOverlay(); return; }
 });
 
 // ─── 9. Topbar mini-visualizer toggle ────────────────────────────────────────
