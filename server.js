@@ -37,6 +37,22 @@
  * GET    /api/follows/:username/followers    ?limit=&offset=
  * GET    /api/follows/:username/following    ?limit=&offset=
  *
+ * POST   /api/playlists                      { token, name, description?, isPublic? }
+ * GET    /api/playlists/:id                  ?token=
+ * PATCH  /api/playlists/:id                  { token, name?, description?, isPublic? }
+ * DELETE /api/playlists/:id                  { token }
+ * GET    /api/playlists/mine                 ?token=
+ * POST   /api/playlists/:id/tracks           { token, trackData }
+ * DELETE /api/playlists/:id/tracks/:rowId    { token }
+ * GET    /api/profiles/:username/playlists
+ *
+ * POST   /api/playlists/:id/like               { token }  → like (idempotent)
+ * DELETE /api/playlists/:id/like               { token }  → unlike (idempotent)
+ * GET    /api/playlists/liked                  ?token=    → playlists I've liked
+ *
+ * POST   /api/plays                            { originalUrl, platform?, title?, token? }
+ * GET    /api/charts/tracks                    ?window=all|7d&limit=
+ *
  * ─── New in v4.1 ─────────────────────────────────────────────────────────────
  *   - POST /api/yt/tracks  — scrapes YouTube playlist/video tracks, no API key
  *   - GET  /api/yt/embed-check — detects embed-blocked videos via oEmbed
@@ -189,11 +205,19 @@ async function dbIsFollowing(followerUsername, followedUsername) {
 // against profiles for display data. Simple offset pagination — follower
 // lists don't grow anywhere near the size where keyset pagination's extra
 // complexity would pay for itself at this app's scale.
+//
+// is_public is filtered IN THE QUERY (via the !inner embed hint), not after
+// the fetch — filtering post-fetch would paginate over the unfiltered join
+// and then trim the page down, which desyncs `offset` from what the caller
+// thinks they've paged through (a page of 50 could come back with only a
+// handful of public rows, and "load more" would skip or re-show users
+// depending on where private accounts happened to fall in the order).
 async function dbGetFollowers(username, { limit = 50, offset = 0 } = {}) {
   const { data, error } = await supabase
     .from('follows')
-    .select('follower_username, created_at, profiles:follower_username(username, display_name, bio, is_public)')
+    .select('follower_username, created_at, profiles:follower_username!inner(username, display_name, bio, is_public)')
     .eq('followed_username', username)
+    .eq('profiles.is_public', true)
     .order('created_at', { ascending: false })
     .range(offset, offset + limit - 1);
   if (error) { console.error('[db] getFollowers:', error.message); return []; }
@@ -203,12 +227,493 @@ async function dbGetFollowers(username, { limit = 50, offset = 0 } = {}) {
 async function dbGetFollowing(username, { limit = 50, offset = 0 } = {}) {
   const { data, error } = await supabase
     .from('follows')
-    .select('followed_username, created_at, profiles:followed_username(username, display_name, bio, is_public)')
+    .select('followed_username, created_at, profiles:followed_username!inner(username, display_name, bio, is_public)')
     .eq('follower_username', username)
+    .eq('profiles.is_public', true)
     .order('created_at', { ascending: false })
     .range(offset, offset + limit - 1);
   if (error) { console.error('[db] getFollowing:', error.message); return []; }
   return (data || []).map(r => r.profiles).filter(Boolean);
+}
+
+// ─── Playlists v2 (relational — for Public/Shared Playlists) ─────────────────
+// `playlists_v2` + `playlist_tracks` already exist in the live schema with
+// RLS read policies in place (public playlists + their tracks are
+// SELECT-able by anyone; everything else is default-deny, bypassed here via
+// the service role key same as every other table in this file). No write
+// policies exist by design — every write goes through these helpers, never
+// directly from the client.
+//
+// `track_data` stores the resolved track shape verbatim (the same
+// { platform, type, embedUrl, id, title, ... } object your resolvers
+// already produce) rather than a foreign key into a canonical tracks
+// table. Deliberate scope cut: a canonical tracks table buys cross-
+// playlist dedup and play counting, neither of which Public/Shared
+// Playlists need. Revisit only if/when Charts needs to count plays across
+// duplicate adds of the same track in different playlists.
+
+async function dbCreatePlaylist(owner, { name, description, isPublic = false }) {
+  const { data, error } = await supabase
+    .from('playlists_v2')
+    .insert({ owner, name, description: description || null, is_public: !!isPublic })
+    .select()
+    .single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+async function dbGetPlaylist(id) {
+  const { data, error } = await supabase
+    .from('playlists_v2')
+    .select('*')
+    .eq('id', id)
+    .maybeSingle();
+  if (error) { console.error('[db] getPlaylist:', error.message); return null; }
+  return data;
+}
+
+// Ownership-scoped update — filters by owner IN the query itself, never
+// "fetch then check .owner === username in JS", matching the cloud_files
+// discipline. Returns null if no row matched, which the caller treats as
+// "not found or not yours" — same 404-not-403 logic as profiles, so a
+// forged id in the URL can't be used to probe whether a playlist exists.
+async function dbUpdatePlaylistMeta(id, owner, patch) {
+  const { data, error } = await supabase
+    .from('playlists_v2')
+    .update({ ...patch, updated_at: new Date().toISOString() })
+    .eq('id', id)
+    .eq('owner', owner)
+    .select()
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+async function dbDeletePlaylist(id, owner) {
+  const { error } = await supabase
+    .from('playlists_v2')
+    .delete()
+    .eq('id', id)
+    .eq('owner', owner);
+  if (error) throw new Error(error.message);
+}
+
+async function dbGetUserPlaylists(owner, { onlyPublic = false } = {}) {
+  let q = supabase.from('playlists_v2').select('*').eq('owner', owner).order('updated_at', { ascending: false });
+  if (onlyPublic) q = q.eq('is_public', true);
+  const { data, error } = await q;
+  if (error) { console.error('[db] getUserPlaylists:', error.message); return []; }
+  return data || [];
+}
+
+async function dbGetPlaylistTracks(playlistId) {
+  const { data, error } = await supabase
+    .from('playlist_tracks')
+    .select('id, position, track_data, added_by, added_at')
+    .eq('playlist_id', playlistId)
+    .order('position', { ascending: true });
+  if (error) { console.error('[db] getPlaylistTracks:', error.message); return []; }
+  return data || [];
+}
+
+// track_count is maintained here in application code, not via a Postgres
+// trigger (unlike profiles.follower_count) — fine at this scale, but means
+// any future bulk-import path that writes to playlist_tracks directly
+// (bypassing this helper) will cause track_count to drift. Flagging as a
+// conscious tradeoff rather than something to silently fix later.
+async function dbAddTrackToPlaylist(playlistId, owner, trackData, addedBy) {
+  const { count } = await supabase
+    .from('playlist_tracks')
+    .select('id', { count: 'exact', head: true })
+    .eq('playlist_id', playlistId);
+  const nextPosition = count || 0;
+
+  const { data, error } = await supabase
+    .from('playlist_tracks')
+    .insert({ playlist_id: playlistId, position: nextPosition, track_data: trackData, added_by: addedBy })
+    .select()
+    .single();
+  if (error) throw new Error(error.message);
+
+  await supabase.from('playlists_v2')
+    .update({ track_count: nextPosition + 1, updated_at: new Date().toISOString() })
+    .eq('id', playlistId).eq('owner', owner);
+  return data;
+}
+
+async function dbRemoveTrackFromPlaylist(playlistId, owner, trackRowId) {
+  const { error } = await supabase
+    .from('playlist_tracks')
+    .delete()
+    .eq('id', trackRowId)
+    .eq('playlist_id', playlistId);
+  if (error) throw new Error(error.message);
+
+  const { count } = await supabase
+    .from('playlist_tracks')
+    .select('id', { count: 'exact', head: true })
+    .eq('playlist_id', playlistId);
+  await supabase.from('playlists_v2')
+    .update({ track_count: count || 0, updated_at: new Date().toISOString() })
+    .eq('id', playlistId).eq('owner', owner);
+}
+
+// Public playlists belonging to `username` — for the public profile viewer.
+// No private playlists are ever returned by this helper, regardless of who
+// is asking, since it's used by an endpoint with no concept of "viewing
+// your own profile" auth bypass (that's `dbGetUserPlaylists` without
+// onlyPublic, used only by the owner's own /api/playlists/mine route).
+async function dbGetPublicPlaylistsForUser(username) {
+  return dbGetUserPlaylists(username, { onlyPublic: true });
+}
+
+// ─── Playlist Likes ─────────────────────────────────────────────────────────
+// playlist_likes is a pure join table (playlist_id, username) — no RLS write
+// policies, same as playlist_tracks/playlists_v2; every write goes through
+// these helpers via the service role. like_count on playlists_v2 is
+// maintained here in application code rather than a trigger, matching the
+// existing track_count tradeoff exactly (see comment above dbAddTrackToPlaylist).
+//
+// Liking is idempotent at the route level (liking an already-liked playlist
+// is a no-op success, not an error) so the frontend heart button never has
+// to track local "did I already like this" state before firing the request.
+
+async function dbLikePlaylist(playlistId, username) {
+  // Upsert avoids a duplicate-key error on double-click / multi-tab races;
+  // ignoreDuplicates means a second insert of the same pair is silently a
+  // no-op rather than an error, and below we only bump like_count when a
+  // row was actually inserted (not on the no-op branch).
+  const { data, error } = await supabase
+    .from('playlist_likes')
+    .upsert({ playlist_id: playlistId, username }, { onConflict: 'playlist_id,username', ignoreDuplicates: true })
+    .select();
+  if (error) throw new Error(error.message);
+  const inserted = (data || []).length > 0;
+  if (inserted) {
+    const { count } = await supabase
+      .from('playlist_likes')
+      .select('username', { count: 'exact', head: true })
+      .eq('playlist_id', playlistId);
+    await supabase.from('playlists_v2').update({ like_count: count || 0 }).eq('id', playlistId);
+    return count || 0;
+  }
+  // Already liked — return the current count without re-counting needlessly.
+  const pl = await dbGetPlaylist(playlistId);
+  return pl ? pl.like_count : 0;
+}
+
+async function dbUnlikePlaylist(playlistId, username) {
+  const { error } = await supabase
+    .from('playlist_likes')
+    .delete()
+    .eq('playlist_id', playlistId)
+    .eq('username', username);
+  if (error) throw new Error(error.message);
+  const { count } = await supabase
+    .from('playlist_likes')
+    .select('username', { count: 'exact', head: true })
+    .eq('playlist_id', playlistId);
+  await supabase.from('playlists_v2').update({ like_count: count || 0 }).eq('id', playlistId);
+  return count || 0;
+}
+
+async function dbHasLiked(playlistId, username) {
+  if (!username) return false;
+  const { data, error } = await supabase
+    .from('playlist_likes')
+    .select('playlist_id')
+    .eq('playlist_id', playlistId)
+    .eq('username', username)
+    .maybeSingle();
+  if (error) { console.error('[db] hasLiked:', error.message); return false; }
+  return !!data;
+}
+
+// Playlists `username` has liked — for the Liked Playlists panel.
+// Joins through to playlists_v2 and filters out anything that's gone
+// private or been deleted since the like was made, same defensive pattern
+// as dbGetSharedWithMe filtering out playlists_v2-null rows.
+async function dbGetLikedPlaylists(username) {
+  const { data, error } = await supabase
+    .from('playlist_likes')
+    .select('created_at, playlists_v2(id, name, description, is_public, track_count, like_count, owner)')
+    .eq('username', username)
+    .order('created_at', { ascending: false });
+  if (error) { console.error('[db] getLikedPlaylists:', error.message); return []; }
+  return (data || [])
+    .filter(r => r.playlists_v2 && r.playlists_v2.is_public)
+    .map(r => ({
+      likedAt: r.created_at,
+      id: r.playlists_v2.id, name: r.playlists_v2.name,
+      description: r.playlists_v2.description,
+      trackCount: r.playlists_v2.track_count,
+      likeCount: r.playlists_v2.like_count,
+      owner: r.playlists_v2.owner,
+    }));
+}
+
+// ─── Community Charts (track plays) ─────────────────────────────────────────
+// `tracks` is the first canonical-track table in FREQ — playlist_tracks
+// deliberately stores track_data as verbatim jsonb (see the comment above
+// dbCreatePlaylist), but ranking the same track across every playlist/queue
+// it's ever been started from needs one stable row per track. originalUrl
+// is that identity: it's already the frontend's own de-dup key
+// (state.queue.some(q => q.originalUrl === item.originalUrl)), so this adds
+// no new concept for the client — just a new place that URL gets POSTed.
+//
+// play_count is maintained in app code exactly like track_count/like_count
+// elsewhere in this file. play_count_7d is different: it's a *rolling*
+// window, so it can't just be incremented — it has to be recomputed from
+// track_plays periodically (see recomputeWeeklyPlayCounts below), since an
+// increment-only counter would never decrease as old plays age out of the
+// window.
+
+async function dbGetOrCreateTrack(originalUrl, platform, title) {
+  // Try the read path first — this runs on every single play, so the common
+  // case (track already exists) should be one SELECT, not an upsert churning
+  // the row's defaults every time.
+  const { data: existing } = await supabase
+    .from('tracks').select('id').eq('original_url', originalUrl).maybeSingle();
+  if (existing) return existing.id;
+
+  const { data, error } = await supabase
+    .from('tracks')
+    .upsert({ original_url: originalUrl, platform: platform || null, title: title || null },
+            { onConflict: 'original_url', ignoreDuplicates: true })
+    .select('id')
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (data) return data.id;
+  // Lost the upsert race to a concurrent request — the row now exists, just
+  // not in `data` because ignoreDuplicates skipped returning it. Re-select.
+  const { data: row2 } = await supabase
+    .from('tracks').select('id').eq('original_url', originalUrl).maybeSingle();
+  return row2 ? row2.id : null;
+}
+
+// Per-(track, listener) cooldown so holding play/pause or spamming repeat
+// can't farm chart position. Listener key is username when signed in,
+// otherwise the caller passes an IP-derived key — either way this is a
+// courtesy anti-gaming check, not a security boundary (a determined script
+// can rotate keys), which is an acceptable tradeoff for a self-hosted music
+// player's "what's popular" list.
+const recentPlayKeys = new Map(); // `${trackId}:${listenerKey}` -> last play timestamp
+const PLAY_COOLDOWN_MS = 30_000;
+setInterval(() => {
+  const cutoff = Date.now() - PLAY_COOLDOWN_MS;
+  for (const [key, t] of recentPlayKeys) if (t < cutoff) recentPlayKeys.delete(key);
+}, 120_000);
+
+async function dbLogPlay(originalUrl, { platform, title, username, listenerKey }) {
+  const trackId = await dbGetOrCreateTrack(originalUrl, platform, title);
+  if (!trackId) return null;
+
+  const cooldownKey = `${trackId}:${listenerKey || username || 'anon'}`;
+  const last = recentPlayKeys.get(cooldownKey);
+  if (last && Date.now() - last < PLAY_COOLDOWN_MS) {
+    return { trackId, counted: false }; // within cooldown — silently skip, not an error
+  }
+  recentPlayKeys.set(cooldownKey, Date.now());
+
+  await supabase.from('track_plays').insert({ track_id: trackId, username: username || null });
+
+  // Atomic increment via the increment_track_play_count() RPC (see migration)
+  // rather than read-count-then-write, which would race under concurrent
+  // plays of the same track and silently undercount.
+  const { data, error } = await supabase.rpc('increment_track_play_count', {
+    p_track_id: trackId, p_title: title || null,
+  });
+  if (error) { console.error('[db] logPlay increment:', error.message); return { trackId, counted: true }; }
+  return { trackId, counted: true, playCount: data };
+}
+
+async function dbGetTopTracks({ window = 'all', limit = 50 } = {}) {
+  const col = window === '7d' ? 'play_count_7d' : 'play_count';
+  const { data, error } = await supabase
+    .from('tracks')
+    .select('id, original_url, platform, title, play_count, play_count_7d, last_played_at')
+    .gt(col, 0)
+    .order(col, { ascending: false })
+    .order('last_played_at', { ascending: false }) // tiebreak: more recently played ranks higher
+    .limit(limit);
+  if (error) { console.error('[db] getTopTracks:', error.message); return []; }
+  return data || [];
+}
+
+// Recompute the rolling 7-day count for every track that's had a play
+// recently (and zero out any track that fell out of the window entirely —
+// COALESCE handles tracks with no rows in the last 7 days). Run on a timer
+// rather than per-request since this is a full aggregate over track_plays
+// and doesn't need to be real-time-accurate to the second.
+async function recomputeWeeklyPlayCounts() {
+  try {
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const { data: recent, error } = await supabase
+      .from('track_plays')
+      .select('track_id')
+      .gte('played_at', sevenDaysAgo);
+    if (error) { console.error('[charts] recompute fetch:', error.message); return; }
+
+    const counts = new Map();
+    for (const row of recent || []) counts.set(row.track_id, (counts.get(row.track_id) || 0) + 1);
+
+    // Tracks with recent plays: write their fresh count.
+    for (const [trackId, count] of counts) {
+      await supabase.from('tracks').update({ play_count_7d: count }).eq('id', trackId);
+    }
+    // Tracks with a stale nonzero play_count_7d but no plays in the window
+    // anymore need to be zeroed, or they'd never leave the Trending chart.
+    const { data: stale } = await supabase
+      .from('tracks').select('id').gt('play_count_7d', 0);
+    for (const row of stale || []) {
+      if (!counts.has(row.id)) await supabase.from('tracks').update({ play_count_7d: 0 }).eq('id', row.id);
+    }
+  } catch (err) {
+    console.error('[charts] recompute failed:', err);
+  }
+}
+// Every 10 minutes is frequent enough that Trending feels responsive
+// without turning this into a per-request cost on every Charts page load.
+setInterval(recomputeWeeklyPlayCounts, 10 * 60 * 1000);
+recomputeWeeklyPlayCounts(); // run once at boot so play_count_7d isn't empty until the first interval fires
+
+// ─── Collaboration helpers ─────────────────────────────────────────────────
+// Role check: returns 'owner' | 'editor' | 'viewer' | null (no access)
+async function dbGetCollabRole(playlistId, username) {
+  const pl = await dbGetPlaylist(playlistId);
+  if (!pl) return null;
+  if (pl.owner === username) return 'owner';
+  const { data, error } = await supabase
+    .from('playlist_collaborators')
+    .select('role')
+    .eq('playlist_id', playlistId)
+    .eq('username', username)
+    .maybeSingle();
+  if (error || !data) return null;
+  return data.role; // 'editor' | 'viewer'
+}
+
+// Create an invite (pending). Idempotent — upserts on the (playlist, invitee) unique key.
+async function dbInviteCollaborator(playlistId, invitedBy, invitee, role) {
+  // Prevent inviting the owner
+  const pl = await dbGetPlaylist(playlistId);
+  if (!pl) throw new Error('Playlist not found.');
+  if (pl.owner === invitee) throw new Error('Cannot invite the playlist owner as a collaborator.');
+  // Upsert: if there's already a pending invite, update the role.
+  const { data, error } = await supabase
+    .from('playlist_invites')
+    .upsert({ playlist_id: playlistId, invited_by: invitedBy, invitee, role },
+             { onConflict: 'playlist_id,invitee' })
+    .select()
+    .single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+// Accept an invite: writes collaborator row, deletes invite row.
+async function dbAcceptInvite(inviteId, invitee) {
+  const { data: inv, error: invErr } = await supabase
+    .from('playlist_invites')
+    .select('*')
+    .eq('id', inviteId)
+    .eq('invitee', invitee)
+    .maybeSingle();
+  if (invErr || !inv) throw new Error('Invite not found or not yours.');
+  // Upsert collaborator (handles re-accept of same playlist if somehow re-invited)
+  const { error: collabErr } = await supabase
+    .from('playlist_collaborators')
+    .upsert({ playlist_id: inv.playlist_id, username: inv.invitee, role: inv.role },
+             { onConflict: 'playlist_id,username' });
+  if (collabErr) throw new Error(collabErr.message);
+  await supabase.from('playlist_invites').delete().eq('id', inviteId);
+  return { playlistId: inv.playlist_id, role: inv.role };
+}
+
+// Reject or cancel invite
+async function dbDeclineInvite(inviteId, username) {
+  // Allow both invitee (reject) and invited_by/owner (cancel)
+  const { data: inv } = await supabase
+    .from('playlist_invites')
+    .select('*')
+    .eq('id', inviteId)
+    .maybeSingle();
+  if (!inv) throw new Error('Invite not found.');
+  if (inv.invitee !== username && inv.invited_by !== username) {
+    throw new Error('Not authorised to cancel this invite.');
+  }
+  await supabase.from('playlist_invites').delete().eq('id', inviteId);
+}
+
+async function dbRemoveCollaborator(playlistId, owner, username) {
+  const pl = await dbGetPlaylist(playlistId);
+  if (!pl || pl.owner !== owner) throw new Error('Not the playlist owner.');
+  await supabase.from('playlist_collaborators')
+    .delete().eq('playlist_id', playlistId).eq('username', username);
+}
+
+async function dbUpdateCollaboratorRole(playlistId, owner, username, role) {
+  const pl = await dbGetPlaylist(playlistId);
+  if (!pl || pl.owner !== owner) throw new Error('Not the playlist owner.');
+  const { error } = await supabase.from('playlist_collaborators')
+    .update({ role })
+    .eq('playlist_id', playlistId)
+    .eq('username', username);
+  if (error) throw new Error(error.message);
+}
+
+async function dbGetCollaborators(playlistId) {
+  const { data, error } = await supabase
+    .from('playlist_collaborators')
+    .select('username, role, added_at')
+    .eq('playlist_id', playlistId)
+    .order('added_at', { ascending: true });
+  if (error) { console.error('[db] getCollaborators:', error.message); return []; }
+  return data || [];
+}
+
+async function dbGetPendingInvites(playlistId) {
+  const { data, error } = await supabase
+    .from('playlist_invites')
+    .select('id, invitee, role, created_at')
+    .eq('playlist_id', playlistId)
+    .order('created_at', { ascending: true });
+  if (error) { console.error('[db] getPendingInvites:', error.message); return []; }
+  return data || [];
+}
+
+// Invites waiting for `username` to accept/reject — shown in their notification inbox.
+async function dbGetMyPendingInvites(username) {
+  const { data, error } = await supabase
+    .from('playlist_invites')
+    .select('id, playlist_id, invited_by, role, created_at, playlists_v2(name)')
+    .eq('invitee', username)
+    .order('created_at', { ascending: false });
+  if (error) { console.error('[db] getMyPendingInvites:', error.message); return []; }
+  return (data || []).map(r => ({
+    id: r.id, playlistId: r.playlist_id,
+    playlistName: r.playlists_v2?.name || '(deleted)',
+    invitedBy: r.invited_by, role: r.role, createdAt: r.created_at,
+  }));
+}
+
+// Playlists the user is a collaborator on (not owner — that's /mine)
+async function dbGetSharedWithMe(username) {
+  const { data, error } = await supabase
+    .from('playlist_collaborators')
+    .select('role, added_at, playlists_v2(id, name, description, is_public, track_count, owner)')
+    .eq('username', username)
+    .order('added_at', { ascending: false });
+  if (error) { console.error('[db] getSharedWithMe:', error.message); return []; }
+  return (data || [])
+    .filter(r => r.playlists_v2)
+    .map(r => ({
+      role: r.role, addedAt: r.added_at,
+      id: r.playlists_v2.id, name: r.playlists_v2.name,
+      description: r.playlists_v2.description,
+      isPublic: r.playlists_v2.is_public,
+      trackCount: r.playlists_v2.track_count,
+      owner: r.playlists_v2.owner,
+    }));
 }
 
 // Unpaginated by design — account deletion needs every storage_path to clean
@@ -561,16 +1066,94 @@ function makeActionRateLimit({ windowMs, max, keyFn, message }) {
   };
 }
 
+// Likes: same session-resolving, username-keyed pattern as followRateLimit
+// and playlistRateLimit. 60/min is generous — a like is a single tap, and
+// someone briskly liking through a profile's playlists shouldn't hit this,
+// but a script hammering the endpoint should.
+async function likeRateLimit(req, res, next) {
+  const token = req.body?.token || req.query?.token || (req.headers.authorization || '').replace('Bearer ', '');
+  const sess  = await dbGetSession(token);
+  req._session = sess; // route handler reuses this instead of resolving again
+  if (!sess) return next(); // unauthenticated — the route's own 401 check handles this
+  const key = sess.username;
+  const now = Date.now();
+  const times = (likeRateLimitHits.get(key) || []).filter(t => now - t < 60_000);
+  times.push(now);
+  likeRateLimitHits.set(key, times);
+  if (times.length > 60) {
+    return res.status(429).json({ error: 'Too many likes. Please slow down.' });
+  }
+  next();
+}
+const likeRateLimitHits = new Map();
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, times] of likeRateLimitHits) {
+    const fresh = times.filter(t => now - t < 60_000);
+    if (!fresh.length) likeRateLimitHits.delete(key); else likeRateLimitHits.set(key, fresh);
+  }
+}, 60_000);
+
 // Follow/unfollow specifically: tighter than the global 120/min-per-IP
-// backstop, and keyed by the *target* username's session token (resolved
-// just-in-time from the request body) rather than IP — follow-spam is the
-// single most common abuse vector on any social feature, per-account, not
-// per-connection.
-const followRateLimit = makeActionRateLimit({
-  windowMs: 60_000, max: 30,
-  keyFn: (req) => req.body?.token || null,
-  message: 'Too many follow/unfollow actions. Please slow down.',
-});
+// backstop. Keyed by the *caller's resolved username*, not their raw token —
+// keying on the token would give a user with two active sessions (two
+// devices, or a deliberately-opened second session) two independent 30/min
+// buckets, which defeats the per-account intent. Resolving the session here
+// means this middleware is async (dbGetSession hits the DB), and the route
+// handler reuses req._followSession instead of resolving it a second time.
+async function followRateLimit(req, res, next) {
+  const token = req.body?.token || (req.headers.authorization || '').replace('Bearer ', '');
+  const sess  = await dbGetSession(token);
+  req._followSession = sess; // let the route handler skip a redundant dbGetSession call
+  if (!sess) return next(); // unauthenticated — the route's own 401 check handles this
+  const key = sess.username;
+  const now = Date.now();
+  const times = (followRateLimitHits.get(key) || []).filter(t => now - t < 60_000);
+  times.push(now);
+  followRateLimitHits.set(key, times);
+  if (times.length > 30) {
+    return res.status(429).json({ error: 'Too many follow/unfollow actions. Please slow down.' });
+  }
+  next();
+}
+const followRateLimitHits = new Map();
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, times] of followRateLimitHits) {
+    const fresh = times.filter(t => now - t < 60_000);
+    if (!fresh.length) followRateLimitHits.delete(key); else followRateLimitHits.set(key, fresh);
+  }
+}, 60_000);
+
+// Playlist writes (create/update/delete/add-track/remove-track): same
+// session-resolving, username-keyed pattern as followRateLimit, for the
+// same reason — keying on the raw token would let a multi-session user
+// dodge the limit. Looser than follow (60/min vs 30/min) since legitimate
+// use (building a 50-track playlist in one sitting) involves many more
+// individual write calls than legitimate follow activity ever would.
+async function playlistRateLimit(req, res, next) {
+  const token = req.body?.token || (req.headers.authorization || '').replace('Bearer ', '');
+  const sess  = await dbGetSession(token);
+  req._session = sess; // route handler reuses this instead of resolving again
+  if (!sess) return next(); // unauthenticated — the route's own 401 check handles this
+  const key = sess.username;
+  const now = Date.now();
+  const times = (playlistRateLimitHits.get(key) || []).filter(t => now - t < 60_000);
+  times.push(now);
+  playlistRateLimitHits.set(key, times);
+  if (times.length > 60) {
+    return res.status(429).json({ error: 'Too many playlist changes. Please slow down.' });
+  }
+  next();
+}
+const playlistRateLimitHits = new Map();
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, times] of playlistRateLimitHits) {
+    const fresh = times.filter(t => now - t < 60_000);
+    if (!fresh.length) playlistRateLimitHits.delete(key); else playlistRateLimitHits.set(key, fresh);
+  }
+}, 60_000);
 
 // ─── HTTP fetch helper (spoofs browser UA so YT doesn't block) ────────────────
 const YT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
@@ -1066,7 +1649,7 @@ app.get('/health', async (req, res) => {
   } catch (_) {}
   res.json({
     status:   'ok',
-    version:  '4.3',
+    version:  '4.5',
     uptime:   Math.floor(process.uptime()),
     platform: process.platform,
     accounts,
@@ -1463,8 +2046,7 @@ app.patch('/api/profiles/me', rateLimit, async (req, res) => {
 
 app.post('/api/follows/:username', followRateLimit, async (req, res) => {
   const target = (req.params.username || '').trim().toLowerCase();
-  const { token } = req.body;
-  const sess = await dbGetSession(token);
+  const sess = req._followSession; // resolved by followRateLimit — avoids a second dbGetSession round-trip
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
   if (!target) return res.status(400).json({ error: 'Username required.' });
   if (sess.username === target) return res.status(400).json({ error: "You can't follow yourself." });
@@ -1474,6 +2056,11 @@ app.post('/api/follows/:username', followRateLimit, async (req, res) => {
     if (!account) return res.status(404).json({ error: 'No account found with that username.' });
 
     const created = await dbFollowUser(sess.username, target);
+    if (created) {
+      dbWriteActivity('follow', sess.username, target, {
+        followedUsername: target,
+      });
+    }
     const profile = await dbGetProfile(target);
     return res.status(created ? 201 : 200).json({
       following: true,
@@ -1487,8 +2074,7 @@ app.post('/api/follows/:username', followRateLimit, async (req, res) => {
 
 app.delete('/api/follows/:username', followRateLimit, async (req, res) => {
   const target = (req.params.username || '').trim().toLowerCase();
-  const token  = req.body.token || (req.headers.authorization || '').replace('Bearer ', '');
-  const sess   = await dbGetSession(token);
+  const sess = req._followSession; // resolved by followRateLimit — avoids a second dbGetSession round-trip
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
   if (!target) return res.status(400).json({ error: 'Username required.' });
 
@@ -1519,7 +2105,7 @@ app.get('/api/follows/:username/followers', async (req, res) => {
   try {
     const rows = await dbGetFollowers(key, { limit, offset });
     return res.json({
-      users: rows.filter(p => p.is_public).map(p => ({
+      users: rows.map(p => ({
         username: p.username, displayName: p.display_name, bio: p.bio,
       })),
     });
@@ -1537,13 +2123,724 @@ app.get('/api/follows/:username/following', async (req, res) => {
   try {
     const rows = await dbGetFollowing(key, { limit, offset });
     return res.json({
-      users: rows.filter(p => p.is_public).map(p => ({
+      users: rows.map(p => ({
         username: p.username, displayName: p.display_name, bio: p.bio,
       })),
     });
   } catch (err) {
     console.error('[follows following]', err);
     return res.status(500).json({ error: 'Could not load following.' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  PLAYLISTS v2 — relational playlists backing Public/Shared Playlists.
+//  Separate from the legacy `playlists` JSON-blob table used by
+//  /api/auth/sync — that table still owns the in-app queue/library sync
+//  for now; new playlists created here are independent until a deliberate
+//  migration/cutover, not silently merged with the old blob.
+//
+//  RLS on playlists_v2/playlist_tracks already grants public SELECT for
+//  is_public=true rows (and their tracks) to the anon key — every route
+//  below still goes through the service role, but a public playlist is
+//  also directly readable via client-side Supabase calls if that's ever
+//  useful for a future perf optimization.
+//
+//  POST   /api/playlists                         { token, name, description?, isPublic? }
+//  GET    /api/playlists/:id                     ?token=   → 404 if private and not owner
+//  PATCH  /api/playlists/:id                      { token, name?, description?, isPublic? }
+//  DELETE /api/playlists/:id                      { token }
+//  GET    /api/playlists/mine                     ?token=
+//  GET    /api/profiles/:username/playlists       (public playlists only)
+//
+//  POST   /api/playlists/:id/tracks               { token, trackData }
+//  DELETE /api/playlists/:id/tracks/:rowId        { token }
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const PLAYLIST_NAME_MAX = 80;
+const PLAYLIST_DESC_MAX = 280;
+
+function validatePlaylistPatch(body) {
+  const patch = {};
+  if (body.name !== undefined) {
+    const trimmed = String(body.name).trim().slice(0, PLAYLIST_NAME_MAX);
+    if (!trimmed) return { error: 'Playlist name cannot be empty.' };
+    patch.name = trimmed;
+  }
+  if (body.description !== undefined) {
+    if (body.description !== null && typeof body.description !== 'string') {
+      return { error: '"description" must be a string or null.' };
+    }
+    const trimmed = (body.description || '').trim();
+    if (trimmed.length > PLAYLIST_DESC_MAX) {
+      return { error: `Description must be ${PLAYLIST_DESC_MAX} characters or fewer.` };
+    }
+    patch.description = trimmed || null;
+  }
+  if (body.isPublic !== undefined) {
+    if (typeof body.isPublic !== 'boolean') return { error: '"isPublic" must be a boolean.' };
+    patch.is_public = body.isPublic;
+  }
+  return { patch };
+}
+
+app.post('/api/playlists', playlistRateLimit, async (req, res) => {
+  const sess = req._session;
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+
+  const name = String(req.body.name || '').trim().slice(0, PLAYLIST_NAME_MAX);
+  if (!name) return res.status(400).json({ error: 'Playlist name is required.' });
+
+  const { error: descErr, patch } = validatePlaylistPatch({ description: req.body.description, isPublic: req.body.isPublic });
+  if (descErr) return res.status(400).json({ error: descErr });
+
+  try {
+    const playlist = await dbCreatePlaylist(sess.username, {
+      name, description: patch.description, isPublic: patch.is_public,
+    });
+    if (playlist.is_public) {
+      dbWriteActivity('playlist_created', sess.username, null, {
+        playlistId: playlist.id, playlistName: playlist.name,
+      });
+    }
+    return res.status(201).json({
+      id: playlist.id, owner: playlist.owner, name: playlist.name,
+      description: playlist.description, isPublic: playlist.is_public,
+      trackCount: playlist.track_count,
+    });
+  } catch (err) {
+    console.error('[playlists create]', err);
+    return res.status(500).json({ error: 'Could not create playlist.' });
+  }
+});
+
+app.get('/api/playlists/mine', async (req, res) => {
+  const token = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
+  const sess  = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  try {
+    const rows = await dbGetUserPlaylists(sess.username);
+    return res.json({
+      playlists: rows.map(p => ({
+        id: p.id, name: p.name, description: p.description,
+        isPublic: p.is_public, trackCount: p.track_count, likeCount: p.like_count || 0,
+        updatedAt: p.updated_at,
+      })),
+    });
+  } catch (err) {
+    console.error('[playlists mine]', err);
+    return res.status(500).json({ error: 'Could not load your playlists.' });
+  }
+});
+
+// Private playlist + non-owner request → 404, not 403, matching the
+// profiles pattern exactly: existence of a private playlist must not be
+// distinguishable from "no playlist with that id" by an unauthenticated
+// or non-owner request.
+app.get('/api/playlists/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const playlist = await dbGetPlaylist(id);
+    if (!playlist) return res.status(404).json({ error: 'Playlist not found.' });
+
+    const token = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
+    const sess  = await dbGetSession(token);
+    const isOwner = !!(sess && sess.username === playlist.owner);
+    const collabRole = (!isOwner && sess)
+      ? await dbGetCollabRole(id, sess.username)
+      : null;
+    const isEditor = isOwner || collabRole === 'editor';
+    const canView  = isOwner || collabRole !== null || playlist.is_public;
+
+    if (!canView) {
+      return res.status(404).json({ error: 'Playlist not found.' });
+    }
+
+    const tracks = await dbGetPlaylistTracks(id);
+    let collaborators = [];
+    let pendingInvites = [];
+    if (isOwner) {
+      [collaborators, pendingInvites] = await Promise.all([
+        dbGetCollaborators(id),
+        dbGetPendingInvites(id),
+      ]);
+    } else if (collabRole) {
+      collaborators = await dbGetCollaborators(id);
+    }
+    const likedByMe = sess ? await dbHasLiked(id, sess.username) : false;
+    return res.json({
+      id: playlist.id, owner: playlist.owner, name: playlist.name,
+      description: playlist.description, isPublic: playlist.is_public,
+      trackCount: playlist.track_count, isOwner,
+      likeCount: playlist.like_count || 0, likedByMe,
+      collabRole: collabRole || null, isEditor,
+      collaborators, pendingInvites,
+      tracks: tracks.map(t => ({
+        rowId: t.id, ...t.track_data, addedBy: t.added_by, addedAt: t.added_at,
+      })),
+    });
+  } catch (err) {
+    console.error('[playlists get]', err);
+    return res.status(500).json({ error: 'Could not load playlist.' });
+  }
+});
+
+app.patch('/api/playlists/:id', playlistRateLimit, async (req, res) => {
+  const sess = req._session;
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+
+  const { error, patch } = validatePlaylistPatch(req.body);
+  if (error) return res.status(400).json({ error });
+  if (!Object.keys(patch).length) return res.status(400).json({ error: 'Nothing to update.' });
+
+  try {
+    const updated = await dbUpdatePlaylistMeta(req.params.id, sess.username, patch);
+    if (!updated) return res.status(404).json({ error: 'Playlist not found.' });
+    if (updated.is_public) {
+      dbWriteActivity('playlist_updated', sess.username, null, {
+        playlistId: updated.id, playlistName: updated.name,
+      });
+    }
+    return res.json({
+      id: updated.id, name: updated.name, description: updated.description,
+      isPublic: updated.is_public, trackCount: updated.track_count,
+    });
+  } catch (err) {
+    console.error('[playlists patch]', err);
+    return res.status(500).json({ error: 'Could not update playlist.' });
+  }
+});
+
+app.delete('/api/playlists/:id', playlistRateLimit, async (req, res) => {
+  const sess = req._session;
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  try {
+    await dbDeletePlaylist(req.params.id, sess.username);
+    return res.json({ deleted: true });
+  } catch (err) {
+    console.error('[playlists delete]', err);
+    return res.status(500).json({ error: 'Could not delete playlist.' });
+  }
+});
+
+app.post('/api/playlists/:id/tracks', playlistRateLimit, async (req, res) => {
+  const sess = req._session;
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  const { trackData } = req.body;
+  if (!trackData || typeof trackData !== 'object') {
+    return res.status(400).json({ error: '"trackData" object is required.' });
+  }
+  try {
+    // Ownership OR editor-role check — editors can add tracks too.
+    // dbAddTrackToPlaylist's track_count update is owner-scoped, so we pass
+    // the real owner's username for that UPDATE; `addedBy` captures who
+    // actually added the track for display in the collaborator track list.
+    const playlist = await dbGetPlaylist(req.params.id);
+    const editorRole = playlist && sess && (
+      playlist.owner === sess.username ||
+      await dbGetCollabRole(req.params.id, sess.username) === 'editor'
+    );
+    if (!playlist || !editorRole) {
+      return res.status(404).json({ error: 'Playlist not found.' });
+    }
+    const row = await dbAddTrackToPlaylist(req.params.id, playlist.owner, trackData, sess.username);
+    // Emit activity when a collaborator (non-owner) adds a track, or it's a public playlist
+    if (playlist.is_public || sess.username !== playlist.owner) {
+      dbWriteActivity('track_added', sess.username, playlist.owner !== sess.username ? playlist.owner : null, {
+        playlistId: playlist.id, playlistName: playlist.name,
+        trackTitle: trackData.title || trackData.id || 'Untitled',
+        trackPlatform: trackData.platform || null,
+      });
+    }
+    return res.status(201).json({ rowId: row.id, position: row.position });
+  } catch (err) {
+    console.error('[playlists add track]', err);
+    return res.status(500).json({ error: 'Could not add track.' });
+  }
+});
+
+app.delete('/api/playlists/:id/tracks/:rowId', playlistRateLimit, async (req, res) => {
+  const sess = req._session;
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  try {
+    const playlist = await dbGetPlaylist(req.params.id);
+    const editorRole = playlist && sess && (
+      playlist.owner === sess.username ||
+      await dbGetCollabRole(req.params.id, sess.username) === 'editor'
+    );
+    if (!playlist || !editorRole) {
+      return res.status(404).json({ error: 'Playlist not found.' });
+    }
+    await dbRemoveTrackFromPlaylist(req.params.id, playlist.owner, req.params.rowId);
+    return res.json({ removed: true });
+  } catch (err) {
+    console.error('[playlists remove track]', err);
+    return res.status(500).json({ error: 'Could not remove track.' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  PLAYLIST LIKES
+//  POST    /api/playlists/:id/like     { token }  → like (idempotent)
+//  DELETE  /api/playlists/:id/like     { token }  → unlike (idempotent)
+//  GET     /api/playlists/liked        ?token=    → playlists I've liked
+//
+//  Liking is only permitted on playlists the caller can actually see —
+//  public playlists for anyone, or private/shared playlists for the owner
+//  and accepted collaborators — using the exact same canView logic as
+//  GET /api/playlists/:id, so a like can never be used to fish for whether
+//  a private playlist id exists.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+app.post('/api/playlists/:id/like', likeRateLimit, async (req, res) => {
+  const sess = req._session;
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  try {
+    const playlist = await dbGetPlaylist(req.params.id);
+    if (!playlist) return res.status(404).json({ error: 'Playlist not found.' });
+
+    const isOwner = playlist.owner === sess.username;
+    const collabRole = !isOwner ? await dbGetCollabRole(req.params.id, sess.username) : null;
+    const canView = isOwner || collabRole !== null || playlist.is_public;
+    if (!canView) return res.status(404).json({ error: 'Playlist not found.' });
+
+    const likeCount = await dbLikePlaylist(req.params.id, sess.username);
+    if (playlist.is_public && !isOwner) {
+      dbWriteActivity('playlist_liked', sess.username, playlist.owner, {
+        playlistId: playlist.id, playlistName: playlist.name,
+      });
+    }
+    return res.json({ liked: true, likeCount });
+  } catch (err) {
+    console.error('[playlists like]', err);
+    return res.status(500).json({ error: 'Could not like playlist.' });
+  }
+});
+
+app.delete('/api/playlists/:id/like', likeRateLimit, async (req, res) => {
+  const sess = req._session;
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  try {
+    const likeCount = await dbUnlikePlaylist(req.params.id, sess.username);
+    return res.json({ liked: false, likeCount });
+  } catch (err) {
+    console.error('[playlists unlike]', err);
+    return res.status(500).json({ error: 'Could not unlike playlist.' });
+  }
+});
+
+app.get('/api/playlists/liked', async (req, res) => {
+  const token = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
+  const sess  = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  try {
+    const playlists = await dbGetLikedPlaylists(sess.username);
+    return res.json({ playlists });
+  } catch (err) {
+    console.error('[playlists liked]', err);
+    return res.status(500).json({ error: 'Could not load liked playlists.' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  COMMUNITY CHARTS — play tracking + rankings
+//  POST /api/plays                { originalUrl, platform?, title?, token? }
+//  GET  /api/charts/tracks         ?window=all|7d&limit=
+//
+//  Logging a play does NOT require auth — anonymous listeners count toward
+//  Charts too, same as a real radio audience. token is optional; when
+//  present and valid it attaches a username to the track_plays row (purely
+//  informational, no per-user feature reads this yet) and is included in
+//  the cooldown key so a signed-in listener's cooldown follows them across
+//  IP changes. When absent, the IP is used as the cooldown key instead.
+//
+//  This route deliberately sits on the generic per-IP `rateLimit` (120/min)
+//  rather than a bespoke limiter — same tier as /api/resolve and
+//  /api/import, the other anonymous-allowed write-ish endpoints in this
+//  file. The real anti-gaming guard is the 30s per-(track,listener)
+//  cooldown inside dbLogPlay, not this outer rate limit.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+app.post('/api/plays', rateLimit, async (req, res) => {
+  const { originalUrl, platform, title, token } = req.body || {};
+  if (!originalUrl || typeof originalUrl !== 'string') {
+    return res.status(400).json({ error: '"originalUrl" is required.' });
+  }
+  try {
+    const sess = token ? await dbGetSession(token) : null;
+    const listenerKey = sess ? sess.username : (req.ip || req.connection.remoteAddress || 'unknown');
+    const result = await dbLogPlay(originalUrl, {
+      platform: platform || null,
+      title: title || null,
+      username: sess ? sess.username : null,
+      listenerKey,
+    });
+    if (!result) return res.status(500).json({ error: 'Could not log play.' });
+    return res.json({ counted: result.counted, playCount: result.playCount ?? null });
+  } catch (err) {
+    console.error('[plays log]', err);
+    return res.status(500).json({ error: 'Could not log play.' });
+  }
+});
+
+const CHARTS_MAX_LIMIT = 100;
+
+app.get('/api/charts/tracks', async (req, res) => {
+  const window = req.query.window === '7d' ? '7d' : 'all';
+  const limit  = Math.min(Math.max(Number(req.query.limit) || 50, 1), CHARTS_MAX_LIMIT);
+  try {
+    const rows = await dbGetTopTracks({ window, limit });
+    return res.json({
+      window,
+      tracks: rows.map((t, i) => ({
+        rank: i + 1,
+        id: t.id,
+        originalUrl: t.original_url,
+        platform: t.platform,
+        title: t.title || t.original_url,
+        playCount: window === '7d' ? t.play_count_7d : t.play_count,
+        allTimePlayCount: t.play_count,
+        lastPlayedAt: t.last_played_at,
+      })),
+    });
+  } catch (err) {
+    console.error('[charts tracks]', err);
+    return res.status(500).json({ error: 'Could not load charts.' });
+  }
+});
+
+// ─── Activity Feed DB helpers ─────────────────────────────────────────────────
+// event_type values in use:
+//   follow | collab_joined | track_added | playlist_created | playlist_updated
+//   | playlist_liked
+// (No DB-level CHECK constraint enforces this list — it's a convention
+// followed by every dbWriteActivity call site in this file.)
+//
+// actor      = who did the thing
+// target_user = who should see it in their personal feed
+//               (NULL = global-only event; personal events always also appear globally)
+// payload    = JSONB with event-specific fields
+
+async function dbWriteActivity(eventType, actor, targetUser, payload = {}) {
+  // Fire-and-forget — never block a route on feed writes.
+  supabase.from('activity_feed').insert({
+    event_type: eventType,
+    actor,
+    target_user: targetUser || null,
+    payload,
+  }).then(({ error }) => {
+    if (error) console.error('[activity write]', eventType, error.message);
+  });
+}
+
+// Following feed: events where actor is someone `username` follows, OR target_user === username
+async function dbGetFollowingFeed(username, { limit = 30, before = null } = {}) {
+  // Get the list of people this user follows
+  const { data: followRows } = await supabase
+    .from('follows')
+    .select('followed_username')
+    .eq('follower_username', username);
+  const following = (followRows || []).map(r => r.followed_username);
+  // Include events targeted at `username` directly (e.g. someone followed you)
+  // plus events from people they follow
+  let q = supabase
+    .from('activity_feed')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  if (before) q = q.lt('created_at', before);
+  // Supabase JS v2: filter using OR
+  if (following.length) {
+    q = q.or(`actor.in.(${following.map(u => `"${u}"`).join(',')}),target_user.eq.${username}`);
+  } else {
+    q = q.eq('target_user', username);
+  }
+  const { data, error } = await q;
+  if (error) { console.error('[activity following feed]', error.message); return []; }
+  return data || [];
+}
+
+async function dbGetGlobalFeed({ limit = 30, before = null } = {}) {
+  let q = supabase
+    .from('activity_feed')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  if (before) q = q.lt('created_at', before);
+  const { data, error } = await q;
+  if (error) { console.error('[activity global feed]', error.message); return []; }
+  return data || [];
+}
+
+async function dbGetUnreadCount(username, since) {
+  // Unread = events in the following feed newer than `since`
+  const { data: followRows } = await supabase
+    .from('follows')
+    .select('followed_username')
+    .eq('follower_username', username);
+  const following = (followRows || []).map(r => r.followed_username);
+  let q = supabase
+    .from('activity_feed')
+    .select('id', { count: 'exact', head: true })
+    .gt('created_at', since);
+  if (following.length) {
+    q = q.or(`actor.in.(${following.map(u => `"${u}"`).join(',')}),target_user.eq.${username}`);
+  } else {
+    q = q.eq('target_user', username);
+  }
+  const { count } = await q;
+  return count || 0;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  SHARED PLAYLISTS — collaboration invites, roles, realtime SSE
+//
+//  POST   /api/playlists/:id/collaborators          { token, username, role }
+//  GET    /api/playlists/:id/collaborators          ?token=
+//  PATCH  /api/playlists/:id/collaborators/:user    { token, role }
+//  DELETE /api/playlists/:id/collaborators/:user    { token }
+//
+//  POST   /api/playlists/:id/invites/accept/:inviteId  { token }
+//  POST   /api/playlists/:id/invites/decline/:inviteId { token }
+//  DELETE /api/playlists/:id/invites/:inviteId         { token }  (owner cancel)
+//
+//  GET    /api/playlists/invites/mine               ?token=   → pending invites for me
+//  GET    /api/playlists/shared-with-me             ?token=   → playlists I'm a collaborator on
+//
+//  GET    /api/playlists/:id/realtime               SSE stream for track + collab changes
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Invite a user to collaborate -------------------------------------------------
+app.post('/api/playlists/:id/collaborators', playlistRateLimit, async (req, res) => {
+  const sess = req._session;
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  const { username, role = 'viewer' } = req.body;
+  if (!username) return res.status(400).json({ error: '"username" is required.' });
+  if (!['editor', 'viewer'].includes(role)) return res.status(400).json({ error: 'role must be "editor" or "viewer".' });
+  const pl = await dbGetPlaylist(req.params.id);
+  if (!pl || pl.owner !== sess.username) return res.status(404).json({ error: 'Playlist not found.' });
+  // Verify the invitee exists
+  const invitee = username.trim().toLowerCase();
+  const inviteeProfile = await dbGetProfile(invitee);
+  if (!inviteeProfile) return res.status(404).json({ error: `User @${invitee} not found.` });
+  try {
+    const invite = await dbInviteCollaborator(req.params.id, sess.username, invitee, role);
+    return res.status(201).json({ inviteId: invite.id, invitee, role, status: 'pending' });
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+});
+
+// List collaborators (+ pending invites for owner) ----------------------------
+app.get('/api/playlists/:id/collaborators', async (req, res) => {
+  const token = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
+  const sess  = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  const pl = await dbGetPlaylist(req.params.id);
+  if (!pl) return res.status(404).json({ error: 'Playlist not found.' });
+  const role = await dbGetCollabRole(req.params.id, sess.username);
+  if (!role) return res.status(404).json({ error: 'Playlist not found.' });
+  const collaborators = await dbGetCollaborators(req.params.id);
+  const pendingInvites = role === 'owner' ? await dbGetPendingInvites(req.params.id) : [];
+  return res.json({ collaborators, pendingInvites });
+});
+
+// Update a collaborator's role ------------------------------------------------
+app.patch('/api/playlists/:id/collaborators/:user', playlistRateLimit, async (req, res) => {
+  const sess = req._session;
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  const { role } = req.body;
+  if (!['editor', 'viewer'].includes(role)) return res.status(400).json({ error: 'role must be "editor" or "viewer".' });
+  try {
+    await dbUpdateCollaboratorRole(req.params.id, sess.username, req.params.user, role);
+    return res.json({ updated: true });
+  } catch (err) {
+    return res.status(403).json({ error: err.message });
+  }
+});
+
+// Remove a collaborator (owner only) ------------------------------------------
+app.delete('/api/playlists/:id/collaborators/:user', playlistRateLimit, async (req, res) => {
+  const sess = req._session;
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  try {
+    await dbRemoveCollaborator(req.params.id, sess.username, req.params.user);
+    return res.json({ removed: true });
+  } catch (err) {
+    return res.status(403).json({ error: err.message });
+  }
+});
+
+// Accept an invite ------------------------------------------------------------
+app.post('/api/playlists/:id/invites/accept/:inviteId', async (req, res) => {
+  const { token } = req.body;
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  try {
+    const result = await dbAcceptInvite(req.params.inviteId, sess.username);
+    // Notify the playlist owner and broadcast globally
+    const joinedPlaylist = await dbGetPlaylist(result.playlistId);
+    if (joinedPlaylist) {
+      dbWriteActivity('collab_joined', sess.username, joinedPlaylist.owner, {
+        playlistId: result.playlistId,
+        playlistName: joinedPlaylist.name,
+        role: result.role,
+      });
+    }
+    return res.json({ accepted: true, ...result });
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+});
+
+// Decline an invite (invitee) / cancel (owner) --------------------------------
+app.post('/api/playlists/:id/invites/decline/:inviteId', async (req, res) => {
+  const { token } = req.body;
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  try {
+    await dbDeclineInvite(req.params.inviteId, sess.username);
+    return res.json({ declined: true });
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+});
+
+// Owner cancel pending invite -------------------------------------------------
+app.delete('/api/playlists/:id/invites/:inviteId', playlistRateLimit, async (req, res) => {
+  const sess = req._session;
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  try {
+    await dbDeclineInvite(req.params.inviteId, sess.username);
+    return res.json({ cancelled: true });
+  } catch (err) {
+    return res.status(403).json({ error: err.message });
+  }
+});
+
+// Pending invites waiting for the current user --------------------------------
+app.get('/api/playlists/invites/mine', async (req, res) => {
+  const token = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
+  const sess  = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  try {
+    const invites = await dbGetMyPendingInvites(sess.username);
+    return res.json({ invites });
+  } catch (err) {
+    return res.status(500).json({ error: 'Could not load invites.' });
+  }
+});
+
+// Playlists shared with the current user (accepted collabs) -------------------
+app.get('/api/playlists/shared-with-me', async (req, res) => {
+  const token = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
+  const sess  = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  try {
+    const playlists = await dbGetSharedWithMe(sess.username);
+    return res.json({ playlists });
+  } catch (err) {
+    return res.status(500).json({ error: 'Could not load shared playlists.' });
+  }
+});
+
+// ─── Realtime SSE fan-out ────────────────────────────────────────────────────
+// Clients subscribe to GET /api/playlists/:id/realtime (SSE). The server holds
+// a Supabase Realtime channel per playlist-id and fans out track + collaborator
+// change events to all connected browsers. No anon key is shipped to the client.
+
+const playlistSseClients = new Map(); // playlistId → Set<res>
+const playlistRealtimeChannels = new Map(); // playlistId → supabase channel
+
+function getOrCreateRealtimeChannel(playlistId) {
+  if (playlistRealtimeChannels.has(playlistId)) return;
+  const channel = supabase
+    .channel(`playlist:${playlistId}`)
+    .on('postgres_changes',
+        { event: '*', schema: 'public', table: 'playlist_tracks', filter: `playlist_id=eq.${playlistId}` },
+        (payload) => broadcastToPlaylist(playlistId, { type: 'tracks', payload }))
+    .on('postgres_changes',
+        { event: '*', schema: 'public', table: 'playlist_collaborators', filter: `playlist_id=eq.${playlistId}` },
+        (payload) => broadcastToPlaylist(playlistId, { type: 'collaborators', payload }))
+    .on('postgres_changes',
+        { event: '*', schema: 'public', table: 'playlist_invites', filter: `playlist_id=eq.${playlistId}` },
+        (payload) => broadcastToPlaylist(playlistId, { type: 'invites', payload }))
+    .subscribe();
+  playlistRealtimeChannels.set(playlistId, channel);
+}
+
+function broadcastToPlaylist(playlistId, data) {
+  const clients = playlistSseClients.get(playlistId);
+  if (!clients || !clients.size) return;
+  const msg = `data: ${JSON.stringify(data)}\n\n`;
+  for (const res of clients) {
+    try { res.write(msg); } catch (_) { /* client disconnected */ }
+  }
+}
+
+function removeSseClient(playlistId, res) {
+  const clients = playlistSseClients.get(playlistId);
+  if (!clients) return;
+  clients.delete(res);
+  if (!clients.size) {
+    // No more listeners — tear down the Supabase channel to free resources.
+    const ch = playlistRealtimeChannels.get(playlistId);
+    if (ch) { supabase.removeChannel(ch); playlistRealtimeChannels.delete(playlistId); }
+    playlistSseClients.delete(playlistId);
+  }
+}
+
+app.get('/api/playlists/:id/realtime', async (req, res) => {
+  const token = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
+  const sess  = await dbGetSession(token);
+  if (!sess) return res.status(401).end();
+
+  const { id } = req.params;
+  const pl = await dbGetPlaylist(id);
+  const role = pl ? await dbGetCollabRole(id, sess.username) : null;
+  // Must be owner, collaborator, OR viewing a public playlist to subscribe.
+  if (!pl || (!role && !pl.is_public)) return res.status(404).end();
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+  res.write(': connected\n\n');
+
+  if (!playlistSseClients.has(id)) playlistSseClients.set(id, new Set());
+  playlistSseClients.get(id).add(res);
+  getOrCreateRealtimeChannel(id);
+
+  const heartbeat = setInterval(() => {
+    try { res.write(': ping\n\n'); } catch (_) { clearInterval(heartbeat); }
+  }, 25_000);
+
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    removeSseClient(id, res);
+  });
+});
+
+// Public playlists for a profile — mounted under /api/profiles so it reads
+// naturally from the profile viewer, but intentionally returns [] (not 404)
+// for a private or nonexistent profile rather than erroring, since the
+// profile route itself is what's responsible for surfacing "this profile
+// doesn't exist/isn't public" — this endpoint is always a secondary call
+// made after that check already passed.
+app.get('/api/profiles/:username/playlists', async (req, res) => {
+  const key = (req.params.username || '').trim().toLowerCase();
+  if (!key) return res.json({ playlists: [] });
+  try {
+    const rows = await dbGetPublicPlaylistsForUser(key);
+    return res.json({
+      playlists: rows.map(p => ({
+        id: p.id, name: p.name, description: p.description, trackCount: p.track_count,
+        likeCount: p.like_count || 0,
+      })),
+    });
+  } catch (err) {
+    console.error('[profile playlists]', err);
+    return res.json({ playlists: [] });
   }
 });
 
@@ -1932,13 +3229,135 @@ app.get('/index/:name', (req, res) => {
 });
 
 // ─── Catch-all ────────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+//  ACTIVITY FEED
+//
+//  GET /api/activity/feed          ?token= &scope=following|global &before=<ISO> &limit=<n>
+//  GET /api/activity/feed/realtime                                                   SSE
+//  GET /api/activity/unread        ?token= &since=<ISO>
+// ═══════════════════════════════════════════════════════════════════════════════
+
+app.get('/api/activity/feed', async (req, res) => {
+  const token = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
+  const sess  = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+
+  const scope  = req.query.scope === 'global' ? 'global' : 'following';
+  const before = req.query.before || null;
+  const limit  = Math.min(Math.max(Number(req.query.limit) || 30, 1), 100);
+
+  try {
+    const events = scope === 'global'
+      ? await dbGetGlobalFeed({ limit, before })
+      : await dbGetFollowingFeed(sess.username, { limit, before });
+
+    return res.json({
+      events: events.map(e => ({
+        id: e.id,
+        type: e.event_type,
+        actor: e.actor,
+        targetUser: e.target_user,
+        payload: e.payload,
+        createdAt: e.created_at,
+      })),
+      nextCursor: events.length === limit ? events[events.length - 1].created_at : null,
+    });
+  } catch (err) {
+    console.error('[activity feed]', err);
+    return res.status(500).json({ error: 'Could not load activity feed.' });
+  }
+});
+
+app.get('/api/activity/unread', async (req, res) => {
+  const token = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
+  const sess  = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  const since = req.query.since;
+  if (!since) return res.json({ count: 0 });
+  try {
+    const count = await dbGetUnreadCount(sess.username, since);
+    return res.json({ count });
+  } catch (err) {
+    return res.json({ count: 0 });
+  }
+});
+
+// ─── Activity SSE fan-out ──────────────────────────────────────────────────────
+// One server-side Supabase Realtime channel for the activity_feed table.
+// Browsers subscribe to /api/activity/feed/realtime and receive push notifications
+// when new rows are inserted — they then re-fetch to stay in sync.
+
+const activitySseClients = new Map(); // username → Set<res>
+let activityRealtimeChannel = null;
+
+function ensureActivityRealtimeChannel() {
+  if (activityRealtimeChannel) return;
+  activityRealtimeChannel = supabase
+    .channel('activity_feed_global')
+    .on('postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'activity_feed' },
+        (payload) => {
+          const row = payload.new;
+          // Fan out to: the target_user (if set) + the actor's followers (approximated by
+          // broadcasting to everyone and letting the client filter by scope).
+          // Simpler and correct: broadcast to all connected SSE clients with the new event.
+          const msg = `data: ${JSON.stringify({
+            id: row.id, type: row.event_type, actor: row.actor,
+            targetUser: row.target_user, payload: row.payload, createdAt: row.created_at,
+          })}\n\n`;
+          for (const clients of activitySseClients.values()) {
+            for (const res of clients) {
+              try { res.write(msg); } catch (_) {}
+            }
+          }
+        })
+    .subscribe();
+}
+
+function removeActivitySseClient(username, res) {
+  const clients = activitySseClients.get(username);
+  if (!clients) return;
+  clients.delete(res);
+  if (!clients.size) activitySseClients.delete(username);
+  // If no more clients at all, tear down the realtime channel
+  if (activitySseClients.size === 0 && activityRealtimeChannel) {
+    supabase.removeChannel(activityRealtimeChannel);
+    activityRealtimeChannel = null;
+  }
+}
+
+app.get('/api/activity/feed/realtime', async (req, res) => {
+  const token = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
+  const sess  = await dbGetSession(token);
+  if (!sess) return res.status(401).end();
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+  res.write(': connected\n\n');
+
+  if (!activitySseClients.has(sess.username)) activitySseClients.set(sess.username, new Set());
+  activitySseClients.get(sess.username).add(res);
+  ensureActivityRealtimeChannel();
+
+  const heartbeat = setInterval(() => {
+    try { res.write(': ping\n\n'); } catch (_) { clearInterval(heartbeat); }
+  }, 25_000);
+
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    removeActivitySseClient(sess.username, res);
+  });
+});
+
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
 });
 
 // ─── Start ────────────────────────────────────────────────────────────────────
 const server = app.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n🎵  FREQ v4.3 "The Extractor" is running`);
+  console.log(`\n🎵  FREQ v4.5 "The Social" is running`);
   console.log(`    Local:  http://localhost:${PORT}`);
   console.log(`    Health: http://localhost:${PORT}/health`);
   console.log(`    Store:  Supabase (persistent)`);
