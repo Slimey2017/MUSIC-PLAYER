@@ -2848,6 +2848,19 @@ app.get('/api/playlists/liked', async (req, res) => {
   }
 });
 
+// Playlists shared with the current user (accepted collabs) -------------------
+app.get('/api/playlists/shared-with-me', async (req, res) => {
+  const token = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
+  const sess  = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  try {
+    const playlists = await dbGetSharedWithMe(sess.username);
+    return res.json({ playlists });
+  } catch (err) {
+    return res.status(500).json({ error: 'Could not load shared playlists.' });
+  }
+});
+
 app.get('/api/playlists/:id', async (req, res) => {
   const { id } = req.params;
   try {
@@ -3277,18 +3290,6 @@ app.get('/api/playlists/invites/mine', async (req, res) => {
   }
 });
 
-// Playlists shared with the current user (accepted collabs) -------------------
-app.get('/api/playlists/shared-with-me', async (req, res) => {
-  const token = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
-  const sess  = await dbGetSession(token);
-  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
-  try {
-    const playlists = await dbGetSharedWithMe(sess.username);
-    return res.json({ playlists });
-  } catch (err) {
-    return res.status(500).json({ error: 'Could not load shared playlists.' });
-  }
-});
 
 // ─── Realtime SSE fan-out ────────────────────────────────────────────────────
 // Clients subscribe to GET /api/playlists/:id/realtime (SSE). The server holds
