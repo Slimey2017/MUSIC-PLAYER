@@ -2467,6 +2467,7 @@ body.oled-mode {
     <!-- Sub-tabs -->
     <div style="display:flex;gap:6px;margin-bottom:14px;">
       <button id="discoverTabTracks" onclick="setDiscoverTab('tracks')" class="discover-tab-btn discover-tab-active" style="flex:1;background:none;border:1px solid var(--accent3);color:var(--accent3);font-family:'Space Mono',monospace;font-size:0.44rem;letter-spacing:0.05em;text-transform:uppercase;padding:7px 4px;border-radius:var(--radius);cursor:pointer;transition:color 0.15s,border-color 0.15s;">♪ Tracks</button>
+      <button id="discoverTabArtists" onclick="setDiscoverTab('artists')" class="discover-tab-btn" style="flex:1;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.44rem;letter-spacing:0.05em;text-transform:uppercase;padding:7px 4px;border-radius:var(--radius);cursor:pointer;transition:color 0.15s,border-color 0.15s;">★ Artists</button>
       <button id="discoverTabPlaylists" onclick="setDiscoverTab('playlists')" class="discover-tab-btn" style="flex:1;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.44rem;letter-spacing:0.05em;text-transform:uppercase;padding:7px 4px;border-radius:var(--radius);cursor:pointer;transition:color 0.15s,border-color 0.15s;">⊞ Playlists</button>
       <button id="discoverTabPeople" onclick="setDiscoverTab('people')" class="discover-tab-btn" style="flex:1;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.44rem;letter-spacing:0.05em;text-transform:uppercase;padding:7px 4px;border-radius:var(--radius);cursor:pointer;transition:color 0.15s,border-color 0.15s;">⊕ People</button>
     </div>
@@ -2478,6 +2479,16 @@ body.oled-mode {
         <button id="discoverTracks7d" onclick="setDiscoverTracksWindow('7d')" style="flex:1;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.4rem;letter-spacing:0.05em;text-transform:uppercase;padding:5px 4px;border-radius:var(--radius);cursor:pointer;">Trending · 7d</button>
       </div>
       <div id="discoverTracksList" style="max-height:380px;overflow-y:auto;"><div class="empty-panel">Loading…</div></div>
+    </div>
+
+    <!-- Artists sub-view -->
+    <div id="discoverPaneArtists" class="discover-pane" style="display:none;">
+      <div style="display:flex;gap:6px;margin-bottom:10px;">
+        <button id="discoverArtistsTrending" onclick="setDiscoverArtistsSort('trending')" style="flex:1;background:none;border:1px solid var(--accent3);color:var(--accent3);font-family:'Space Mono',monospace;font-size:0.4rem;letter-spacing:0.05em;text-transform:uppercase;padding:5px 4px;border-radius:var(--radius);cursor:pointer;">Trending</button>
+        <button id="discoverArtistsRecent" onclick="setDiscoverArtistsSort('recent')" style="flex:1;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.4rem;letter-spacing:0.05em;text-transform:uppercase;padding:5px 4px;border-radius:var(--radius);cursor:pointer;">Rising</button>
+        <button id="discoverArtistsFollowers" onclick="setDiscoverArtistsSort('followers')" style="flex:1;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.4rem;letter-spacing:0.05em;text-transform:uppercase;padding:5px 4px;border-radius:var(--radius);cursor:pointer;">Most Followed</button>
+      </div>
+      <div id="discoverArtistsList" style="max-height:380px;overflow-y:auto;"><div class="empty-panel">Loading…</div></div>
     </div>
 
     <!-- Playlists sub-view -->
@@ -3498,6 +3509,20 @@ async function logPlay(item) {
         originalUrl: item.originalUrl,
         platform: item.platform || null,
         title: item.title || item.customLabel || null,
+        // Artist-name signal is currently real only for Cloud Library
+        // files (ID3 metadata via item.artist) — every other platform's
+        // resolve path (YouTube/Spotify/SoundCloud/etc) builds an embed URL
+        // without fetching title/artist metadata at all today, so there is
+        // honestly nothing to send for those. This was previously dropped
+        // silently even for the one case where it DID exist (cloud files),
+        // which meant tracks.artist_id never got populated for anything,
+        // ever. Sending what's actually available now; a future richer
+        // metadata fetch (e.g. YouTube oEmbed's author_name) would only
+        // need to populate item.artist upstream of this call for the link
+        // to start working automatically — dbGetOrCreateTrack already
+        // resolves/creates the artist row on the server side whenever an
+        // artist name is present.
+        artist: item.artist || null,
         token: AUTH.loggedIn ? AUTH.token : undefined,
       }),
     });
