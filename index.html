@@ -1569,6 +1569,8 @@ body.oled-mode {
       <button class="sidebar-view-btn" data-view="favorites">★ Favs</button>
       <button class="sidebar-view-btn" data-view="history">History</button>
       <button class="sidebar-view-btn" data-view="links">Links</button>
+      <button class="sidebar-view-btn" data-view="charts">Charts</button>
+      <button class="sidebar-view-btn" data-view="activity" id="activityTabBtn">Feed<span id="activityBadge" style="display:none;margin-left:3px;font-size:0.38rem;background:var(--accent2);color:#fff;padding:0 4px;border-radius:3px;vertical-align:middle;"></span></button>
     </div>
 
     <div class="input-tabs">
@@ -1772,6 +1774,40 @@ body.oled-mode {
         <a class="qlink" href="https://open.qobuz.com" target="_blank" style="color:#05b8cc;border-color:rgba(5,184,204,0.4);background:rgba(5,184,204,0.08);">◉ Qobuz</a>
         <a class="qlink" href="https://www.deezer.com/browse" target="_blank" style="color:#a259ff;border-color:rgba(162,89,255,0.4);background:rgba(162,89,255,0.08);">◆ Deezer</a>
         <a class="qlink" href="https://www.last.fm" target="_blank" style="color:#d51007;border-color:rgba(213,16,7,0.4);background:rgba(213,16,7,0.08);">⊕ Last.fm</a>
+      </div>
+    </div>
+
+    <!-- Community Charts panel -->
+    <div class="sidebar-inner sidebar-panel" id="viewCharts">
+      <div class="queue-header" style="margin-bottom:10px;">
+        <span class="section-title">Charts</span>
+        <button id="chartsRefreshBtn" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:0.55rem;" title="Refresh">↺</button>
+      </div>
+      <!-- Window tabs -->
+      <div style="display:flex;gap:6px;margin-bottom:10px;">
+        <button id="chartsWindowAll" onclick="setChartsWindow('all')" style="flex:1;background:none;border:1px solid var(--accent3);color:var(--accent3);font-family:'Space Mono',monospace;font-size:0.42rem;letter-spacing:0.06em;text-transform:uppercase;padding:6px 4px;border-radius:var(--radius);cursor:pointer;transition:color 0.15s,border-color 0.15s;">All-Time</button>
+        <button id="chartsWindow7d" onclick="setChartsWindow('7d')" style="flex:1;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.42rem;letter-spacing:0.06em;text-transform:uppercase;padding:6px 4px;border-radius:var(--radius);cursor:pointer;transition:color 0.15s,border-color 0.15s;">Trending · 7d</button>
+      </div>
+      <div style="font-size:0.42rem;color:var(--text-muted);line-height:1.8;margin-bottom:8px;">
+        The most-played tracks across everyone on this FREQ server.
+      </div>
+      <div id="chartsList"><div class="empty-panel">Loading charts…</div></div>
+    </div>
+
+    <!-- Activity Feed panel -->
+    <div class="sidebar-inner sidebar-panel" id="viewActivity">
+      <div class="queue-header" style="margin-bottom:10px;">
+        <span class="section-title">Activity</span>
+        <button id="activityRefreshBtn" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:0.55rem;" title="Refresh">↺</button>
+      </div>
+      <!-- Scope tabs -->
+      <div style="display:flex;gap:0;margin-bottom:10px;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;">
+        <button class="activity-scope-btn active" data-scope="following" style="flex:1;background:var(--surface2);border:none;color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.42rem;letter-spacing:0.08em;text-transform:uppercase;padding:5px 4px;cursor:pointer;border-right:1px solid var(--border);transition:color 0.15s,background 0.15s;">Following</button>
+        <button class="activity-scope-btn" data-scope="global" style="flex:1;background:none;border:none;color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.42rem;letter-spacing:0.08em;text-transform:uppercase;padding:5px 4px;cursor:pointer;transition:color 0.15s,background 0.15s;">Global</button>
+      </div>
+      <div id="activityFeedList"><div class="empty-panel" style="padding-top:20px;">Sign in to see activity.</div></div>
+      <div id="activityLoadMore" style="display:none;text-align:center;padding:10px 0;">
+        <button id="activityLoadMoreBtn" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.42rem;padding:4px 14px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.06em;text-transform:uppercase;">Load More</button>
       </div>
     </div>
   </aside>
@@ -2077,7 +2113,7 @@ body.oled-mode {
 <div class="support-overlay" id="aboutOverlay">
   <div class="about-panel">
     <div class="about-logo">FREQ</div>
-    <div class="about-version">Universal Music Player · v4.3</div>
+    <div class="about-version">Universal Music Player · v4.5</div>
 
     <div class="about-section">
       <div class="about-row"><span class="about-label">Developer</span><span class="about-val">Slimey2017</span></div>
@@ -2365,9 +2401,55 @@ body.oled-mode {
       </div>
       <div id="userProfileBio" style="font-size:0.55rem;color:var(--text);line-height:1.8;white-space:pre-wrap;margin-bottom:14px;">—</div>
       <button id="userProfileFollowBtn" style="width:100%;background:none;border:1px solid var(--accent3);color:var(--accent3);font-family:'Space Mono',monospace;font-size:0.5rem;padding:8px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.06em;text-transform:uppercase;">Follow</button>
+      <div id="userProfilePlaylistsWrap" style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px;display:none;">
+        <div style="font-size:0.46rem;color:var(--text-dim);letter-spacing:0.05em;text-transform:uppercase;margin-bottom:8px;">Public Playlists</div>
+        <div id="userProfilePlaylistsList"></div>
+      </div>
     </div>
     <div id="userProfileError" style="display:none;text-align:center;padding:24px;color:var(--text-muted);font-size:0.55rem;"></div>
     <button class="support-close-btn" onclick="closeUserProfileModal()" style="margin-top:16px;">Close</button>
+  </div>
+</div>
+
+<!-- Public Playlist Viewer Overlay -->
+<div class="lyrics-overlay" id="playlistViewerOverlay">
+  <div class="lyrics-panel" style="max-width:420px;">
+    <div id="playlistViewerLoading" style="text-align:center;padding:24px;color:var(--text-muted);font-size:0.6rem;">Loading playlist…</div>
+    <div id="playlistViewerContent" style="display:none;">
+      <div class="lyrics-title" id="playlistViewerName">—</div>
+      <div class="lyrics-artist" id="playlistViewerOwner">by @—</div>
+      <div style="display:flex;align-items:center;gap:6px;margin-top:6px;">
+        <button id="playlistLikeBtn" onclick="togglePlaylistLike()" disabled style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.5rem;padding:4px 10px;border-radius:var(--radius);cursor:pointer;display:flex;align-items:center;gap:5px;transition:border-color 0.15s,color 0.15s;">
+          <span id="playlistLikeIcon">♡</span>
+          <span id="playlistLikeCount">0</span>
+        </button>
+      </div>
+      <div id="playlistViewerDesc" style="font-size:0.5rem;color:var(--text-muted);line-height:1.7;margin:8px 0 12px;"></div>
+      <div id="playlistViewerTracks" style="max-height:280px;overflow-y:auto;margin-bottom:12px;"></div>
+      <button id="playlistViewerImportBtn" style="width:100%;background:none;border:1px solid var(--accent3);color:var(--accent3);font-family:'Space Mono',monospace;font-size:0.5rem;padding:8px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.06em;text-transform:uppercase;">Load Into Queue</button>
+      <!-- Collaborator panel — shown to owner and collaborators -->
+      <div id="playlistCollabPanel" style="display:none;margin-top:14px;border-top:1px solid var(--border);padding-top:12px;">
+        <div style="font-size:0.46rem;color:var(--text-dim);letter-spacing:0.05em;text-transform:uppercase;margin-bottom:8px;">Collaborators</div>
+        <div id="playlistCollabList" style="margin-bottom:10px;"></div>
+        <!-- Invite row — owner only -->
+        <div id="playlistInviteRow" style="display:none;">
+          <div style="font-size:0.46rem;color:var(--text-dim);letter-spacing:0.05em;text-transform:uppercase;margin-bottom:6px;margin-top:8px;">Invite</div>
+          <div style="display:flex;gap:6px;margin-bottom:4px;">
+            <input type="text" id="collabInviteUsername" placeholder="@username" style="flex:1;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-main);font-family:'Space Mono',monospace;font-size:0.48rem;padding:5px 8px;box-sizing:border-box;" />
+            <select id="collabInviteRole" style="background:rgba(255,255,255,0.05);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-main);font-family:'Space Mono',monospace;font-size:0.46rem;padding:4px 6px;">
+              <option value="viewer">Viewer</option>
+              <option value="editor">Editor</option>
+            </select>
+            <button id="collabInviteBtn" style="background:none;border:1px solid var(--accent3);color:var(--accent3);font-family:'Space Mono',monospace;font-size:0.44rem;padding:4px 10px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.05em;text-transform:uppercase;white-space:nowrap;">Invite</button>
+          </div>
+          <div id="collabInviteStatus" style="font-size:0.42rem;color:var(--text-muted);min-height:1.2em;"></div>
+          <!-- Pending invites for this playlist (owner view) -->
+          <div id="playlistPendingInvitesList" style="margin-top:6px;"></div>
+        </div>
+      </div>
+    </div>
+    <div id="playlistViewerError" style="display:none;text-align:center;padding:24px;color:var(--text-muted);font-size:0.55rem;"></div>
+    <button class="support-close-btn" onclick="closePlaylistViewer()" style="margin-top:16px;">Close</button>
   </div>
 </div>
 
@@ -2733,6 +2815,41 @@ body.oled-mode {
           <button class="save-playlist-btn" id="savePlaylistBtn">Save Queue</button>
         </div>
       </div>
+      <!-- Public Playlists (relational, separate from the Saved Playlists
+           blob above — these are shareable-by-link playlists backed by
+           playlists_v2, not part of the /api/auth/sync payload) -->
+      <div style="border-top:1px solid var(--border);margin-top:14px;padding-top:14px;">
+        <div class="aq-section-title" style="margin-bottom:8px;">⊞ Public Playlists</div>
+        <div style="font-size:0.5rem;color:var(--text-muted);line-height:1.8;margin-bottom:10px;">
+          Playlists you make public can be viewed by anyone with the link, and show up on your profile.
+        </div>
+        <div id="myPlaylistsList"><div class="empty-panel">No public playlists yet.</div></div>
+        <div class="save-playlist-wrap">
+          <input type="text" class="save-playlist-input" id="newPlaylistName" placeholder="New playlist name…" />
+          <button class="save-playlist-btn" id="createPlaylistBtn">Create</button>
+        </div>
+      </div>
+      <!-- Shared With Me -->
+      <div style="border-top:1px solid var(--border);margin-top:14px;padding-top:14px;">
+        <div class="aq-section-title" style="margin-bottom:8px;">⊞ Shared With Me
+          <span id="inviteBadge" style="display:none;margin-left:6px;font-size:0.4rem;background:var(--accent2);color:#fff;padding:1px 6px;border-radius:4px;font-family:'Space Mono',monospace;vertical-align:middle;"></span>
+        </div>
+        <div style="font-size:0.5rem;color:var(--text-muted);line-height:1.8;margin-bottom:10px;">
+          Playlists other FREQ users have invited you to collaborate on.
+        </div>
+        <!-- Pending invites -->
+        <div id="pendingInvitesList"></div>
+        <!-- Accepted collabs -->
+        <div id="sharedWithMeList"><div class="empty-panel">No shared playlists yet.</div></div>
+      </div>
+      <!-- Liked Playlists -->
+      <div style="border-top:1px solid var(--border);margin-top:14px;padding-top:14px;">
+        <div class="aq-section-title" style="margin-bottom:8px;">♥ Liked Playlists</div>
+        <div style="font-size:0.5rem;color:var(--text-muted);line-height:1.8;margin-bottom:10px;">
+          Public playlists you've liked, from anyone on FREQ.
+        </div>
+        <div id="likedPlaylistsList"><div class="empty-panel">No liked playlists yet.</div></div>
+      </div>
       <!-- Public Profile -->
       <div style="border-top:1px solid var(--border);margin-top:14px;padding-top:14px;">
         <div class="aq-section-title" style="margin-bottom:8px;">⊙ Public Profile</div>
@@ -3017,6 +3134,7 @@ function updateAuthUI() {
     if (badge) { badge.style.display = 'inline'; badge.textContent = '● server'; badge.style.color = 'var(--accent3)'; badge.style.borderColor = 'var(--accent3)'; }
     renderSavedPlaylists();
     loadOwnProfile();
+    loadMyPlaylists();
   } else {
     userBadge.textContent = '⊡ Account';
     $('authLoggedInSection').style.display = 'none';
@@ -3211,6 +3329,8 @@ async function openUserProfile(username) {
       followBtn.style.opacity = '1';
       setFollowButtonState(data.isFollowing);
     }
+
+    loadProfilePublicPlaylists(key); // fire-and-forget — a failed fetch here shouldn't block showing the rest of the profile
   } catch (err) {
     $('userProfileLoading').style.display = 'none';
     $('userProfileError').style.display   = 'block';
@@ -3268,6 +3388,1026 @@ $('profileLookupInput')?.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') $('profileLookupBtn')?.click();
 });
 
+// ─── Community Charts (play tracking + rankings) ──────────────────────────────
+// logPlay is fire-and-forget by design: a failed or slow play-tracking POST
+// must never block, delay, or visibly affect actual playback. It's called
+// from playItem() right alongside pushHistory(item), which already runs
+// unconditionally for every platform (local + every embed type), so this
+// reuses that exact call site rather than scattering a second hook through
+// the platform-specific branches below it.
+async function logPlay(item) {
+  if (!item || !item.originalUrl) return;
+  try {
+    await fetch('/api/plays', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        originalUrl: item.originalUrl,
+        platform: item.platform || null,
+        title: item.title || item.customLabel || null,
+        token: AUTH.loggedIn ? AUTH.token : undefined,
+      }),
+    });
+  } catch (_) {
+    // Charts tracking is best-effort — never surface this to the listener.
+  }
+}
+
+const CHARTS_BASE = '/api/charts';
+let chartsWindow = 'all'; // 'all' | '7d' — mirrors activityScope's pattern of a module-level UI-state var
+let chartsTracks  = [];   // last loaded chart, kept around so playFromChart can look up by index
+
+async function loadCharts() {
+  const list = $('chartsList');
+  if (!list) return;
+  list.innerHTML = '<div class="empty-panel">Loading charts…</div>';
+  try {
+    const res = await fetch(`${CHARTS_BASE}/tracks?window=${encodeURIComponent(chartsWindow)}&limit=50`);
+    // Check ok — and that the response actually looks like JSON — before
+    // parsing. A dead/unreachable server, a 404 for an unrecognized route,
+    // or any proxy in between can hand back an HTML error page instead of
+    // JSON; calling res.json() on that throws a SyntaxError ("Unexpected
+    // token '<'") rather than the readable error this catch block is meant
+    // to surface, so we head that off explicitly.
+    const contentType = res.headers.get('content-type') || '';
+    if (!res.ok || !contentType.includes('application/json')) {
+      throw new Error(`Server unavailable (${res.status}). Charts couldn't load.`);
+    }
+    const data = await res.json();
+    chartsTracks = data.tracks || [];
+    renderCharts();
+  } catch (err) {
+    console.error('[loadCharts]', err);
+    list.innerHTML = '<div class="empty-panel">Could not load charts — server may be offline. Try again later.</div>';
+  }
+}
+
+function renderCharts() {
+  const list = $('chartsList');
+  if (!list) return;
+  if (!chartsTracks.length) {
+    list.innerHTML = `<div class="empty-panel">${chartsWindow === '7d' ? 'No plays in the last 7 days yet.' : 'No plays tracked yet — start listening!'}</div>`;
+    return;
+  }
+  list.innerHTML = chartsTracks.map((t, i) => {
+    const cfg = PLATFORM_CONFIG[t.platform] || { label: t.platform || '?', color: 'var(--text-muted)' };
+    return `
+      <div class="saved-playlist-row" style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--border);">
+        <div style="width:22px;flex-shrink:0;text-align:right;font-size:0.5rem;color:var(--text-dim);font-weight:600;">${t.rank}</div>
+        <div style="flex:1;min-width:0;cursor:pointer;" onclick="playFromChart(${i})">
+          <div style="font-size:0.55rem;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(t.title)}</div>
+          <div style="font-size:0.42rem;color:var(--text-muted);">
+            <span style="color:${cfg.color};">${escapeHtml(cfg.label)}</span>
+            · ${t.playCount} play${t.playCount === 1 ? '' : 's'}${chartsWindow === '7d' ? ' this week' : ''}
+          </div>
+        </div>
+        <button onclick="event.stopPropagation(); queueFromChart(${i})" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.42rem;padding:4px 8px;border-radius:var(--radius);cursor:pointer;flex-shrink:0;letter-spacing:0.04em;text-transform:uppercase;" title="Add to queue">+ Queue</button>
+      </div>
+    `;
+  }).join('');
+}
+
+function setChartsWindow(win) {
+  if (chartsWindow === win) return;
+  chartsWindow = win;
+  const allBtn = $('chartsWindowAll'), weekBtn = $('chartsWindow7d');
+  if (allBtn)  { allBtn.style.color = win === 'all' ? 'var(--accent3)' : 'var(--text-muted)'; allBtn.style.borderColor = win === 'all' ? 'var(--accent3)' : 'var(--border)'; }
+  if (weekBtn) { weekBtn.style.color = win === '7d' ? 'var(--accent3)' : 'var(--text-muted)'; weekBtn.style.borderColor = win === '7d' ? 'var(--accent3)' : 'var(--border)'; }
+  loadCharts();
+}
+
+// Charts only knows originalUrl/platform/title — not a full resolved embedUrl
+// — so playing or queueing a chart entry has to re-resolve it through the
+// same /api/resolve path a freshly pasted URL would go through, rather than
+// constructing a queue item by hand from incomplete chart data.
+async function resolveChartTrack(t) {
+  const res = await fetch('/api/resolve', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url: t.originalUrl }),
+  });
+  const contentType = res.headers.get('content-type') || '';
+  if (!res.ok || !contentType.includes('application/json')) {
+    throw new Error(`Server unavailable (${res.status}). Could not resolve this track.`);
+  }
+  const data = await res.json();
+  return { ...data, title: data.title || t.title };
+}
+
+async function playFromChart(i) {
+  const t = chartsTracks[i];
+  if (!t) return;
+  try {
+    const item = await resolveChartTrack(t);
+    if (!state.allowDups && state.queue.some(q => q.originalUrl === item.originalUrl)) {
+      const qi = state.queue.findIndex(q => q.originalUrl === item.originalUrl);
+      playItem(qi);
+      return;
+    }
+    state.queue.push(item);
+    save(); renderQueue();
+    playItem(state.queue.length - 1);
+  } catch (err) {
+    showToast('Error', err.message || 'Could not play this track.', 'error');
+  }
+}
+
+async function queueFromChart(i) {
+  const t = chartsTracks[i];
+  if (!t) return;
+  try {
+    const item = await resolveChartTrack(t);
+    if (!state.allowDups && state.queue.some(q => q.originalUrl === item.originalUrl)) {
+      showToast('Already in Queue', t.title, 'info');
+      return;
+    }
+    state.queue.push(item);
+    save(); renderQueue();
+    showToast('Added to Queue', t.title, 'success');
+  } catch (err) {
+    showToast('Error', err.message || 'Could not add this track.', 'error');
+  }
+}
+
+// ─── Public Playlists (relational, playlists_v2 — separate from the legacy
+// AUTH.playlists blob used by Saved Playlists / serverSync above) ───────────
+const PLAYLISTS_BASE = '/api/playlists';
+let myPlaylists = []; // [{ id, name, description, isPublic, trackCount, updatedAt }] — owner's own list, loaded on demand
+
+// Note: uses escapeHtml(), defined later in this file under Cloud Files —
+// function declarations are hoisted, so the forward reference is safe.
+
+async function loadMyPlaylists() {
+  if (!AUTH.loggedIn || !AUTH.token) return;
+  try {
+    const res  = await fetch(`${PLAYLISTS_BASE}/mine?token=${encodeURIComponent(AUTH.token)}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not load playlists.');
+    myPlaylists = data.playlists || [];
+    renderMyPlaylists();
+  } catch (err) {
+    console.error('[loadMyPlaylists]', err);
+  }
+}
+
+function renderMyPlaylists() {
+  const list = $('myPlaylistsList');
+  if (!list) return;
+  if (!myPlaylists.length) {
+    list.innerHTML = '<div class="empty-panel">No public playlists yet.</div>';
+    return;
+  }
+  list.innerHTML = myPlaylists.map((pl, i) => `
+    <div class="saved-playlist-row" style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border);">
+      <div style="flex:1;min-width:0;cursor:pointer;" onclick="openPlaylistViewer('${pl.id}')">
+        <div style="font-size:0.55rem;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(pl.name)}</div>
+        <div style="font-size:0.42rem;color:var(--text-muted);">${pl.trackCount} track${pl.trackCount === 1 ? '' : 's'}${pl.isPublic && pl.likeCount ? ` · ♥ ${pl.likeCount}` : ''}</div>
+      </div>
+      <label style="display:flex;align-items:center;gap:4px;cursor:pointer;flex-shrink:0;" title="${pl.isPublic ? 'Public — anyone with the link can view' : 'Private — only you can view'}">
+        <input type="checkbox" ${pl.isPublic ? 'checked' : ''} onchange="togglePlaylistPublic(${i}, this.checked)" style="display:none;" />
+        <div class="toggle-track" style="width:24px;height:12px;background:${pl.isPublic ? 'var(--accent3)' : 'var(--border)'};border-radius:6px;position:relative;" onclick="event.stopPropagation(); togglePlaylistPublic(${i}, ${!pl.isPublic});">
+          <div class="toggle-thumb" style="position:absolute;top:1px;left:1px;width:10px;height:10px;background:#fff;border-radius:50%;transform:translateX(${pl.isPublic ? '12px' : '0'});transition:transform 0.15s;"></div>
+        </div>
+      </label>
+      <button onclick="event.stopPropagation(); deleteMyPlaylist(${i})" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:0.6rem;flex-shrink:0;" title="Delete playlist">✕</button>
+    </div>
+  `).join('');
+}
+
+$('createPlaylistBtn')?.addEventListener('click', async () => {
+  if (!AUTH.loggedIn) return;
+  const input = $('newPlaylistName');
+  const name = input?.value.trim();
+  if (!name) { showToast('Name Required', 'Enter a playlist name first.', 'error'); return; }
+  const btn = $('createPlaylistBtn');
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+  try {
+    const res  = await fetch(PLAYLISTS_BASE, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: AUTH.token, name }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      if (res.status === 401) { handleTokenExpiry(); return; }
+      throw new Error(data.error || 'Could not create playlist.');
+    }
+    if (input) input.value = '';
+    showToast('Playlist Created', `"${name}" — toggle it public to share.`, 'success');
+    await loadMyPlaylists();
+  } catch (err) {
+    showToast('Error', err.message || 'Could not create playlist.', 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Create'; }
+  }
+});
+$('newPlaylistName')?.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') $('createPlaylistBtn')?.click();
+});
+
+async function togglePlaylistPublic(i, makePublic) {
+  const pl = myPlaylists[i];
+  if (!pl) return;
+  try {
+    const res  = await fetch(`${PLAYLISTS_BASE}/${encodeURIComponent(pl.id)}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: AUTH.token, isPublic: makePublic }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      if (res.status === 401) { handleTokenExpiry(); return; }
+      throw new Error(data.error || 'Could not update playlist.');
+    }
+    pl.isPublic = data.isPublic;
+    renderMyPlaylists();
+    showToast(makePublic ? 'Now Public' : 'Now Private', `"${pl.name}"`, 'success');
+  } catch (err) {
+    showToast('Error', err.message || 'Could not update playlist.', 'error');
+    renderMyPlaylists(); // re-render to snap the toggle back to its real state
+  }
+}
+
+async function deleteMyPlaylist(i) {
+  const pl = myPlaylists[i];
+  if (!pl) return;
+  if (!confirm(`Delete "${pl.name}"? This can't be undone.`)) return;
+  try {
+    const res  = await fetch(`${PLAYLISTS_BASE}/${encodeURIComponent(pl.id)}`, {
+      method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: AUTH.token }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      if (res.status === 401) { handleTokenExpiry(); return; }
+      throw new Error(data.error || 'Could not delete playlist.');
+    }
+    myPlaylists.splice(i, 1);
+    renderMyPlaylists();
+    showToast('Deleted', `"${pl.name}" removed.`, 'success');
+  } catch (err) {
+    showToast('Error', err.message || 'Could not delete playlist.', 'error');
+  }
+}
+
+// Public playlists shown on a visited profile (openUserProfile calls this
+// after the profile itself loads — see the fire-and-forget call there).
+async function loadProfilePublicPlaylists(username) {
+  const wrap = $('userProfilePlaylistsWrap');
+  const list = $('userProfilePlaylistsList');
+  if (!wrap || !list) return;
+  try {
+    const res  = await fetch(`${PROFILE_BASE}/${encodeURIComponent(username)}/playlists`);
+    const data = await res.json();
+    const playlists = data.playlists || [];
+    if (!playlists.length) { wrap.style.display = 'none'; return; }
+    wrap.style.display = 'block';
+    list.innerHTML = playlists.map(pl => `
+      <div style="padding:6px 0;border-bottom:1px solid var(--border);cursor:pointer;" onclick="openPlaylistViewer('${pl.id}')">
+        <div style="font-size:0.5rem;color:var(--text-main);">${escapeHtml(pl.name)}</div>
+        <div style="font-size:0.4rem;color:var(--text-muted);">${pl.trackCount} track${pl.trackCount === 1 ? '' : 's'}${pl.likeCount ? ` · ♥ ${pl.likeCount}` : ''}</div>
+      </div>
+    `).join('');
+  } catch (err) {
+    console.error('[loadProfilePublicPlaylists]', err);
+    wrap.style.display = 'none';
+  }
+}
+
+// ─── Public Playlist Viewer ─────────────────────────────────────────────────
+let viewedPlaylist = null; // full playlist payload from the last successful openPlaylistViewer call
+
+function closePlaylistViewer() {
+  $('playlistViewerOverlay')?.classList.remove('open');
+  viewedPlaylist = null;
+  collabSseDisconnect();
+}
+
+// silent=true skips showing the loading spinner (used for SSE-triggered refreshes)
+async function openPlaylistViewer(id, silent = false) {
+  if (!silent) {
+    $('playlistViewerOverlay')?.classList.add('open');
+    $('playlistViewerLoading').style.display = 'block';
+    $('playlistViewerContent').style.display = 'none';
+    $('playlistViewerError').style.display   = 'none';
+  }
+
+  try {
+    const params = new URLSearchParams(AUTH.token ? { token: AUTH.token } : {});
+    const res  = await fetch(`${PLAYLISTS_BASE}/${encodeURIComponent(id)}?${params}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(res.status === 404 ? 'Playlist not found, or no longer public.' : (data.error || 'Could not load playlist.'));
+
+    viewedPlaylist = data;
+    $('playlistViewerLoading').style.display = 'none';
+    $('playlistViewerContent').style.display = 'block';
+    $('playlistViewerName').textContent  = data.name;
+    $('playlistViewerOwner').textContent = 'by @' + data.owner;
+    $('playlistViewerDesc').textContent  = data.description || '';
+    renderPlaylistLikeBtn(data);
+
+    const isEditor = data.isOwner || data.collabRole === 'editor';
+    $('playlistViewerTracks').innerHTML  = (data.tracks || []).map((t, i) => `
+      <div style="display:flex;gap:8px;padding:5px 0;border-bottom:1px solid var(--border);font-size:0.48rem;color:var(--text-muted);align-items:center;">
+        <span style="opacity:0.5;flex-shrink:0;">${i + 1}.</span>
+        <span style="flex:1;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(t.title || t.id || 'Untitled track')}</span>
+        ${t.addedBy ? `<span style="flex-shrink:0;opacity:0.5;font-size:0.38rem;">+@${escapeHtml(t.addedBy)}</span>` : ''}
+        ${isEditor && AUTH.loggedIn ? `<button onclick="viewerRemoveTrack('${data.id}','${t.rowId}')" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:0.44rem;flex-shrink:0;padding:0 2px;" title="Remove track">✕</button>` : ''}
+      </div>
+    `).join('') || '<div class="empty-panel">No tracks in this playlist yet.</div>';
+
+    // Collab panel
+    renderCollabPanel(data);
+
+    // Start SSE for real-time updates (connects only if authenticated)
+    if (AUTH.loggedIn && AUTH.token) collabSseConnect(id);
+  } catch (err) {
+    $('playlistViewerLoading').style.display = 'none';
+    $('playlistViewerError').style.display   = 'block';
+    $('playlistViewerError').textContent     = err.message || 'Could not load playlist.';
+  }
+}
+
+// Reflects the playlist payload's likeCount/likedByMe into the heart button.
+// Signed-out viewers see the count but the button stays disabled — liking
+// requires an account, same as everything else that writes to the backend.
+function renderPlaylistLikeBtn(data) {
+  const btn   = $('playlistLikeBtn');
+  const icon  = $('playlistLikeIcon');
+  const count = $('playlistLikeCount');
+  if (!btn || !icon || !count) return;
+  count.textContent = data.likeCount ?? 0;
+  const liked = !!data.likedByMe;
+  icon.textContent = liked ? '♥' : '♡';
+  btn.style.color       = liked ? 'var(--accent3)' : 'var(--text-muted)';
+  btn.style.borderColor = liked ? 'var(--accent3)' : 'var(--border)';
+  btn.disabled = !AUTH.loggedIn;
+  btn.title = AUTH.loggedIn ? (liked ? 'Unlike' : 'Like') : 'Sign in to like playlists';
+  btn.style.cursor = AUTH.loggedIn ? 'pointer' : 'default';
+  btn.style.opacity = AUTH.loggedIn ? '1' : '0.5';
+}
+
+// Optimistic toggle: flips the button immediately, reconciles with the
+// server's returned count, and rolls back on failure — same shape as
+// togglePlaylistPublic's rollback-on-error pattern above.
+async function togglePlaylistLike() {
+  if (!AUTH.loggedIn || !AUTH.token || !viewedPlaylist) return;
+  const wasLiked = !!viewedPlaylist.likedByMe;
+  const prevCount = viewedPlaylist.likeCount || 0;
+
+  viewedPlaylist.likedByMe = !wasLiked;
+  viewedPlaylist.likeCount = prevCount + (wasLiked ? -1 : 1);
+  renderPlaylistLikeBtn(viewedPlaylist);
+
+  try {
+    const res = await fetch(`${PLAYLISTS_BASE}/${encodeURIComponent(viewedPlaylist.id)}/like`, {
+      method: wasLiked ? 'DELETE' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: AUTH.token }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      if (res.status === 401) { handleTokenExpiry(); return; }
+      throw new Error(data.error || 'Could not update like.');
+    }
+    viewedPlaylist.likedByMe = data.liked;
+    viewedPlaylist.likeCount = data.likeCount;
+    renderPlaylistLikeBtn(viewedPlaylist);
+    syncPlaylistLikeCount(viewedPlaylist.id, data.likeCount);
+    loadLikedPlaylists();
+  } catch (err) {
+    viewedPlaylist.likedByMe = wasLiked;
+    viewedPlaylist.likeCount = prevCount;
+    renderPlaylistLikeBtn(viewedPlaylist);
+    showToast('Error', err.message || 'Could not update like.', 'error');
+  }
+}
+
+// Patches a like count into whichever in-memory playlist lists currently
+// hold this id, so switching panels doesn't show a stale number.
+function syncPlaylistLikeCount(playlistId, likeCount) {
+  const mine = myPlaylists.find(p => p.id === playlistId);
+  if (mine) mine.likeCount = likeCount;
+}
+
+// Remove a track from within the playlist viewer (editor/owner action)
+async function viewerRemoveTrack(playlistId, rowId) {
+  if (!AUTH.token) return;
+  try {
+    const res = await fetch(`${PLAYLISTS_BASE}/${encodeURIComponent(playlistId)}/tracks/${encodeURIComponent(rowId)}`, {
+      method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: AUTH.token }),
+    });
+    const data = await res.json();
+    if (!res.ok) { showToast('Error', data.error || 'Could not remove track.', 'error'); return; }
+    // SSE will trigger a refresh, but do it immediately for responsiveness
+    await openPlaylistViewer(playlistId, true);
+  } catch (err) {
+    showToast('Error', err.message || 'Could not remove track.', 'error');
+  }
+}
+
+$('playlistViewerImportBtn')?.addEventListener('click', () => {
+  if (!viewedPlaylist || !viewedPlaylist.tracks?.length) return;
+  let added = 0;
+  viewedPlaylist.tracks.forEach(t => {
+    const item = { ...t };
+    delete item.rowId; delete item.addedBy; delete item.addedAt; // viewer-only fields, not part of the queue item shape
+    if (!state.allowDups && state.queue.some(q => q.originalUrl === item.originalUrl)) return;
+    state.queue.push(item);
+    added++;
+  });
+  save(); renderQueue();
+  if (state.activeIndex === -1 && state.queue.length) playItem(0);
+  showToast('Loaded!', `${added} track${added === 1 ? '' : 's'} from "${viewedPlaylist.name}" added to queue.`, 'success');
+  closePlaylistViewer();
+});
+
+// ─── Shared Playlists — Collaboration ────────────────────────────────────────
+// SSE connection for the currently viewed playlist
+let _collabSse = null;
+let _collabSsePlaylistId = null;
+
+function collabSseConnect(playlistId) {
+  if (_collabSsePlaylistId === playlistId && _collabSse) return;
+  collabSseDisconnect();
+  if (!AUTH.token) return;
+  _collabSsePlaylistId = playlistId;
+  _collabSse = new EventSource(
+    `/api/playlists/${encodeURIComponent(playlistId)}/realtime?token=${encodeURIComponent(AUTH.token)}`
+  );
+  _collabSse.addEventListener('message', async (e) => {
+    try {
+      const { type } = JSON.parse(e.data);
+      if (type === 'tracks' || type === 'collaborators' || type === 'invites') {
+        // Re-fetch the playlist so the viewer stays consistent
+        await openPlaylistViewer(playlistId, /* silent= */true);
+      }
+    } catch (_) {}
+  });
+  _collabSse.addEventListener('error', () => {
+    // EventSource auto-reconnects; no action needed here
+  });
+}
+
+function collabSseDisconnect() {
+  if (_collabSse) { _collabSse.close(); _collabSse = null; }
+  _collabSsePlaylistId = null;
+}
+
+// Render the collaborator list inside the playlist viewer
+function renderCollabPanel(data) {
+  const panel = $('playlistCollabPanel');
+  const list  = $('playlistCollabList');
+  const inviteRow = $('playlistInviteRow');
+  if (!panel || !list) return;
+
+  // Show panel if user is owner or a collaborator
+  if (!data.isOwner && !data.collabRole) { panel.style.display = 'none'; return; }
+  panel.style.display = 'block';
+
+  const collaborators = data.collaborators || [];
+  if (!collaborators.length) {
+    list.innerHTML = '<div style="font-size:0.46rem;color:var(--text-muted);padding:4px 0;">No collaborators yet.</div>';
+  } else {
+    list.innerHTML = collaborators.map(c => `
+      <div style="display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid var(--border);font-size:0.46rem;">
+        <span style="flex:1;color:var(--text-main);">@${escapeHtml(c.username)}</span>
+        ${data.isOwner ? `
+          <select onchange="updateCollabRole('${data.id}','${c.username}',this.value)"
+            style="background:rgba(255,255,255,0.05);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.42rem;padding:2px 4px;">
+            <option value="viewer" ${c.role==='viewer'?'selected':''}>Viewer</option>
+            <option value="editor" ${c.role==='editor'?'selected':''}>Editor</option>
+          </select>
+          <button onclick="removeCollab('${data.id}','${c.username}')"
+            style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:0.5rem;" title="Remove">✕</button>
+        ` : `<span style="color:var(--text-muted);">${c.role}</span>`}
+      </div>
+    `).join('');
+  }
+
+  // Owner-only invite row
+  if (data.isOwner && inviteRow) {
+    inviteRow.style.display = 'block';
+    renderPendingInvitesInViewer(data.pendingInvites || []);
+  }
+}
+
+function renderPendingInvitesInViewer(pending) {
+  const el = $('playlistPendingInvitesList');
+  if (!el) return;
+  if (!pending.length) { el.innerHTML = ''; return; }
+  el.innerHTML = `
+    <div style="font-size:0.44rem;color:var(--text-dim);letter-spacing:0.05em;text-transform:uppercase;margin-bottom:4px;margin-top:8px;">Pending</div>
+    ${pending.map(inv => `
+      <div style="display:flex;align-items:center;gap:6px;padding:3px 0;font-size:0.44rem;color:var(--text-muted);">
+        <span style="flex:1;">@${escapeHtml(inv.invitee)} <span style="opacity:0.6;">(${inv.role})</span></span>
+        <button onclick="cancelInvite('${viewedPlaylist?.id}','${inv.id}')"
+          style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:0.48rem;" title="Cancel invite">✕</button>
+      </div>
+    `).join('')}
+  `;
+}
+
+// Render pending invites in the account panel ("Shared With Me" section)
+function renderMyInvites(invites) {
+  const el = $('pendingInvitesList');
+  if (!el) return;
+  if (!invites.length) { el.innerHTML = ''; return; }
+  el.innerHTML = `
+    <div style="font-size:0.44rem;color:var(--text-dim);letter-spacing:0.05em;text-transform:uppercase;margin-bottom:6px;">Pending Invites</div>
+    ${invites.map(inv => `
+      <div style="display:flex;align-items:center;gap:6px;padding:5px 0;border-bottom:1px solid var(--border);font-size:0.46rem;">
+        <div style="flex:1;min-width:0;">
+          <div style="color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(inv.playlistName)}</div>
+          <div style="color:var(--text-muted);font-size:0.42rem;">from @${escapeHtml(inv.invitedBy)} · ${inv.role}</div>
+        </div>
+        <button onclick="acceptInvite('${inv.playlistId}','${inv.id}')"
+          style="background:none;border:1px solid var(--accent3);color:var(--accent3);font-family:'Space Mono',monospace;font-size:0.4rem;padding:3px 8px;border-radius:var(--radius);cursor:pointer;white-space:nowrap;">Accept</button>
+        <button onclick="declineInvite('${inv.playlistId}','${inv.id}')"
+          style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:0.48rem;" title="Decline">✕</button>
+      </div>
+    `).join('')}
+  `;
+}
+
+function renderSharedWithMe(playlists) {
+  const el = $('sharedWithMeList');
+  if (!el) return;
+  if (!playlists.length) {
+    el.innerHTML = '<div class="empty-panel">No shared playlists yet.</div>';
+    return;
+  }
+  el.innerHTML = playlists.map(pl => `
+    <div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border);">
+      <div style="flex:1;min-width:0;cursor:pointer;" onclick="openPlaylistViewer('${pl.id}')">
+        <div style="font-size:0.55rem;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(pl.name)}</div>
+        <div style="font-size:0.42rem;color:var(--text-muted);">@${escapeHtml(pl.owner)} · ${pl.role} · ${pl.trackCount} track${pl.trackCount === 1 ? '' : 's'}</div>
+      </div>
+    </div>
+  `).join('');
+}
+
+async function loadSharedWithMe() {
+  if (!AUTH.loggedIn || !AUTH.token) return;
+  try {
+    const [invRes, sharedRes] = await Promise.all([
+      fetch(`${PLAYLISTS_BASE}/invites/mine?token=${encodeURIComponent(AUTH.token)}`),
+      fetch(`${PLAYLISTS_BASE}/shared-with-me?token=${encodeURIComponent(AUTH.token)}`),
+    ]);
+    const invData    = invRes.ok    ? await invRes.json()    : { invites: [] };
+    const sharedData = sharedRes.ok ? await sharedRes.json() : { playlists: [] };
+
+    const invites = invData.invites || [];
+    renderMyInvites(invites);
+    renderSharedWithMe(sharedData.playlists || []);
+
+    // Badge on the section title
+    const badge = $('inviteBadge');
+    if (badge) {
+      if (invites.length) {
+        badge.style.display = 'inline';
+        badge.textContent = invites.length;
+      } else {
+        badge.style.display = 'none';
+      }
+    }
+  } catch (err) {
+    console.error('[loadSharedWithMe]', err);
+  }
+}
+
+// ─── Liked Playlists ──────────────────────────────────────────────────────────
+function renderLikedPlaylists(playlists) {
+  const el = $('likedPlaylistsList');
+  if (!el) return;
+  if (!playlists.length) {
+    el.innerHTML = '<div class="empty-panel">No liked playlists yet.</div>';
+    return;
+  }
+  el.innerHTML = playlists.map(pl => `
+    <div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border);">
+      <div style="flex:1;min-width:0;cursor:pointer;" onclick="openPlaylistViewer('${pl.id}')">
+        <div style="font-size:0.55rem;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(pl.name)}</div>
+        <div style="font-size:0.42rem;color:var(--text-muted);">@${escapeHtml(pl.owner)} · ${pl.trackCount} track${pl.trackCount === 1 ? '' : 's'}${pl.likeCount ? ` · ♥ ${pl.likeCount}` : ''}</div>
+      </div>
+      <button onclick="event.stopPropagation(); unlikeFromList('${pl.id}')" style="background:none;border:none;color:var(--accent3);cursor:pointer;font-size:0.6rem;flex-shrink:0;" title="Unlike">♥</button>
+    </div>
+  `).join('');
+}
+
+async function loadLikedPlaylists() {
+  if (!AUTH.loggedIn || !AUTH.token) return;
+  try {
+    const res  = await fetch(`${PLAYLISTS_BASE}/liked?token=${encodeURIComponent(AUTH.token)}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not load liked playlists.');
+    renderLikedPlaylists(data.playlists || []);
+  } catch (err) {
+    console.error('[loadLikedPlaylists]', err);
+  }
+}
+
+async function unlikeFromList(playlistId) {
+  if (!AUTH.token) return;
+  try {
+    const res = await fetch(`${PLAYLISTS_BASE}/${encodeURIComponent(playlistId)}/like`, {
+      method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: AUTH.token }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      if (res.status === 401) { handleTokenExpiry(); return; }
+      throw new Error(data.error || 'Could not unlike playlist.');
+    }
+    if (viewedPlaylist && viewedPlaylist.id === playlistId) {
+      viewedPlaylist.likedByMe = false;
+      viewedPlaylist.likeCount = data.likeCount;
+      renderPlaylistLikeBtn(viewedPlaylist);
+    }
+    await loadLikedPlaylists();
+  } catch (err) {
+    showToast('Error', err.message || 'Could not unlike playlist.', 'error');
+  }
+}
+
+// Accept an invite from the account panel
+async function acceptInvite(playlistId, inviteId) {
+  if (!AUTH.token) return;
+  try {
+    const res = await fetch(`${PLAYLISTS_BASE}/${encodeURIComponent(playlistId)}/invites/accept/${encodeURIComponent(inviteId)}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: AUTH.token }),
+    });
+    const data = await res.json();
+    if (!res.ok) { showToast('Error', data.error || 'Could not accept invite.', 'error'); return; }
+    showToast('Accepted!', 'You joined the playlist.', 'success');
+    await loadSharedWithMe();
+  } catch (err) {
+    showToast('Error', err.message || 'Could not accept invite.', 'error');
+  }
+}
+
+// Decline an invite from the account panel
+async function declineInvite(playlistId, inviteId) {
+  if (!AUTH.token) return;
+  try {
+    const res = await fetch(`${PLAYLISTS_BASE}/${encodeURIComponent(playlistId)}/invites/decline/${encodeURIComponent(inviteId)}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: AUTH.token }),
+    });
+    if (res.ok) { showToast('Declined', 'Invite removed.', 'success'); await loadSharedWithMe(); }
+  } catch (err) {
+    showToast('Error', err.message || 'Could not decline invite.', 'error');
+  }
+}
+
+// Cancel a pending invite (owner, from within the playlist viewer)
+async function cancelInvite(playlistId, inviteId) {
+  if (!AUTH.token || !playlistId || !inviteId) return;
+  try {
+    const res = await fetch(`${PLAYLISTS_BASE}/${encodeURIComponent(playlistId)}/invites/${encodeURIComponent(inviteId)}`, {
+      method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: AUTH.token }),
+    });
+    if (res.ok) {
+      showToast('Cancelled', 'Invite removed.', 'success');
+      if (viewedPlaylist) await openPlaylistViewer(viewedPlaylist.id, true);
+    }
+  } catch (err) {
+    showToast('Error', err.message || 'Could not cancel invite.', 'error');
+  }
+}
+
+// Update a collaborator's role (owner, from within the playlist viewer)
+async function updateCollabRole(playlistId, username, role) {
+  if (!AUTH.token) return;
+  try {
+    const res = await fetch(`${PLAYLISTS_BASE}/${encodeURIComponent(playlistId)}/collaborators/${encodeURIComponent(username)}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: AUTH.token, role }),
+    });
+    const data = await res.json();
+    if (!res.ok) { showToast('Error', data.error || 'Could not update role.', 'error'); return; }
+    showToast('Updated', `@${username} is now ${role}.`, 'success');
+  } catch (err) {
+    showToast('Error', err.message || 'Could not update role.', 'error');
+  }
+}
+
+// Remove a collaborator (owner, from within the playlist viewer)
+async function removeCollab(playlistId, username) {
+  if (!AUTH.token) return;
+  if (!confirm(`Remove @${username} from this playlist?`)) return;
+  try {
+    const res = await fetch(`${PLAYLISTS_BASE}/${encodeURIComponent(playlistId)}/collaborators/${encodeURIComponent(username)}`, {
+      method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: AUTH.token }),
+    });
+    if (res.ok) {
+      showToast('Removed', `@${username} removed.`, 'success');
+      if (viewedPlaylist) await openPlaylistViewer(viewedPlaylist.id, true);
+    }
+  } catch (err) {
+    showToast('Error', err.message || 'Could not remove collaborator.', 'error');
+  }
+}
+
+// Invite button handler (playlist viewer invite row)
+$('collabInviteBtn')?.addEventListener('click', async () => {
+  if (!AUTH.token || !viewedPlaylist) return;
+  const uInput = $('collabInviteUsername');
+  const rInput = $('collabInviteRole');
+  const status = $('collabInviteStatus');
+  const username = (uInput?.value || '').trim().replace(/^@/, '').toLowerCase();
+  const role = rInput?.value || 'viewer';
+  if (!username) { if (status) status.textContent = 'Enter a username.'; return; }
+  if (status) status.textContent = 'Sending invite…';
+  const btn = $('collabInviteBtn');
+  if (btn) btn.disabled = true;
+  try {
+    const res = await fetch(`${PLAYLISTS_BASE}/${encodeURIComponent(viewedPlaylist.id)}/collaborators`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: AUTH.token, username, role }),
+    });
+    const data = await res.json();
+    if (!res.ok) { if (status) status.textContent = data.error || 'Could not send invite.'; return; }
+    if (status) status.textContent = `Invite sent to @${username}.`;
+    if (uInput) uInput.value = '';
+    // Refresh the playlist viewer to show the new pending invite
+    await openPlaylistViewer(viewedPlaylist.id, true);
+  } catch (err) {
+    if (status) status.textContent = err.message || 'Could not send invite.';
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+});
+
+// ─── Activity Feed ───────────────────────────────────────────────────────────
+
+const ACTIVITY_BASE = '/api/activity';
+let activityScope      = 'following';  // 'following' | 'global'
+let activityCursor     = null;         // ISO string — pagination cursor
+let activityLoading    = false;
+let activitySse        = null;
+let activityLastRead   = localStorage.getItem('freq_activity_last_read') || new Date(0).toISOString();
+let activityUnreadCount = 0;
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+const ACTIVITY_ICONS = {
+  follow:           '👤',
+  collab_joined:    '🤝',
+  track_added:      '🎵',
+  playlist_created: '⊞',
+  playlist_updated: '✎',
+  playlist_liked:   '♥',
+};
+
+function activityLabel(event) {
+  const a = escapeHtml(event.actor);
+  const p = event.payload || {};
+  switch (event.type) {
+    case 'follow':
+      return `<strong>@${a}</strong> followed you`;
+    case 'collab_joined':
+      return `<strong>@${a}</strong> joined <span style="color:var(--accent3);cursor:pointer;" onclick="openPlaylistViewer('${p.playlistId}')">${escapeHtml(p.playlistName || 'a playlist')}</span> as ${p.role}`;
+    case 'track_added':
+      return `<strong>@${a}</strong> added <em>${escapeHtml(p.trackTitle || 'a track')}</em> to <span style="color:var(--accent3);cursor:pointer;" onclick="openPlaylistViewer('${p.playlistId}')">${escapeHtml(p.playlistName || 'a playlist')}</span>`;
+    case 'playlist_created':
+      return `<strong>@${a}</strong> created <span style="color:var(--accent3);cursor:pointer;" onclick="openPlaylistViewer('${p.playlistId}')">${escapeHtml(p.playlistName || 'a playlist')}</span>`;
+    case 'playlist_updated':
+      return `<strong>@${a}</strong> updated <span style="color:var(--accent3);cursor:pointer;" onclick="openPlaylistViewer('${p.playlistId}')">${escapeHtml(p.playlistName || 'a playlist')}</span>`;
+    case 'playlist_liked':
+      return `<strong>@${a}</strong> liked <span style="color:var(--accent3);cursor:pointer;" onclick="openPlaylistViewer('${p.playlistId}')">${escapeHtml(p.playlistName || 'a playlist')}</span>`;
+    default:
+      return `<strong>@${a}</strong> did something`;
+  }
+}
+
+function activityTimeAgo(iso) {
+  const diff = Date.now() - new Date(iso).getTime();
+  const s = Math.floor(diff / 1000);
+  if (s < 60)  return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60)  return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24)  return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  return `${d}d ago`;
+}
+
+function renderActivityEvents(events, append = false) {
+  const list = $('activityFeedList');
+  if (!list) return;
+
+  if (!events.length && !append) {
+    list.innerHTML = `<div class="empty-panel" style="padding-top:20px;">${
+      activityScope === 'following'
+        ? 'No activity yet.<br/>Follow some users to see their moves.'
+        : 'No global activity yet.'
+    }</div>`;
+    return;
+  }
+
+  const html = events.map(e => `
+    <div class="activity-event" style="display:flex;gap:8px;padding:7px 0;border-bottom:1px solid var(--border);align-items:flex-start;">
+      <span style="flex-shrink:0;font-size:0.7rem;margin-top:1px;">${ACTIVITY_ICONS[e.type] || '◎'}</span>
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:0.48rem;color:var(--text-main);line-height:1.6;">${activityLabel(e)}</div>
+        <div style="font-size:0.4rem;color:var(--text-muted);margin-top:2px;">${activityTimeAgo(e.createdAt)}</div>
+      </div>
+    </div>
+  `).join('');
+
+  if (append) {
+    list.innerHTML += html;
+  } else {
+    list.innerHTML = html;
+  }
+}
+
+// ── Load feed ────────────────────────────────────────────────────────────────
+
+async function loadActivityFeed(append = false) {
+  if (!AUTH.loggedIn || !AUTH.token) {
+    const list = $('activityFeedList');
+    if (list) list.innerHTML = '<div class="empty-panel" style="padding-top:20px;">Sign in to see activity.</div>';
+    return;
+  }
+  if (activityLoading) return;
+  activityLoading = true;
+
+  try {
+    const params = new URLSearchParams({
+      token: AUTH.token,
+      scope: activityScope,
+      limit: 30,
+    });
+    if (append && activityCursor) params.set('before', activityCursor);
+
+    const res  = await fetch(`${ACTIVITY_BASE}/feed?${params}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not load feed.');
+
+    const events = data.events || [];
+    activityCursor = data.nextCursor || null;
+
+    renderActivityEvents(events, append);
+
+    // Load more button
+    const lm = $('activityLoadMore');
+    if (lm) lm.style.display = activityCursor ? 'block' : 'none';
+
+    // Mark as read
+    if (!append && events.length) {
+      activityLastRead = new Date().toISOString();
+      localStorage.setItem('freq_activity_last_read', activityLastRead);
+      setActivityBadge(0);
+    }
+  } catch (err) {
+    console.error('[loadActivityFeed]', err);
+  } finally {
+    activityLoading = false;
+  }
+}
+
+// ── Scope tabs ────────────────────────────────────────────────────────────────
+
+document.querySelectorAll('.activity-scope-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.activity-scope-btn').forEach(b => {
+      b.classList.remove('active');
+      b.style.background = 'none';
+      b.style.color = 'var(--text-muted)';
+    });
+    btn.classList.add('active');
+    btn.style.background = 'var(--surface2)';
+    btn.style.color = 'var(--accent)';
+    activityScope  = btn.dataset.scope;
+    activityCursor = null;
+    loadActivityFeed();
+  });
+});
+
+$('activityRefreshBtn')?.addEventListener('click', () => {
+  activityCursor = null;
+  loadActivityFeed();
+});
+
+$('activityLoadMoreBtn')?.addEventListener('click', () => loadActivityFeed(true));
+
+// ── Unread badge ──────────────────────────────────────────────────────────────
+
+function setActivityBadge(count) {
+  activityUnreadCount = count;
+  const badge = $('activityBadge');
+  if (!badge) return;
+  if (count > 0) {
+    badge.style.display = 'inline';
+    badge.textContent = count > 99 ? '99+' : count;
+  } else {
+    badge.style.display = 'none';
+  }
+}
+
+async function pollActivityUnread() {
+  if (!AUTH.loggedIn || !AUTH.token) return;
+  try {
+    const params = new URLSearchParams({ token: AUTH.token, since: activityLastRead });
+    const res  = await fetch(`${ACTIVITY_BASE}/unread?${params}`);
+    const data = await res.json();
+    if (data.count > 0) setActivityBadge(data.count);
+  } catch (_) {}
+}
+
+// ── SSE connection ────────────────────────────────────────────────────────────
+
+function activitySseConnect() {
+  if (activitySse) return; // already connected
+  if (!AUTH.loggedIn || !AUTH.token) return;
+  activitySse = new EventSource(
+    `${ACTIVITY_BASE}/feed/realtime?token=${encodeURIComponent(AUTH.token)}`
+  );
+  activitySse.addEventListener('message', (e) => {
+    try {
+      const event = JSON.parse(e.data);
+      // If the activity panel is open and showing the right scope, prepend live
+      if (state.sidebarView === 'activity') {
+        // Check if this event belongs to the current scope
+        const relevant = activityScope === 'global' || isEventForFollowingFeed(event);
+        if (relevant) {
+          activityLastRead = new Date().toISOString();
+          localStorage.setItem('freq_activity_last_read', activityLastRead);
+          prependActivityEvent(event);
+          return;
+        }
+      }
+      // Otherwise update badge
+      const relevant = isEventForFollowingFeed(event);
+      if (relevant) setActivityBadge(activityUnreadCount + 1);
+    } catch (_) {}
+  });
+}
+
+function isEventForFollowingFeed(event) {
+  // An event belongs in the following feed if it's targeted at us
+  // (server already handles the "is this actor someone I follow" query side;
+  //  here we just show all SSE events in global, and targeted ones for following)
+  return event.targetUser === AUTH.username || activityScope === 'global';
+}
+
+function prependActivityEvent(event) {
+  const list = $('activityFeedList');
+  if (!list) return;
+  // Remove empty state if present
+  const empty = list.querySelector('.empty-panel');
+  if (empty) empty.remove();
+
+  const div = document.createElement('div');
+  div.className = 'activity-event';
+  div.style.cssText = 'display:flex;gap:8px;padding:7px 0;border-bottom:1px solid var(--border);align-items:flex-start;';
+  div.innerHTML = `
+    <span style="flex-shrink:0;font-size:0.7rem;margin-top:1px;">${ACTIVITY_ICONS[event.type] || '◎'}</span>
+    <div style="flex:1;min-width:0;">
+      <div style="font-size:0.48rem;color:var(--text-main);line-height:1.6;">${activityLabel(event)}</div>
+      <div style="font-size:0.4rem;color:var(--text-muted);margin-top:2px;">just now</div>
+    </div>
+  `;
+  list.prepend(div);
+}
+
+function activitySseDisconnect() {
+  if (activitySse) { activitySse.close(); activitySse = null; }
+}
+
+// ── Hook into sidebar tab switch to load feed on first open ──────────────────
+// Wrap the existing sidebar tab listener to intercept 'activity'
+const _origSidebarClick = document.querySelector('.sidebar-header');
+document.querySelectorAll('.sidebar-view-btn').forEach(btn => {
+  if (btn.dataset.view === 'activity') {
+    btn.addEventListener('click', () => {
+      // Mark read when opening the panel
+      activityLastRead = new Date().toISOString();
+      localStorage.setItem('freq_activity_last_read', activityLastRead);
+      setActivityBadge(0);
+      activityCursor = null;
+      loadActivityFeed();
+    });
+  }
+  if (btn.dataset.view === 'charts') {
+    btn.addEventListener('click', () => loadCharts());
+  }
+});
+$('chartsRefreshBtn')?.addEventListener('click', () => loadCharts());
+
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+function activityInit() {
+  if (!AUTH.loggedIn || !AUTH.token) return;
+  activitySseConnect();
+  // Poll for unread count every 60s as a fallback
+  setInterval(pollActivityUnread, 60_000);
+  pollActivityUnread();
+}
+
 // ─── Server sync helpers ──────────────────────────────────────────────────────
 async function serverSync(silent) {
   if (!AUTH.loggedIn || !AUTH.token) return;
@@ -3315,6 +4455,8 @@ function handleTokenExpiry() {
   AUTH.loggedIn = false; AUTH.token = null; AUTH.username = ''; AUTH.name = ''; AUTH.playlists = [];
   localStorage.removeItem('freq_token_v4');
   updateAuthUI();
+  activitySseDisconnect();
+  setActivityBadge(0);
   showToast('Session expired', 'Please sign in again.', 'error');
 }
 
@@ -3335,6 +4477,9 @@ async function authInit() {
     AUTH.playlists = data.playlists || [];
     updateAuthUI();
     setSyncStatus(`✓ Session restored · ${AUTH.playlists.length} playlists`, 'var(--accent3)');
+    loadSharedWithMe();
+    loadLikedPlaylists();
+    activityInit();
   } catch (err) {
     // Server offline — gracefully skip, don't nuke the token
     setSyncStatus('Server offline — working locally', 'var(--text-muted)');
@@ -3359,6 +4504,9 @@ $('signinSubmit').addEventListener('click', async () => {
     AUTH.playlists = data.playlists || [];
     localStorage.setItem('freq_token_v4', AUTH.token);
     updateAuthUI();
+    loadSharedWithMe();
+    loadLikedPlaylists();
+    activityInit();
     errEl.classList.remove('show');
     $('signinPassword').value = ''; $('signinUsername').value = '';
     showToast('Welcome back!', AUTH.name, 'success');
@@ -4896,6 +6044,7 @@ function playItem(index) {
   nowPlatform.textContent = `${cfg.label} · ${item.type}`;
   nowDot.style.display    = 'block';
   pushHistory(item);
+  logPlay(item);
 
   if (item.platform === 'local') {
     welcomeScreen.style.display = 'none';
@@ -6324,7 +7473,7 @@ async function sendSupportReport() {
     browser:       env.browser,
     page_url:      window.location.href,
     ticket_id:     ticketId,
-    freq_version:  '4.3',
+    freq_version:  '4.5',
     user_account:  AUTH.loggedIn ? AUTH.username : 'Guest',
     queue_context: queueContext,
   };
