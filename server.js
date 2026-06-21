@@ -2690,53 +2690,6 @@ app.get('/api/playlists/mine', async (req, res) => {
 // profiles pattern exactly: existence of a private playlist must not be
 // distinguishable from "no playlist with that id" by an unauthenticated
 // or non-owner request.
-app.get('/api/playlists/:id', async (req, res) => {
-  const { id } = req.params;
-  try {
-    const playlist = await dbGetPlaylist(id);
-    if (!playlist) return res.status(404).json({ error: 'Playlist not found.' });
-
-    const token = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
-    const sess  = await dbGetSession(token);
-    const isOwner = !!(sess && sess.username === playlist.owner);
-    const collabRole = (!isOwner && sess)
-      ? await dbGetCollabRole(id, sess.username)
-      : null;
-    const isEditor = isOwner || collabRole === 'editor';
-    const canView  = isOwner || collabRole !== null || playlist.is_public;
-
-    if (!canView) {
-      return res.status(404).json({ error: 'Playlist not found.' });
-    }
-
-    const tracks = await dbGetPlaylistTracks(id);
-    let collaborators = [];
-    let pendingInvites = [];
-    if (isOwner) {
-      [collaborators, pendingInvites] = await Promise.all([
-        dbGetCollaborators(id),
-        dbGetPendingInvites(id),
-      ]);
-    } else if (collabRole) {
-      collaborators = await dbGetCollaborators(id);
-    }
-    const likedByMe = sess ? await dbHasLiked(id, sess.username) : false;
-    return res.json({
-      id: playlist.id, owner: playlist.owner, name: playlist.name,
-      description: playlist.description, isPublic: playlist.is_public,
-      trackCount: playlist.track_count, isOwner,
-      likeCount: playlist.like_count || 0, likedByMe,
-      collabRole: collabRole || null, isEditor,
-      collaborators, pendingInvites,
-      tracks: tracks.map(t => ({
-        rowId: t.id, ...t.track_data, addedBy: t.added_by, addedAt: t.added_at,
-      })),
-    });
-  } catch (err) {
-    console.error('[playlists get]', err);
-    return res.status(500).json({ error: 'Could not load playlist.' });
-  }
-});
 
 app.patch('/api/playlists/:id', playlistRateLimit, async (req, res) => {
   const sess = req._session;
@@ -2895,6 +2848,53 @@ app.get('/api/playlists/liked', async (req, res) => {
   }
 });
 
+app.get('/api/playlists/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const playlist = await dbGetPlaylist(id);
+    if (!playlist) return res.status(404).json({ error: 'Playlist not found.' });
+
+    const token = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
+    const sess  = await dbGetSession(token);
+    const isOwner = !!(sess && sess.username === playlist.owner);
+    const collabRole = (!isOwner && sess)
+      ? await dbGetCollabRole(id, sess.username)
+      : null;
+    const isEditor = isOwner || collabRole === 'editor';
+    const canView  = isOwner || collabRole !== null || playlist.is_public;
+
+    if (!canView) {
+      return res.status(404).json({ error: 'Playlist not found.' });
+    }
+
+    const tracks = await dbGetPlaylistTracks(id);
+    let collaborators = [];
+    let pendingInvites = [];
+    if (isOwner) {
+      [collaborators, pendingInvites] = await Promise.all([
+        dbGetCollaborators(id),
+        dbGetPendingInvites(id),
+      ]);
+    } else if (collabRole) {
+      collaborators = await dbGetCollaborators(id);
+    }
+    const likedByMe = sess ? await dbHasLiked(id, sess.username) : false;
+    return res.json({
+      id: playlist.id, owner: playlist.owner, name: playlist.name,
+      description: playlist.description, isPublic: playlist.is_public,
+      trackCount: playlist.track_count, isOwner,
+      likeCount: playlist.like_count || 0, likedByMe,
+      collabRole: collabRole || null, isEditor,
+      collaborators, pendingInvites,
+      tracks: tracks.map(t => ({
+        rowId: t.id, ...t.track_data, addedBy: t.added_by, addedAt: t.added_at,
+      })),
+    });
+  } catch (err) {
+    console.error('[playlists get]', err);
+    return res.status(500).json({ error: 'Could not load playlist.' });
+  }
+});
 // ═══════════════════════════════════════════════════════════════════════════════
 //  COMMUNITY CHARTS — play tracking + rankings
 //  POST /api/plays                { originalUrl, platform?, title?, token? }
