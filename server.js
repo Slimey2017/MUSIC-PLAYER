@@ -53,6 +53,9 @@
  * POST   /api/plays                            { originalUrl, platform?, title?, token? }
  * GET    /api/charts/tracks                    ?window=all|7d&limit=
  *
+ * GET    /api/discover/playlists                ?sort=likes|recent&limit=
+ * GET    /api/discover/profiles                 ?limit=&token=
+ *
  * ─── New in v4.1 ─────────────────────────────────────────────────────────────
  *   - POST /api/yt/tracks  — scrapes YouTube playlist/video tracks, no API key
  *   - GET  /api/yt/embed-check — detects embed-blocked videos via oEmbed
@@ -576,6 +579,39 @@ async function recomputeWeeklyPlayCounts() {
 // without turning this into a per-request cost on every Charts page load.
 setInterval(recomputeWeeklyPlayCounts, 10 * 60 * 1000);
 recomputeWeeklyPlayCounts(); // run once at boot so play_count_7d isn't empty until the first interval fires
+
+// ─── Discovery ───────────────────────────────────────────────────────────────
+// Every existing playlist/profile query in this file is scoped to a single
+// owner or username (dbGetUserPlaylists(owner), dbGetProfile(username),
+// etc) — there has never been a "browse everything public" query, because
+// nothing before Discovery needed one. These two helpers are the first
+// cross-user reads in the app and lean on the partial indexes added
+// alongside this feature (idx_playlists_v2_public_likes,
+// idx_playlists_v2_public_recent, idx_profiles_public_followers).
+
+async function dbDiscoverPlaylists({ sort = 'likes', limit = 30 } = {}) {
+  let q = supabase.from('playlists_v2').select('*').eq('is_public', true);
+  q = sort === 'recent'
+    ? q.order('updated_at', { ascending: false })
+    : q.order('like_count', { ascending: false }).order('updated_at', { ascending: false });
+  const { data, error } = await q.limit(limit);
+  if (error) { console.error('[db] discoverPlaylists:', error.message); return []; }
+  return data || [];
+}
+
+// Public profiles ranked by follower_count, as a simple "who's around"
+// surface. Excludes the requester's own profile (seeing yourself on a
+// "discover people" list is a known confusing pattern in other apps —
+// nothing to discover about an account you already own) when a session is
+// supplied; omitted entirely for anonymous requests.
+async function dbDiscoverProfiles({ limit = 20, excludeUsername = null } = {}) {
+  let q = supabase.from('profiles').select('*').eq('is_public', true)
+    .order('follower_count', { ascending: false });
+  if (excludeUsername) q = q.neq('username', excludeUsername);
+  const { data, error } = await q.limit(limit);
+  if (error) { console.error('[db] discoverProfiles:', error.message); return []; }
+  return data || [];
+}
 
 // ─── Collaboration helpers ─────────────────────────────────────────────────
 // Role check: returns 'owner' | 'editor' | 'viewer' | null (no access)
@@ -2506,6 +2542,56 @@ app.get('/api/charts/tracks', async (req, res) => {
   } catch (err) {
     console.error('[charts tracks]', err);
     return res.status(500).json({ error: 'Could not load charts.' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  DISCOVERY
+//  GET /api/discover/playlists   ?sort=likes|recent&limit=
+//  GET /api/discover/profiles    ?limit=&token=
+//
+//  Both are read-only and intentionally unauthenticated-friendly — Discovery
+//  is meant to work for a visitor who hasn't signed in yet, same philosophy
+//  as Charts. token on /profiles is optional and only used to exclude the
+//  requester's own profile from the result (see dbDiscoverProfiles).
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const DISCOVER_MAX_LIMIT = 50;
+
+app.get('/api/discover/playlists', async (req, res) => {
+  const sort  = req.query.sort === 'recent' ? 'recent' : 'likes';
+  const limit = Math.min(Math.max(Number(req.query.limit) || 30, 1), DISCOVER_MAX_LIMIT);
+  try {
+    const rows = await dbDiscoverPlaylists({ sort, limit });
+    return res.json({
+      sort,
+      playlists: rows.map(p => ({
+        id: p.id, owner: p.owner, name: p.name, description: p.description,
+        trackCount: p.track_count, likeCount: p.like_count || 0,
+        updatedAt: p.updated_at,
+      })),
+    });
+  } catch (err) {
+    console.error('[discover playlists]', err);
+    return res.status(500).json({ error: 'Could not load discovery playlists.' });
+  }
+});
+
+app.get('/api/discover/profiles', async (req, res) => {
+  const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), DISCOVER_MAX_LIMIT);
+  try {
+    const token = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
+    const sess  = token ? await dbGetSession(token) : null;
+    const rows  = await dbDiscoverProfiles({ limit, excludeUsername: sess ? sess.username : null });
+    return res.json({
+      profiles: rows.map(p => ({
+        username: p.username, displayName: p.display_name, bio: p.bio,
+        followerCount: p.follower_count, followingCount: p.following_count,
+      })),
+    });
+  } catch (err) {
+    console.error('[discover profiles]', err);
+    return res.status(500).json({ error: 'Could not load discovery profiles.' });
   }
 });
 
