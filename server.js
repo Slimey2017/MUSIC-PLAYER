@@ -483,6 +483,362 @@ async function dbGetLikedPlaylists(username) {
     }));
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+//  ARTISTS
+// ═══════════════════════════════════════════════════════════════════════════════
+// An artist is EITHER an auto-created metadata row (account_id NULL — exists
+// purely because tracks with that artist name have been played/uploaded; no
+// one can sign in as it, its page is read-only to everyone) OR a claimed row
+// (account_id set — a real FREQ account owns it and can edit name/bio/
+// avatar/banner). Both are the exact same row shape and go through the exact
+// same API — claiming is just an UPDATE, never a data migration. See the
+// migration comments on the `artists` table for the full reasoning.
+//
+// normalizeArtistName is the dedup key generator: lowercase, trim, collapse
+// internal whitespace, strip a leading "the " and trailing "(official)"/
+// "- topic" noise that's common in scraped/ID3 metadata. This intentionally
+// stays simple (no fuzzy/Levenshtein matching) — exact-after-normalization
+// is the right tradeoff for now: it merges "Drake" / "drake " / "DRAKE"
+// without any risk of merging two actually-different artists who happen to
+// have similar names, which a fuzzy matcher could do silently and
+// incorrectly.
+function normalizeArtistName(raw) {
+  if (!raw || typeof raw !== 'string') return null;
+  let s = raw.trim().toLowerCase();
+  if (!s) return null;
+  s = s.replace(/\s+/g, ' ');
+  s = s.replace(/^the\s+/, '');
+  s = s.replace(/\s*-\s*topic$/, '');       // YouTube auto-generated "Artist - Topic" channels
+  s = s.replace(/\s*\(official\)$/, '');
+  s = s.trim();
+  return s || null;
+}
+
+// Resolves an artist name to an artists.id, creating an unclaimed row if no
+// existing artist (claimed or not) matches the normalized name. Read-first,
+// same shape as dbGetOrCreateTrack just above this for the identical reason:
+// this runs on every play that carries an artist name, so the common case
+// (artist already exists) should cost one SELECT, not an upsert.
+//
+// Ties to a CLAIMED artist take priority over creating a new unclaimed row
+// when both could match — in practice this only matters once claiming
+// exists at all, but the query order (search all artists by
+// normalized_name, not just unclaimed ones) means a claimed artist always
+// "wins" their own name without any special-case code needed here.
+async function dbResolveArtist(rawName) {
+  const normalized = normalizeArtistName(rawName);
+  if (!normalized) return null;
+
+  const { data: existing } = await supabase
+    .from('artists').select('id').eq('normalized_name', normalized).limit(1).maybeSingle();
+  if (existing) return existing.id;
+
+  // Plain insert + catch-the-unique-violation, NOT .upsert() — the
+  // uniqueness guarantee here lives on a PARTIAL index
+  // (idx_artists_normalized_name_unclaimed, WHERE account_id IS NULL), and
+  // supabase-js's upsert() onConflict target can't express a WHERE clause,
+  // so it can't target a partial index at all. A plain insert naturally
+  // hits that same partial index's constraint and raises 23505 on conflict,
+  // which is the same race-handling shape dbFollowUser already uses below
+  // for an ordinary (non-partial) unique constraint.
+  const { data, error } = await supabase
+    .from('artists')
+    .insert({ name: rawName.trim(), normalized_name: normalized })
+    .select('id')
+    .single();
+  if (!error) {
+    // No need to insert into artist_stats here — trg_seed_artist_stats
+    // (AFTER INSERT on artists) already created that row atomically as
+    // part of the insert above. An earlier version of this function
+    // duplicated that insert manually, which meant every single new-artist
+    // creation silently threw and discarded a primary-key-violation error
+    // on a redundant round-trip. Removed rather than left as dead code.
+    return data.id;
+  }
+  if (error.code !== '23505') { console.error('[db] resolveArtist:', error.message); return null; }
+  // Lost the race to a concurrent request creating the same artist —
+  // re-select rather than treat this as a failure.
+  const { data: row2 } = await supabase
+    .from('artists').select('id').eq('normalized_name', normalized).maybeSingle();
+  return row2 ? row2.id : null;
+}
+
+async function dbGetArtist(idOrAccountUsername) {
+  // Accepts either an artists.id (uuid) or, for the "view my own claimed
+  // artist page" convenience case, an account username — callers that
+  // already know which they have should prefer the more specific
+  // dbGetArtistById/dbGetArtistByAccount below; this exists for the route
+  // layer where a single :id path param could plausibly be either in a
+  // future "vanity URL" sense. Today it's only ever called with a uuid.
+  return dbGetArtistById(idOrAccountUsername);
+}
+
+async function dbGetArtistById(id) {
+  const { data, error } = await supabase.from('artists').select('*').eq('id', id).maybeSingle();
+  if (error) { console.error('[db] getArtistById:', error.message); return null; }
+  return data;
+}
+
+async function dbGetArtistByAccount(username) {
+  const { data, error } = await supabase.from('artists').select('*').eq('account_id', username).maybeSingle();
+  if (error) { console.error('[db] getArtistByAccount:', error.message); return null; }
+  return data;
+}
+
+async function dbGetArtistStats(artistId) {
+  const { data, error } = await supabase.from('artist_stats').select('*').eq('artist_id', artistId).maybeSingle();
+  if (error) { console.error('[db] getArtistStats:', error.message); return null; }
+  return data;
+}
+
+// Paginated artist directory — GET /api/artists. Default sort is
+// follower_count since that's the most legible "who matters here" signal
+// without requiring a join into artist_stats for the common listing case;
+// sort=trending joins artist_stats for total_plays_7d instead.
+async function dbListArtists({ sort = 'followers', limit = 30, offset = 0, search = null } = {}) {
+  if (sort === 'trending') {
+    const { data, error } = await supabase
+      .from('artist_stats')
+      .select('artist_id, total_plays_7d, artists!inner(*)')
+      .order('total_plays_7d', { ascending: false })
+      .range(offset, offset + limit - 1);
+    if (error) { console.error('[db] listArtists trending:', error.message); return []; }
+    return (data || []).map(r => r.artists);
+  }
+  let q = supabase.from('artists').select('*');
+  if (search) q = q.ilike('name', `%${search}%`);
+  q = sort === 'recent' ? q.order('created_at', { ascending: false }) : q.order('follower_count', { ascending: false });
+  const { data, error } = await q.range(offset, offset + limit - 1);
+  if (error) { console.error('[db] listArtists:', error.message); return []; }
+  return data || [];
+}
+
+async function dbUpdateArtist(artistId, patch) {
+  const { data, error } = await supabase
+    .from('artists').update({ ...patch, updated_at: new Date().toISOString() })
+    .eq('id', artistId).select().single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+// ── Artist tracks (top tracks / most liked / trending) ─────────────────────
+// "Most liked tracks" is intentionally NOT wired to a real number yet — see
+// the artist_stats migration comment: FREQ has playlist likes, not
+// per-track likes, so there is no honest source for this today. Rather than
+// fabricate a number, likeCount is always 0 here until a track-like feature
+// ships; the field exists in the response shape now so the frontend/API
+// contract doesn't change later, only the value starts becoming real.
+async function dbGetArtistTracks(artistId, { sort = 'plays', limit = 20 } = {}) {
+  const col = sort === 'trending' ? 'play_count_7d' : 'play_count';
+  const { data, error } = await supabase
+    .from('tracks')
+    .select('id, original_url, platform, title, play_count, play_count_7d, last_played_at')
+    .eq('artist_id', artistId)
+    .order(col, { ascending: false })
+    .limit(limit);
+  if (error) { console.error('[db] getArtistTracks:', error.message); return []; }
+  return data || [];
+}
+
+// ── Artist follows ──────────────────────────────────────────────────────────
+// Mirrors dbFollowUser/dbUnfollowUser/dbIsFollowing exactly, just against
+// artist_followers instead of follows. follower_count itself is maintained
+// by the trg_artist_follower_counts trigger (see migration), not here — these
+// helpers only ever touch artist_followers; nothing here writes to
+// artists.follower_count directly, by design, so there's exactly one place
+// that number can be wrong: the trigger, not N call sites.
+async function dbFollowArtist(followerUsername, artistId) {
+  const { error } = await supabase.from('artist_followers').insert({
+    artist_id: artistId, follower_username: followerUsername,
+  });
+  if (error) {
+    if (error.code === '23505') return false; // already following
+    throw new Error(error.message);
+  }
+  return true;
+}
+
+async function dbUnfollowArtist(followerUsername, artistId) {
+  const { error } = await supabase.from('artist_followers')
+    .delete().eq('artist_id', artistId).eq('follower_username', followerUsername);
+  if (error) throw new Error(error.message);
+}
+
+async function dbIsFollowingArtist(followerUsername, artistId) {
+  const { data, error } = await supabase.from('artist_followers')
+    .select('artist_id').eq('artist_id', artistId).eq('follower_username', followerUsername).maybeSingle();
+  if (error) { console.error('[db] isFollowingArtist:', error.message); return false; }
+  return !!data;
+}
+
+// ── Artist releases (discography) ───────────────────────────────────────────
+async function dbGetArtistReleases(artistId, { type = null } = {}) {
+  let q = supabase.from('artist_releases').select('*').eq('artist_id', artistId);
+  if (type) q = q.eq('release_type', type);
+  const { data, error } = await q.order('release_date', { ascending: false, nullsFirst: false });
+  if (error) { console.error('[db] getArtistReleases:', error.message); return []; }
+  return data || [];
+}
+
+async function dbCreateRelease(artistId, { title, releaseType, coverUrl, releaseDate }) {
+  const { data, error } = await supabase.from('artist_releases').insert({
+    artist_id: artistId, title, release_type: releaseType,
+    cover_url: coverUrl || null, release_date: releaseDate || null,
+  }).select().single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+// Adds a track to a release at the next position, then refreshes the
+// release's track_count — same maintained-in-app-code pattern as
+// dbAddTrackToPlaylist's track_count, for the same reason (no trigger
+// justified for a count this simple, see that function's comment).
+async function dbAddTrackToRelease(releaseId, trackId) {
+  const { count } = await supabase
+    .from('artist_release_tracks').select('id', { count: 'exact', head: true }).eq('release_id', releaseId);
+  const position = count || 0;
+  const { error } = await supabase.from('artist_release_tracks').insert({
+    release_id: releaseId, track_id: trackId, position,
+  });
+  if (error) throw new Error(error.message);
+  await supabase.from('artist_releases').update({ track_count: position + 1, updated_at: new Date().toISOString() }).eq('id', releaseId);
+}
+
+async function dbGetReleaseTracks(releaseId) {
+  const { data, error } = await supabase
+    .from('artist_release_tracks')
+    .select('position, tracks(id, original_url, platform, title, play_count)')
+    .eq('release_id', releaseId)
+    .order('position', { ascending: true });
+  if (error) { console.error('[db] getReleaseTracks:', error.message); return []; }
+  return (data || []).filter(r => r.tracks).map(r => ({ ...r.tracks, position: r.position }));
+}
+
+// ── Periodic recompute: artist_stats + release rollups + artist chart rank ──
+// Same philosophy as recomputeWeeklyPlayCounts: aggregate queries that don't
+// need per-request freshness run on a timer instead of on every page view.
+// Three things happen per pass:
+//   1. total_plays / total_plays_7d per artist — summed from tracks, the
+//      table that already carries both numbers per-track.
+//   2. monthly_listeners — distinct usernames in track_plays over the
+//      trailing 30 days, joined through tracks.artist_id. Anonymous plays
+//      (username IS NULL) are correctly excluded — "listeners" means
+//      identifiable people, an anonymous play has no listener to count.
+//   3. chart_rank — every artist ranked by total_plays_7d descending;
+//      chart_rank_prev is set to whatever chart_rank WAS before this pass
+//      overwrites it, which is what makes "weekly movement" computable
+//      (chart_rank_prev - chart_rank: positive = climbed, negative = fell).
+async function recomputeArtistStats() {
+  try {
+    const { data: artists, error: artistsErr } = await supabase.from('artists').select('id');
+    if (artistsErr) { console.error('[artists] recompute fetch artists:', artistsErr.message); return; }
+    if (!artists || !artists.length) return;
+
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+
+    // Pull every artist's track totals in one query rather than N queries —
+    // important here specifically because this job's cost scales with
+    // artist count, unlike recomputeWeeklyPlayCounts which scales with
+    // track count and was already doing this.
+    const { data: trackRows, error: tracksErr } = await supabase
+      .from('tracks').select('artist_id, play_count, play_count_7d').not('artist_id', 'is', null);
+    if (tracksErr) { console.error('[artists] recompute fetch tracks:', tracksErr.message); return; }
+
+    const totals = new Map(); // artist_id -> { plays, plays7d }
+    for (const t of trackRows || []) {
+      const cur = totals.get(t.artist_id) || { plays: 0, plays7d: 0 };
+      cur.plays += t.play_count || 0;
+      cur.plays7d += t.play_count_7d || 0;
+      totals.set(t.artist_id, cur);
+    }
+
+    // Monthly listeners: distinct (artist_id, username) pairs from plays in
+    // the last 30 days, joined through tracks. One query, grouped client-side
+    // (Supabase's JS client has no GROUP BY; for this table's realistic size
+    // — thousands, not millions, of rows per month — pulling raw rows and
+    // reducing in Node is simpler and fast enough, the same tradeoff already
+    // made in recomputeWeeklyPlayCounts).
+    const { data: playRows, error: playsErr } = await supabase
+      .from('track_plays')
+      .select('username, tracks!inner(artist_id)')
+      .gte('played_at', thirtyDaysAgo)
+      .not('username', 'is', null);
+    if (playsErr) { console.error('[artists] recompute fetch plays:', playsErr.message); return; }
+
+    const listenerSets = new Map(); // artist_id -> Set(username)
+    for (const p of playRows || []) {
+      const aid = p.tracks?.artist_id;
+      if (!aid) continue;
+      if (!listenerSets.has(aid)) listenerSets.set(aid, new Set());
+      listenerSets.get(aid).add(p.username);
+    }
+
+    // Rank by total_plays_7d desc for chart_rank. Artists with zero plays
+    // get NULL rank (unranked), not a rank at the bottom of an arbitrary
+    // tie-break order — "unranked" is a more honest state than "last place"
+    // for an artist nobody has played yet.
+    const ranked = [...totals.entries()]
+      .filter(([, t]) => t.plays7d > 0)
+      .sort((a, b) => b[1].plays7d - a[1].plays7d);
+    const rankByArtist = new Map(ranked.map(([id], i) => [id, i + 1]));
+
+    const { data: prevStats } = await supabase.from('artist_stats').select('artist_id, chart_rank');
+    const prevRankByArtist = new Map((prevStats || []).map(r => [r.artist_id, r.chart_rank]));
+
+    for (const artist of artists) {
+      const t = totals.get(artist.id) || { plays: 0, plays7d: 0 };
+      const monthlyListeners = listenerSets.get(artist.id)?.size || 0;
+      const newRank = rankByArtist.get(artist.id) ?? null;
+      const prevRank = prevRankByArtist.get(artist.id) ?? null;
+      await supabase.from('artist_stats').upsert({
+        artist_id: artist.id,
+        total_plays: t.plays,
+        total_plays_7d: t.plays7d,
+        monthly_listeners: monthlyListeners,
+        chart_rank: newRank,
+        chart_rank_prev: prevRank,
+        computed_at: new Date().toISOString(),
+      }, { onConflict: 'artist_id' });
+    }
+  } catch (err) {
+    console.error('[artists] recompute failed:', err);
+  }
+}
+// Same 10-minute cadence as recomputeWeeklyPlayCounts, and for the same
+// reason — frequent enough that an artist page or chart feels responsive
+// to recent activity without paying this query's cost on every request.
+setInterval(recomputeArtistStats, 10 * 60 * 1000);
+recomputeArtistStats(); // run once at boot
+
+// Separate rate-limit bucket from followRateLimit (user follows) — an
+// artist page realistically gets followed/unfollowed in quick succession
+// while someone's browsing a directory of several artists, which is
+// different traffic shape than following individual users one at a time.
+// Same 30/min ceiling and same session-resolving structure either way.
+async function artistFollowRateLimit(req, res, next) {
+  const token = req.body?.token || (req.headers.authorization || '').replace('Bearer ', '');
+  const sess  = await dbGetSession(token);
+  req._followSession = sess;
+  if (!sess) return next();
+  const key = sess.username;
+  const now = Date.now();
+  const times = (artistFollowRateLimitHits.get(key) || []).filter(t => now - t < 60_000);
+  times.push(now);
+  artistFollowRateLimitHits.set(key, times);
+  if (times.length > 30) {
+    return res.status(429).json({ error: 'Too many follow/unfollow actions. Please slow down.' });
+  }
+  next();
+}
+const artistFollowRateLimitHits = new Map();
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, times] of artistFollowRateLimitHits) {
+    const fresh = times.filter(t => now - t < 60_000);
+    if (!fresh.length) artistFollowRateLimitHits.delete(key); else artistFollowRateLimitHits.set(key, fresh);
+  }
+}, 300_000);
+
 // ─── Community Charts (track plays) ─────────────────────────────────────────
 // `tracks` is the first canonical-track table in FREQ — playlist_tracks
 // deliberately stores track_data as verbatim jsonb (see the comment above
@@ -499,18 +855,35 @@ async function dbGetLikedPlaylists(username) {
 // increment-only counter would never decrease as old plays age out of the
 // window.
 
-async function dbGetOrCreateTrack(originalUrl, platform, title) {
+async function dbGetOrCreateTrack(originalUrl, platform, title, artistName) {
   // Try the read path first — this runs on every single play, so the common
   // case (track already exists) should be one SELECT, not an upsert churning
   // the row's defaults every time.
   const { data: existing } = await supabase
-    .from('tracks').select('id').eq('original_url', originalUrl).maybeSingle();
-  if (existing) return existing.id;
+    .from('tracks').select('id, artist_id, artist_name').eq('original_url', originalUrl).maybeSingle();
+  if (existing) {
+    // Backfill artist linkage on a track that was first played before its
+    // artist name was available (e.g. an old YouTube-resolved play, then
+    // later the same originalUrl shows up again with ID3 data attached —
+    // not how this actually happens today since URLs are platform-specific,
+    // but cheap correctness insurance for any future source that re-plays
+    // the same originalUrl with richer metadata than it had the first time).
+    if (!existing.artist_id && artistName) {
+      const artistId = await dbResolveArtist(artistName);
+      if (artistId) {
+        await supabase.from('tracks').update({ artist_id: artistId, artist_name: artistName }).eq('id', existing.id);
+      }
+    }
+    return existing.id;
+  }
 
+  const artistId = artistName ? await dbResolveArtist(artistName) : null;
   const { data, error } = await supabase
     .from('tracks')
-    .upsert({ original_url: originalUrl, platform: platform || null, title: title || null },
-            { onConflict: 'original_url', ignoreDuplicates: true })
+    .upsert({
+      original_url: originalUrl, platform: platform || null, title: title || null,
+      artist_name: artistName || null, artist_id: artistId,
+    }, { onConflict: 'original_url', ignoreDuplicates: true })
     .select('id')
     .maybeSingle();
   if (error) throw new Error(error.message);
@@ -535,8 +908,8 @@ setInterval(() => {
   for (const [key, t] of recentPlayKeys) if (t < cutoff) recentPlayKeys.delete(key);
 }, 120_000);
 
-async function dbLogPlay(originalUrl, { platform, title, username, listenerKey }) {
-  const trackId = await dbGetOrCreateTrack(originalUrl, platform, title);
+async function dbLogPlay(originalUrl, { platform, title, username, listenerKey, artistName }) {
+  const trackId = await dbGetOrCreateTrack(originalUrl, platform, title, artistName);
   if (!trackId) return null;
 
   const cooldownKey = `${trackId}:${listenerKey || username || 'anon'}`;
@@ -2542,7 +2915,7 @@ app.get('/api/playlists/liked', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 app.post('/api/plays', rateLimit, async (req, res) => {
-  const { originalUrl, platform, title, token } = req.body || {};
+  const { originalUrl, platform, title, artist, token } = req.body || {};
   if (!originalUrl || typeof originalUrl !== 'string') {
     return res.status(400).json({ error: '"originalUrl" is required.' });
   }
@@ -2552,6 +2925,7 @@ app.post('/api/plays', rateLimit, async (req, res) => {
     const result = await dbLogPlay(originalUrl, {
       platform: platform || null,
       title: title || null,
+      artistName: (typeof artist === 'string' && artist.trim()) ? artist.trim() : null,
       username: sess ? sess.username : null,
       listenerKey,
     });
@@ -2649,7 +3023,17 @@ app.get('/api/discover/profiles', async (req, res) => {
 // actor      = who did the thing
 // target_user = who should see it in their personal feed
 //               (NULL = global-only event; personal events always also appear globally)
-// payload    = JSONB with event-specific fields
+// payload    = JSONB with event-specific fields, stored in the `meta` column
+//              (the column is named meta, not payload — the parameter here
+//              is named payload for readability at every call site, but it
+//              must be written to .insert({ meta: payload }), not
+//              { payload }. A prior version of this function wrote
+//              { payload } directly, which silently failed on every single
+//              call — Postgres/PostgREST has no `payload` column on
+//              activity_feed to write to. This was confirmed live: 2 real
+//              follow relationships existed in `follows` with zero
+//              corresponding rows in `activity_feed`. Every dbWriteActivity
+//              call in this file was failing silently before this fix.)
 
 async function dbWriteActivity(eventType, actor, targetUser, payload = {}) {
   // Fire-and-forget — never block a route on feed writes.
@@ -2657,13 +3041,37 @@ async function dbWriteActivity(eventType, actor, targetUser, payload = {}) {
     event_type: eventType,
     actor,
     target_user: targetUser || null,
-    payload,
+    meta: payload,
   }).then(({ error }) => {
     if (error) console.error('[activity write]', eventType, error.message);
   });
 }
 
-// Following feed: events where actor is someone `username` follows, OR target_user === username
+// Artist-originated events (new release, an artist's track went viral,
+// etc) have no real account behind an unclaimed artist, and even a claimed
+// one's activity here is artist-centric rather than user-centric — "Slimey
+// dropped a new EP" reads as an artist action, not a personal one, even on
+// a claimed page. So `actor` is set to a synthetic, never-a-real-username
+// marker (artist:<uuid>) rather than left null or pointing at the claiming
+// account, and meta.artistId carries the real link. dbGetFollowingFeed's
+// meta->>artistId clause is what actually surfaces these to followers —
+// the synthetic actor value is never matched against `follows`, by design,
+// since an artist isn't a row in `accounts` and never will be for
+// unclaimed artists.
+async function dbWriteArtistActivity(eventType, artistId, payload = {}) {
+  await dbWriteActivity(eventType, `artist:${artistId}`, null, { ...payload, artistId });
+}
+
+// Following feed: events where actor is someone `username` follows, OR
+// target_user === username, OR the event's meta.artistId is an artist
+// `username` follows. That last clause is new specifically for Artist
+// Pages: artist-originated events (new release, etc) have no `actor`
+// username to match against follows (an unclaimed artist has no account at
+// all, and even a claimed one's activity is written as artist-centric, not
+// user-centric — see dbWriteArtistActivity below) — without this clause,
+// following an artist would never surface anything in this feed, only on
+// the artist's own page, which defeats the point of "integrate with the
+// existing Activity Feed system" for the personal/following view.
 async function dbGetFollowingFeed(username, { limit = 30, before = null } = {}) {
   // Get the list of people this user follows
   const { data: followRows } = await supabase
@@ -2671,20 +3079,28 @@ async function dbGetFollowingFeed(username, { limit = 30, before = null } = {}) 
     .select('followed_username')
     .eq('follower_username', username);
   const following = (followRows || []).map(r => r.followed_username);
+
+  const { data: artistFollowRows } = await supabase
+    .from('artist_followers')
+    .select('artist_id')
+    .eq('follower_username', username);
+  const followedArtistIds = (artistFollowRows || []).map(r => r.artist_id);
+
   // Include events targeted at `username` directly (e.g. someone followed you)
-  // plus events from people they follow
+  // plus events from people they follow, plus events from artists they follow
   let q = supabase
     .from('activity_feed')
     .select('*')
     .order('created_at', { ascending: false })
     .limit(limit);
   if (before) q = q.lt('created_at', before);
-  // Supabase JS v2: filter using OR
-  if (following.length) {
-    q = q.or(`actor.in.(${following.map(u => `"${u}"`).join(',')}),target_user.eq.${username}`);
-  } else {
-    q = q.eq('target_user', username);
-  }
+
+  const orClauses = [];
+  if (following.length) orClauses.push(`actor.in.(${following.map(u => `"${u}"`).join(',')})`);
+  orClauses.push(`target_user.eq.${username}`);
+  if (followedArtistIds.length) orClauses.push(`meta->>artistId.in.(${followedArtistIds.map(id => `"${id}"`).join(',')})`);
+  q = q.or(orClauses.join(','));
+
   const { data, error } = await q;
   if (error) { console.error('[activity following feed]', error.message); return []; }
   return data || [];
@@ -3387,7 +3803,7 @@ app.get('/api/activity/feed', async (req, res) => {
         type: e.event_type,
         actor: e.actor,
         targetUser: e.target_user,
-        payload: e.payload,
+        payload: e.meta, // DB column is `meta`; API field stays `payload` for an unchanged public contract
         createdAt: e.created_at,
       })),
       nextCursor: events.length === limit ? events[events.length - 1].created_at : null,
@@ -3433,7 +3849,7 @@ function ensureActivityRealtimeChannel() {
           // Simpler and correct: broadcast to all connected SSE clients with the new event.
           const msg = `data: ${JSON.stringify({
             id: row.id, type: row.event_type, actor: row.actor,
-            targetUser: row.target_user, payload: row.payload, createdAt: row.created_at,
+            targetUser: row.target_user, payload: row.meta, createdAt: row.created_at,
           })}\n\n`;
           for (const clients of activitySseClients.values()) {
             for (const res of clients) {
@@ -3479,6 +3895,339 @@ app.get('/api/activity/feed/realtime', async (req, res) => {
     clearInterval(heartbeat);
     removeActivitySseClient(sess.username, res);
   });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  ARTIST PAGES
+//  GET    /api/artists                    ?sort=followers|trending|recent&search=&limit=&offset=
+//  GET    /api/artists/:id                ?token=     (id = artists.id uuid, OR @username for a claimed page)
+//  GET    /api/artists/:id/tracks         ?sort=plays|trending&limit=
+//  GET    /api/artists/:id/releases       ?type=single|album|ep|mixtape
+//  GET    /api/artists/:id/activity       ?limit=&before=
+//  POST   /api/artists/:id/follow         { token }
+//  DELETE /api/artists/:id/follow         { token }
+//  PATCH  /api/artists/:id                { token, bio?, avatarUrl?, bannerUrl? }   (claimed-owner only)
+//  POST   /api/artists/claim              { token, artistId }                      (link your account to an unclaimed artist)
+//  POST   /api/artists/:id/releases       { token, title, releaseType, coverUrl?, releaseDate?, trackIds? } (claimed-owner only)
+//
+//  Every read route here is intentionally unauthenticated-friendly, same
+//  philosophy as Charts and Discovery — an artist page is browsable by a
+//  visitor who hasn't signed in. token is optional on GET routes and only
+//  used to compute isFollowing/isOwner for the requester.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Resolves the :id path param to an artists row. Supports three shapes:
+//   - a bare artists.id (uuid)              -> dbGetArtistById
+//   - "@username"                           -> dbGetArtistByAccount (claimed page, looked up by the claiming account)
+//   - a bare username with no "@" that      -> falls back to dbGetArtistByAccount too, so
+//     happens not to look like a uuid          /api/artists/slimey2017 and /api/artists/@slimey2017
+//                                                both work without the caller needing to know which
+//                                                form an id is in.
+// This is the "single :id path param could plausibly be either" case the
+// comment above dbGetArtist already flagged as a future need — implementing
+// it at the route layer (rather than in dbGetArtist itself) keeps the DB
+// helpers' contracts narrow and testable, and keeps this dual-lookup
+// concern in exactly one place.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+async function resolveArtistFromParam(idParam) {
+  const raw = decodeURIComponent(idParam || '').trim();
+  if (!raw) return null;
+  if (raw.startsWith('@')) return dbGetArtistByAccount(raw.slice(1).toLowerCase());
+  if (UUID_RE.test(raw)) return dbGetArtistById(raw);
+  // Not a uuid and no @ prefix — try it as a username anyway (the
+  // /api/artists/slimey2017 convenience form), since a bare artist id will
+  // always match UUID_RE and never reach this branch.
+  return dbGetArtistByAccount(raw.toLowerCase());
+}
+
+app.get('/api/artists', async (req, res) => {
+  const sort   = ['trending', 'recent', 'followers'].includes(req.query.sort) ? req.query.sort : 'followers';
+  const limit  = Math.min(Math.max(Number(req.query.limit) || 30, 1), 50);
+  const offset = Math.max(Number(req.query.offset) || 0, 0);
+  const search = (req.query.search || '').trim().slice(0, 100) || null;
+  try {
+    const artists = await dbListArtists({ sort, limit, offset, search });
+    return res.json({
+      artists: artists.map(a => ({
+        id: a.id, name: a.name, avatarUrl: a.avatar_url, bannerUrl: a.banner_url,
+        isVerified: a.is_verified, isClaimed: !!a.account_id, followerCount: a.follower_count,
+      })),
+    });
+  } catch (err) {
+    console.error('[artists list]', err);
+    return res.status(500).json({ error: 'Could not load artists.' });
+  }
+});
+
+app.get('/api/artists/:id', async (req, res) => {
+  try {
+    const artist = await resolveArtistFromParam(req.params.id);
+    if (!artist) return res.status(404).json({ error: 'Artist not found.' });
+
+    const token = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
+    const sess  = token ? await dbGetSession(token) : null;
+    const [stats, isFollowing] = await Promise.all([
+      dbGetArtistStats(artist.id),
+      sess ? dbIsFollowingArtist(sess.username, artist.id) : Promise.resolve(false),
+    ]);
+
+    return res.json({
+      id: artist.id,
+      name: artist.name,
+      avatarUrl: artist.avatar_url,
+      bannerUrl: artist.banner_url,
+      bio: artist.bio,
+      isVerified: artist.is_verified,
+      isClaimed: !!artist.account_id,
+      isOwner: !!(sess && artist.account_id === sess.username),
+      followerCount: artist.follower_count,
+      isFollowing,
+      joinedAt: artist.created_at,
+      stats: stats ? {
+        totalPlays: Number(stats.total_plays) || 0,
+        totalPlays7d: stats.total_plays_7d || 0,
+        totalLikesReceived: stats.total_likes_received || 0, // always 0 today — see dbGetArtistTracks comment; field kept stable for when track likes ship
+        monthlyListeners: stats.monthly_listeners || 0,
+        chartRank: stats.chart_rank,
+        chartRankPrev: stats.chart_rank_prev,
+        chartMovement: (stats.chart_rank != null && stats.chart_rank_prev != null)
+          ? stats.chart_rank_prev - stats.chart_rank // positive = climbed, negative = fell, matching the migration comment's convention
+          : null,
+      } : null,
+    });
+  } catch (err) {
+    console.error('[artist get]', err);
+    return res.status(500).json({ error: 'Could not load artist.' });
+  }
+});
+
+app.get('/api/artists/:id/tracks', async (req, res) => {
+  try {
+    const artist = await resolveArtistFromParam(req.params.id);
+    if (!artist) return res.status(404).json({ error: 'Artist not found.' });
+    const sort  = req.query.sort === 'trending' ? 'trending' : 'plays';
+    const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 50);
+    const tracks = await dbGetArtistTracks(artist.id, { sort, limit });
+    return res.json({
+      tracks: tracks.map(t => ({
+        id: t.id, originalUrl: t.original_url, platform: t.platform,
+        title: t.title || t.original_url,
+        playCount: t.play_count, playCount7d: t.play_count_7d,
+        likeCount: 0, // honest placeholder — see dbGetArtistTracks comment, no per-track likes exist yet
+        lastPlayedAt: t.last_played_at,
+      })),
+    });
+  } catch (err) {
+    console.error('[artist tracks]', err);
+    return res.status(500).json({ error: 'Could not load artist tracks.' });
+  }
+});
+
+app.get('/api/artists/:id/releases', async (req, res) => {
+  try {
+    const artist = await resolveArtistFromParam(req.params.id);
+    if (!artist) return res.status(404).json({ error: 'Artist not found.' });
+    const type = ['single', 'album', 'ep', 'mixtape'].includes(req.query.type) ? req.query.type : null;
+    const releases = await dbGetArtistReleases(artist.id, { type });
+    return res.json({
+      releases: releases.map(r => ({
+        id: r.id, title: r.title, releaseType: r.release_type, coverUrl: r.cover_url,
+        releaseDate: r.release_date, trackCount: r.track_count, totalPlays: r.total_plays,
+        totalLikes: r.total_likes, description: r.description, externalUrl: r.external_url,
+      })),
+    });
+  } catch (err) {
+    console.error('[artist releases]', err);
+    return res.status(500).json({ error: 'Could not load releases.' });
+  }
+});
+
+app.get('/api/artists/:id/releases/:releaseId/tracks', async (req, res) => {
+  try {
+    const tracks = await dbGetReleaseTracks(req.params.releaseId);
+    return res.json({
+      tracks: tracks.map(t => ({
+        id: t.id, originalUrl: t.original_url, platform: t.platform,
+        title: t.title || t.original_url, playCount: t.play_count, position: t.position,
+      })),
+    });
+  } catch (err) {
+    console.error('[release tracks]', err);
+    return res.status(500).json({ error: 'Could not load release tracks.' });
+  }
+});
+
+// Artist's own activity (new releases, milestone follows, etc) PLUS recent
+// community activity that references this artist (a track of theirs got
+// liked, added to a playlist) — both already land in activity_feed with
+// meta.artistId set, either via dbWriteArtistActivity (artist-originated)
+// or via existing event types extended with artistId in their payload.
+// Filtering activity_feed by meta->>artistId here, mirroring the same
+// PostgREST or-clause shape dbGetFollowingFeed already uses for the
+// artist-follow case.
+app.get('/api/artists/:id/activity', async (req, res) => {
+  try {
+    const artist = await resolveArtistFromParam(req.params.id);
+    if (!artist) return res.status(404).json({ error: 'Artist not found.' });
+    const limit  = Math.min(Math.max(Number(req.query.limit) || 20, 1), 50);
+    const before = req.query.before || null;
+
+    let q = supabase.from('activity_feed').select('*')
+      .eq('meta->>artistId', artist.id)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    if (before) q = q.lt('created_at', before);
+    const { data, error } = await q;
+    if (error) { console.error('[artist activity]', error.message); return res.json({ events: [] }); }
+
+    return res.json({
+      events: (data || []).map(e => ({
+        id: e.id, type: e.event_type, actor: e.actor.startsWith('artist:') ? null : e.actor,
+        payload: e.meta, createdAt: e.created_at,
+      })),
+      nextCursor: (data || []).length === limit ? data[data.length - 1].created_at : null,
+    });
+  } catch (err) {
+    console.error('[artist activity]', err);
+    return res.status(500).json({ error: 'Could not load artist activity.' });
+  }
+});
+
+app.post('/api/artists/:id/follow', artistFollowRateLimit, async (req, res) => {
+  const sess = req._followSession;
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  try {
+    const artist = await resolveArtistFromParam(req.params.id);
+    if (!artist) return res.status(404).json({ error: 'Artist not found.' });
+    if (artist.account_id === sess.username) {
+      return res.status(400).json({ error: "You can't follow your own artist page." });
+    }
+    await dbFollowArtist(sess.username, artist.id);
+    dbWriteArtistActivity('artist_followed', artist.id, { follower: sess.username, artistName: artist.name });
+    const updated = await dbGetArtistById(artist.id);
+    return res.json({ following: true, followerCount: updated ? updated.follower_count : artist.follower_count + 1 });
+  } catch (err) {
+    console.error('[artist follow]', err);
+    return res.status(500).json({ error: 'Could not follow artist.' });
+  }
+});
+
+app.delete('/api/artists/:id/follow', artistFollowRateLimit, async (req, res) => {
+  const sess = req._followSession;
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  try {
+    const artist = await resolveArtistFromParam(req.params.id);
+    if (!artist) return res.status(404).json({ error: 'Artist not found.' });
+    await dbUnfollowArtist(sess.username, artist.id);
+    const updated = await dbGetArtistById(artist.id);
+    return res.json({ following: false, followerCount: updated ? updated.follower_count : Math.max(artist.follower_count - 1, 0) });
+  } catch (err) {
+    console.error('[artist unfollow]', err);
+    return res.status(500).json({ error: 'Could not unfollow artist.' });
+  }
+});
+
+// Claims an existing unclaimed artist row for the signed-in account — the
+// "verified artist applications" flow this enables later is just: an admin
+// flips is_verified after a claim, not a separate table. One account can
+// claim at most one artist (artists.account_id has a UNIQUE constraint),
+// and an artist can only ever be claimed once (the WHERE account_id IS
+// NULL check below, backed by the same partial-unique-index reasoning as
+// get_or_create_artist's dedup).
+app.post('/api/artists/claim', rateLimit, async (req, res) => {
+  const { token, artistId } = req.body || {};
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  if (!artistId || typeof artistId !== 'string') return res.status(400).json({ error: '"artistId" is required.' });
+  try {
+    const existing = await dbGetArtistByAccount(sess.username);
+    if (existing) return res.status(409).json({ error: 'Your account has already claimed an artist page.' });
+
+    const artist = await dbGetArtistById(artistId);
+    if (!artist) return res.status(404).json({ error: 'Artist not found.' });
+    if (artist.account_id) return res.status(409).json({ error: 'This artist page has already been claimed.' });
+
+    const updated = await dbUpdateArtist(artist.id, { account_id: sess.username, claimed_at: new Date().toISOString() });
+    return res.json({
+      id: updated.id, name: updated.name, isClaimed: true, claimedAt: updated.claimed_at,
+    });
+  } catch (err) {
+    console.error('[artist claim]', err);
+    return res.status(500).json({ error: 'Could not claim this artist page.' });
+  }
+});
+
+app.patch('/api/artists/:id', rateLimit, async (req, res) => {
+  const { token, bio, avatarUrl, bannerUrl } = req.body || {};
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  try {
+    const artist = await resolveArtistFromParam(req.params.id);
+    if (!artist) return res.status(404).json({ error: 'Artist not found.' });
+    if (artist.account_id !== sess.username) {
+      return res.status(403).json({ error: 'Only the artist who claimed this page can edit it.' });
+    }
+    const patch = {};
+    if (bio !== undefined) {
+      if (typeof bio !== 'string') return res.status(400).json({ error: '"bio" must be a string.' });
+      const trimmed = bio.trim();
+      if (trimmed.length > 2000) return res.status(400).json({ error: 'Bio must be 2000 characters or fewer.' });
+      patch.bio = trimmed || null;
+    }
+    if (avatarUrl !== undefined) patch.avatar_url = (typeof avatarUrl === 'string' && avatarUrl.trim()) ? avatarUrl.trim().slice(0, 2000) : null;
+    if (bannerUrl !== undefined) patch.banner_url = (typeof bannerUrl === 'string' && bannerUrl.trim()) ? bannerUrl.trim().slice(0, 2000) : null;
+    if (!Object.keys(patch).length) return res.status(400).json({ error: 'No valid fields to update.' });
+
+    const updated = await dbUpdateArtist(artist.id, patch);
+    return res.json({
+      id: updated.id, bio: updated.bio, avatarUrl: updated.avatar_url, bannerUrl: updated.banner_url,
+    });
+  } catch (err) {
+    console.error('[artist update]', err);
+    return res.status(500).json({ error: 'Could not update artist page.' });
+  }
+});
+
+app.post('/api/artists/:id/releases', rateLimit, async (req, res) => {
+  const { token, title, releaseType, coverUrl, releaseDate, trackIds } = req.body || {};
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  try {
+    const artist = await resolveArtistFromParam(req.params.id);
+    if (!artist) return res.status(404).json({ error: 'Artist not found.' });
+    if (artist.account_id !== sess.username) {
+      return res.status(403).json({ error: 'Only the artist who claimed this page can publish releases.' });
+    }
+    if (!title || typeof title !== 'string' || !title.trim()) {
+      return res.status(400).json({ error: '"title" is required.' });
+    }
+    if (!['single', 'album', 'ep', 'mixtape'].includes(releaseType)) {
+      return res.status(400).json({ error: '"releaseType" must be one of single, album, ep, mixtape.' });
+    }
+    const release = await dbCreateRelease(artist.id, {
+      title: title.trim().slice(0, 200), releaseType,
+      coverUrl: coverUrl || null, releaseDate: releaseDate || null,
+    });
+    // trackIds is optional — a release can be created first and have
+    // tracks attached later via the same flow that plays them, but if the
+    // caller already knows which tracks.id rows belong to it, wire them up
+    // now so the release isn't empty on first view.
+    if (Array.isArray(trackIds) && trackIds.length) {
+      for (const trackId of trackIds.slice(0, 100)) {
+        try { await dbAddTrackToRelease(release.id, trackId); } catch (e) { console.error('[release add track]', e.message); }
+      }
+    }
+    dbWriteArtistActivity('artist_release', artist.id, {
+      releaseId: release.id, releaseTitle: release.title, releaseType: release.release_type, artistName: artist.name,
+    });
+    return res.status(201).json({
+      id: release.id, title: release.title, releaseType: release.release_type,
+      coverUrl: release.cover_url, releaseDate: release.release_date, trackCount: release.track_count,
+    });
+  } catch (err) {
+    console.error('[artist create release]', err);
+    return res.status(500).json({ error: 'Could not create release.' });
+  }
 });
 
 app.get('*', (req, res) => {
