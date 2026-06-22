@@ -547,6 +547,7 @@ async function dbGetLikedPlaylists(username) {
       trackCount: r.playlists_v2.track_count,
       likeCount: r.playlists_v2.like_count,
       owner: r.playlists_v2.owner,
+      updatedAt: r.playlists_v2.updated_at,
     }));
 }
 
@@ -667,6 +668,42 @@ async function dbGetArtistStats(artistId) {
   const { data, error } = await supabase.from('artist_stats').select('*').eq('artist_id', artistId).maybeSingle();
   if (error) { console.error('[db] getArtistStats:', error.message); return null; }
   return data;
+}
+
+async function dbGetLiveArtistStats(artistId, cachedStats = null) {
+  const [followerResult, trackRowsResult, monthlyRowsResult] = await Promise.all([
+    supabase.from('artist_followers')
+      .select('*', { count: 'exact', head: true })
+      .eq('artist_id', artistId),
+    supabase.from('tracks')
+      .select('play_count, play_count_7d')
+      .eq('artist_id', artistId)
+      .eq('is_published', true),
+    supabase.from('track_plays')
+      .select('username, tracks!inner(artist_id)')
+      .eq('tracks.artist_id', artistId)
+      .gte('played_at', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
+      .not('username', 'is', null),
+  ]);
+
+  if (followerResult.error) console.error('[db] liveArtistStats followers:', followerResult.error.message);
+  if (trackRowsResult.error) console.error('[db] liveArtistStats tracks:', trackRowsResult.error.message);
+  if (monthlyRowsResult.error) console.error('[db] liveArtistStats listeners:', monthlyRowsResult.error.message);
+
+  const tracks = trackRowsResult.data || [];
+  const listenerNames = new Set((monthlyRowsResult.data || []).map(r => r.username).filter(Boolean));
+  const totalPlays = tracks.reduce((sum, t) => sum + (Number(t.play_count) || 0), 0);
+  const totalPlays7d = tracks.reduce((sum, t) => sum + (Number(t.play_count_7d) || 0), 0);
+
+  return {
+    followerCount: followerResult.count || 0,
+    totalPlays,
+    totalPlays7d,
+    monthlyListeners: listenerNames.size,
+    totalLikesReceived: Number(cachedStats?.total_likes_received) || 0,
+    chartRank: cachedStats?.chart_rank ?? null,
+    chartRankPrev: cachedStats?.chart_rank_prev ?? null,
+  };
 }
 
 // Paginated artist directory — GET /api/artists. Default sort is
@@ -1258,9 +1295,9 @@ async function dbUpdateCollaboratorRole(playlistId, owner, username, role) {
 async function dbGetCollaborators(playlistId) {
   const { data, error } = await supabase
     .from('playlist_collaborators')
-    .select('username, role, added_at')
+    .select('username, role')
     .eq('playlist_id', playlistId)
-    .order('added_at', { ascending: true });
+    .order('username', { ascending: true });
   if (error) { console.error('[db] getCollaborators:', error.message); return []; }
   return data || [];
 }
@@ -1294,19 +1331,20 @@ async function dbGetMyPendingInvites(username) {
 async function dbGetSharedWithMe(username) {
   const { data, error } = await supabase
     .from('playlist_collaborators')
-    .select('role, added_at, playlists_v2(id, name, description, is_public, track_count, owner)')
-    .eq('username', username)
-    .order('added_at', { ascending: false });
+    .select('role, playlists_v2(id, name, description, is_public, track_count, owner, updated_at)')
+    .eq('username', username);
   if (error) { console.error('[db] getSharedWithMe:', error.message); return []; }
   return (data || [])
     .filter(r => r.playlists_v2)
+    .sort((a, b) => new Date(b.playlists_v2.updated_at || 0) - new Date(a.playlists_v2.updated_at || 0))
     .map(r => ({
-      role: r.role, addedAt: r.added_at,
+      role: r.role,
       id: r.playlists_v2.id, name: r.playlists_v2.name,
       description: r.playlists_v2.description,
       isPublic: r.playlists_v2.is_public,
       trackCount: r.playlists_v2.track_count,
       owner: r.playlists_v2.owner,
+      updatedAt: r.playlists_v2.updated_at,
     }));
 }
 
@@ -2596,6 +2634,13 @@ app.get('/api/profiles/:username', async (req, res) => {
     // (one indexed lookup) beats making the frontend fire a second request
     // just to find out.
     const artist = await dbGetArtistByAccount(key);
+    const artistStats = artist ? await dbGetLiveArtistStats(artist.id, await dbGetArtistStats(artist.id)) : null;
+    const tracksUploaded = artist
+      ? ((await supabase.from('tracks')
+        .select('*', { count: 'exact', head: true })
+        .eq('artist_id', artist.id)
+        .eq('is_published', true)).count || 0)
+      : 0;
 
     return res.json({
       username:            profile.username,
@@ -2613,9 +2658,9 @@ app.get('/api/profiles/:username', async (req, res) => {
       isArtist:            !!artist,
       artistSlug:          artist ? artist.slug : null,
       artistId:            artist ? artist.id : null,
-      artistFollowerCount: artist ? (artist.follower_count || 0) : 0,
-      artistTotalPlays:    artist ? ((await dbGetArtistStats(artist.id))?.total_plays || 0) : 0,
-      tracksUploaded:      artist ? ((await supabase.from('tracks').select('*', { count: 'exact', head: true }).eq('artist_id', artist.id)).count || 0) : 0,
+      artistFollowerCount: artistStats ? artistStats.followerCount : 0,
+      artistTotalPlays:    artistStats ? artistStats.totalPlays : 0,
+      tracksUploaded,
       isFollowing,
       isSelf: !!(sess && sess.username === key),
     });
@@ -4235,12 +4280,13 @@ async function dbGetPost(postId) {
   return data;
 }
 
-async function dbGetPostsFeed({ before = null, limit = 20, username = null } = {}) {
+async function dbGetPostsFeed({ before = null, limit = 20, username = null, artistId = null } = {}) {
   let q = supabase.from('posts')
     .select('*, profiles:author!inner(username, display_name, avatar_url)')
     .order('created_at', { ascending: false })
     .limit(Math.min(limit, 50));
   if (username) q = q.eq('author', username);
+  if (artistId) q = q.eq('artist_id', artistId);
   if (before) q = q.lt('created_at', before);
   const { data, error } = await q;
   if (error) { console.error('[db] getPostsFeed:', error.message); return []; }
@@ -4339,6 +4385,31 @@ app.get('/api/posts/user/:username', async (req, res) => {
   }
 });
 
+app.get('/api/posts/artist/:id', async (req, res) => {
+  const before = req.query.before || null;
+  const limit  = Math.min(Math.max(Number(req.query.limit) || 20, 1), 50);
+  const token  = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
+  const sess   = token ? await dbGetSession(token) : null;
+  try {
+    const artist = await resolveArtistFromParam(req.params.id);
+    if (!artist) return res.status(404).json({ error: 'Artist not found.' });
+    const posts = await dbGetPostsFeed({ before, limit, artistId: artist.id });
+    let likedIds = new Set();
+    if (sess && posts.length) {
+      const ids = posts.map(p => p.id);
+      const { data: likes } = await supabase.from('post_likes')
+        .select('post_id').eq('username', sess.username).in('post_id', ids);
+      likedIds = new Set((likes || []).map(l => l.post_id));
+    }
+    return res.json({
+      posts: posts.map(p => ({ ...formatPost(p, sess?.username), likedByMe: likedIds.has(p.id) })),
+      hasMore: posts.length === limit,
+    });
+  } catch (err) {
+    console.error('[posts artist]', err);
+    return res.status(500).json({ error: 'Could not load artist posts.' });
+  }
+});
 app.get('/api/posts/:id', async (req, res) => {
   const token = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
   const sess  = token ? await dbGetSession(token) : null;
@@ -4421,6 +4492,26 @@ app.delete('/api/posts/:id/like', rateLimit, async (req, res) => {
     return res.json({ liked: false, likeCount: count || 0 });
   } catch (err) {
     return res.status(500).json({ error: 'Could not unlike post.' });
+  }
+});
+app.post('/api/posts/:id/share', rateLimit, async (req, res) => {
+  const { token } = req.body || {};
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  try {
+    const post = await dbGetPost(req.params.id);
+    if (!post) return res.status(404).json({ error: 'Post not found.' });
+    const shareCount = (Number(post.share_count) || 0) + 1;
+    const { error } = await supabase.from('posts').update({ share_count: shareCount }).eq('id', req.params.id);
+    if (error) throw new Error(error.message);
+    dbWriteActivity('post_shared', sess.username, post.author !== sess.username ? post.author : null, {
+      postId: post.id,
+      preview: (post.body || '').slice(0, 80),
+    });
+    return res.json({ shared: true, shareCount });
+  } catch (err) {
+    console.error('[posts share]', err);
+    return res.status(500).json({ error: 'Could not share post.' });
   }
 });
 
@@ -4530,10 +4621,11 @@ app.get('/api/artists/:id', async (req, res) => {
 
     const token = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
     const sess  = token ? await dbGetSession(token) : null;
-    const [stats, isFollowing] = await Promise.all([
+    const [cachedStats, isFollowing] = await Promise.all([
       dbGetArtistStats(artist.id),
       sess ? dbIsFollowingArtist(sess.username, artist.id) : Promise.resolve(false),
     ]);
+    const stats = await dbGetLiveArtistStats(artist.id, cachedStats);
 
     return res.json({
       id: artist.id,
@@ -4545,20 +4637,20 @@ app.get('/api/artists/:id', async (req, res) => {
       isVerified: artist.is_verified,
       isClaimed: !!artist.account_id,
       isOwner: !!(sess && artist.account_id === sess.username),
-      followerCount: artist.follower_count,
+      followerCount: stats.followerCount,
       isFollowing,
       joinedAt: artist.created_at,
-      stats: stats ? {
-        totalPlays: Number(stats.total_plays) || 0,
-        totalPlays7d: stats.total_plays_7d || 0,
-        totalLikesReceived: stats.total_likes_received || 0, // always 0 today — see dbGetArtistTracks comment; field kept stable for when track likes ship
-        monthlyListeners: stats.monthly_listeners || 0,
-        chartRank: stats.chart_rank,
-        chartRankPrev: stats.chart_rank_prev,
-        chartMovement: (stats.chart_rank != null && stats.chart_rank_prev != null)
-          ? stats.chart_rank_prev - stats.chart_rank // positive = climbed, negative = fell, matching the migration comment's convention
+      stats: {
+        totalPlays: stats.totalPlays,
+        totalPlays7d: stats.totalPlays7d,
+        totalLikesReceived: stats.totalLikesReceived,
+        monthlyListeners: stats.monthlyListeners,
+        chartRank: stats.chartRank,
+        chartRankPrev: stats.chartRankPrev,
+        chartMovement: (stats.chartRank != null && stats.chartRankPrev != null)
+          ? stats.chartRankPrev - stats.chartRank
           : null,
-      } : null,
+      },
     });
   } catch (err) {
     console.error('[artist get]', err);
