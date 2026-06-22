@@ -734,6 +734,13 @@ async function dbFollowArtist(followerUsername, artistId) {
     if (error.code === '23505') return false; // already following
     throw new Error(error.message);
   }
+  // Safety-net recount in case the trigger is missing or lagging —
+  // counts actual rows rather than relying purely on the trigger path.
+  const { count } = await supabase.from('artist_followers')
+    .select('*', { count: 'exact', head: true }).eq('artist_id', artistId);
+  if (count != null) {
+    await supabase.from('artists').update({ follower_count: count }).eq('id', artistId);
+  }
   return true;
 }
 
@@ -741,6 +748,12 @@ async function dbUnfollowArtist(followerUsername, artistId) {
   const { error } = await supabase.from('artist_followers')
     .delete().eq('artist_id', artistId).eq('follower_username', followerUsername);
   if (error) throw new Error(error.message);
+  // Safety-net recount
+  const { count } = await supabase.from('artist_followers')
+    .select('*', { count: 'exact', head: true }).eq('artist_id', artistId);
+  if (count != null) {
+    await supabase.from('artists').update({ follower_count: count }).eq('id', artistId);
+  }
 }
 
 async function dbIsFollowingArtist(followerUsername, artistId) {
@@ -2599,6 +2612,10 @@ app.get('/api/profiles/:username', async (req, res) => {
       totalLikesReceived:  profile.total_likes_received || 0,
       isArtist:            !!artist,
       artistSlug:          artist ? artist.slug : null,
+      artistId:            artist ? artist.id : null,
+      artistFollowerCount: artist ? (artist.follower_count || 0) : 0,
+      artistTotalPlays:    artist ? ((await dbGetArtistStats(artist.id))?.total_plays || 0) : 0,
+      tracksUploaded:      artist ? ((await supabase.from('tracks').select('*', { count: 'exact', head: true }).eq('artist_id', artist.id)).count || 0) : 0,
       isFollowing,
       isSelf: !!(sess && sess.username === key),
     });
@@ -3024,6 +3041,19 @@ app.delete('/api/playlists/:id/like', likeRateLimit, async (req, res) => {
   } catch (err) {
     console.error('[playlists unlike]', err);
     return res.status(500).json({ error: 'Could not unlike playlist.' });
+  }
+});
+
+// Pending invites waiting for the current user (MUST be before :id routes) ----
+app.get('/api/playlists/invites/mine', async (req, res) => {
+  const token = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
+  const sess  = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  try {
+    const invites = await dbGetMyPendingInvites(sess.username);
+    return res.json({ invites });
+  } catch (err) {
+    return res.status(500).json({ error: 'Could not load invites.' });
   }
 });
 
@@ -3507,19 +3537,6 @@ app.delete('/api/playlists/:id/invites/:inviteId', playlistRateLimit, async (req
 });
 
 // Pending invites waiting for the current user --------------------------------
-app.get('/api/playlists/invites/mine', async (req, res) => {
-  const token = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
-  const sess  = await dbGetSession(token);
-  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
-  try {
-    const invites = await dbGetMyPendingInvites(sess.username);
-    return res.json({ invites });
-  } catch (err) {
-    return res.status(500).json({ error: 'Could not load invites.' });
-  }
-});
-
-
 // ─── Realtime SSE fan-out ────────────────────────────────────────────────────
 // Clients subscribe to GET /api/playlists/:id/realtime (SSE). The server holds
 // a Supabase Realtime channel per playlist-id and fans out track + collaborator
@@ -4177,6 +4194,315 @@ async function resolveArtistFromParam(idParam) {
   if (bySlug) return bySlug;
   return dbGetArtistByAccount(raw.toLowerCase());
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  SOCIAL POSTS SYSTEM
+//
+//  POST   /api/posts                    create a post (auth required)
+//  GET    /api/posts                    global feed (paginated)
+//  GET    /api/posts/user/:username     posts by a user
+//  GET    /api/posts/:id                single post
+//  PATCH  /api/posts/:id                edit post (owner only)
+//  DELETE /api/posts/:id                delete post (owner only)
+//  POST   /api/posts/:id/like           like a post
+//  DELETE /api/posts/:id/like           unlike a post
+//  POST   /api/posts/:id/comments       add comment
+//  GET    /api/posts/:id/comments       list comments
+//  DELETE /api/posts/:id/comments/:cid  delete comment (owner only)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ── DB helpers ───────────────────────────────────────────────────────────────
+
+async function dbCreatePost(username, { postType, body, playlistId, trackId, artistId, releaseId }) {
+  const { data, error } = await supabase.from('posts').insert({
+    author: username,
+    post_type: postType || 'text',
+    body: body || null,
+    playlist_id: playlistId || null,
+    track_id: trackId || null,
+    artist_id: artistId || null,
+    release_id: releaseId || null,
+  }).select().single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+async function dbGetPost(postId) {
+  const { data, error } = await supabase.from('posts')
+    .select('*, profiles:author!inner(username, display_name, avatar_url)')
+    .eq('id', postId).maybeSingle();
+  if (error) { console.error('[db] getPost:', error.message); return null; }
+  return data;
+}
+
+async function dbGetPostsFeed({ before = null, limit = 20, username = null } = {}) {
+  let q = supabase.from('posts')
+    .select('*, profiles:author!inner(username, display_name, avatar_url)')
+    .order('created_at', { ascending: false })
+    .limit(Math.min(limit, 50));
+  if (username) q = q.eq('author', username);
+  if (before) q = q.lt('created_at', before);
+  const { data, error } = await q;
+  if (error) { console.error('[db] getPostsFeed:', error.message); return []; }
+  return data || [];
+}
+
+function formatPost(p, myUsername = null) {
+  return {
+    id: p.id,
+    author: p.author,
+    displayName: p.profiles?.display_name || p.author,
+    avatarUrl: p.profiles?.avatar_url || null,
+    postType: p.post_type,
+    body: p.body,
+    playlistId: p.playlist_id,
+    trackId: p.track_id,
+    artistId: p.artist_id,
+    releaseId: p.release_id,
+    likeCount: p.like_count || 0,
+    commentCount: p.comment_count || 0,
+    shareCount: p.share_count || 0,
+    createdAt: p.created_at,
+    updatedAt: p.updated_at,
+    isOwner: myUsername ? p.author === myUsername : false,
+  };
+}
+
+// ── Routes ───────────────────────────────────────────────────────────────────
+
+app.post('/api/posts', rateLimit, async (req, res) => {
+  const { token, postType, body, playlistId, trackId, artistId, releaseId } = req.body || {};
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  if (!body && !playlistId && !trackId && !artistId && !releaseId) {
+    return res.status(400).json({ error: 'Post must have body text or reference content.' });
+  }
+  if (body && body.length > 1000) return res.status(400).json({ error: 'Post body must be 1000 characters or fewer.' });
+  try {
+    const post = await dbCreatePost(sess.username, { postType, body, playlistId, trackId, artistId, releaseId });
+    // Write to activity feed
+    dbWriteActivity('user_post', sess.username, null, { postId: post.id, preview: (body || '').slice(0, 80) });
+    return res.status(201).json({ post: formatPost(post, sess.username) });
+  } catch (err) {
+    console.error('[posts create]', err);
+    return res.status(500).json({ error: 'Could not create post.' });
+  }
+});
+
+app.get('/api/posts', async (req, res) => {
+  const before = req.query.before || null;
+  const limit  = Math.min(Math.max(Number(req.query.limit) || 20, 1), 50);
+  const token  = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
+  const sess   = token ? await dbGetSession(token) : null;
+  try {
+    const posts = await dbGetPostsFeed({ before, limit });
+    // Batch-fetch liked status
+    let likedIds = new Set();
+    if (sess && posts.length) {
+      const ids = posts.map(p => p.id);
+      const { data: likes } = await supabase.from('post_likes')
+        .select('post_id').eq('username', sess.username).in('post_id', ids);
+      likedIds = new Set((likes || []).map(l => l.post_id));
+    }
+    return res.json({
+      posts: posts.map(p => ({ ...formatPost(p, sess?.username), likedByMe: likedIds.has(p.id) })),
+      hasMore: posts.length === limit,
+    });
+  } catch (err) {
+    console.error('[posts feed]', err);
+    return res.status(500).json({ error: 'Could not load posts.' });
+  }
+});
+
+app.get('/api/posts/user/:username', async (req, res) => {
+  const username = (req.params.username || '').toLowerCase();
+  const before   = req.query.before || null;
+  const limit    = Math.min(Math.max(Number(req.query.limit) || 20, 1), 50);
+  const token    = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
+  const sess     = token ? await dbGetSession(token) : null;
+  try {
+    const posts = await dbGetPostsFeed({ before, limit, username });
+    let likedIds = new Set();
+    if (sess && posts.length) {
+      const ids = posts.map(p => p.id);
+      const { data: likes } = await supabase.from('post_likes')
+        .select('post_id').eq('username', sess.username).in('post_id', ids);
+      likedIds = new Set((likes || []).map(l => l.post_id));
+    }
+    return res.json({
+      posts: posts.map(p => ({ ...formatPost(p, sess?.username), likedByMe: likedIds.has(p.id) })),
+      hasMore: posts.length === limit,
+    });
+  } catch (err) {
+    console.error('[posts user]', err);
+    return res.status(500).json({ error: 'Could not load posts.' });
+  }
+});
+
+app.get('/api/posts/:id', async (req, res) => {
+  const token = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
+  const sess  = token ? await dbGetSession(token) : null;
+  try {
+    const post = await dbGetPost(req.params.id);
+    if (!post) return res.status(404).json({ error: 'Post not found.' });
+    let likedByMe = false;
+    if (sess) {
+      const { data } = await supabase.from('post_likes')
+        .select('post_id').eq('post_id', post.id).eq('username', sess.username).maybeSingle();
+      likedByMe = !!data;
+    }
+    return res.json({ post: { ...formatPost(post, sess?.username), likedByMe } });
+  } catch (err) {
+    return res.status(500).json({ error: 'Could not load post.' });
+  }
+});
+
+app.patch('/api/posts/:id', rateLimit, async (req, res) => {
+  const { token, body } = req.body || {};
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  if (!body || typeof body !== 'string') return res.status(400).json({ error: '"body" is required.' });
+  if (body.length > 1000) return res.status(400).json({ error: 'Post body must be 1000 characters or fewer.' });
+  try {
+    const post = await dbGetPost(req.params.id);
+    if (!post) return res.status(404).json({ error: 'Post not found.' });
+    if (post.author !== sess.username) return res.status(403).json({ error: 'Not your post.' });
+    const { data, error } = await supabase.from('posts')
+      .update({ body, updated_at: new Date().toISOString() })
+      .eq('id', req.params.id).select().single();
+    if (error) throw new Error(error.message);
+    return res.json({ post: formatPost(data, sess.username) });
+  } catch (err) {
+    return res.status(500).json({ error: 'Could not update post.' });
+  }
+});
+
+app.delete('/api/posts/:id', rateLimit, async (req, res) => {
+  const { token } = req.body || {};
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  try {
+    const post = await dbGetPost(req.params.id);
+    if (!post) return res.status(404).json({ error: 'Post not found.' });
+    if (post.author !== sess.username) return res.status(403).json({ error: 'Not your post.' });
+    await supabase.from('posts').delete().eq('id', req.params.id);
+    return res.json({ deleted: true });
+  } catch (err) {
+    return res.status(500).json({ error: 'Could not delete post.' });
+  }
+});
+
+app.post('/api/posts/:id/like', rateLimit, async (req, res) => {
+  const { token } = req.body || {};
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  try {
+    const { error } = await supabase.from('post_likes')
+      .upsert({ post_id: req.params.id, username: sess.username }, { onConflict: 'post_id,username' });
+    if (error && error.code !== '23505') throw new Error(error.message);
+    const { count } = await supabase.from('post_likes')
+      .select('*', { count: 'exact', head: true }).eq('post_id', req.params.id);
+    await supabase.from('posts').update({ like_count: count || 0 }).eq('id', req.params.id);
+    return res.json({ liked: true, likeCount: count || 0 });
+  } catch (err) {
+    return res.status(500).json({ error: 'Could not like post.' });
+  }
+});
+
+app.delete('/api/posts/:id/like', rateLimit, async (req, res) => {
+  const { token } = req.body || {};
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  try {
+    await supabase.from('post_likes').delete().eq('post_id', req.params.id).eq('username', sess.username);
+    const { count } = await supabase.from('post_likes')
+      .select('*', { count: 'exact', head: true }).eq('post_id', req.params.id);
+    await supabase.from('posts').update({ like_count: count || 0 }).eq('id', req.params.id);
+    return res.json({ liked: false, likeCount: count || 0 });
+  } catch (err) {
+    return res.status(500).json({ error: 'Could not unlike post.' });
+  }
+});
+
+app.post('/api/posts/:id/comments', rateLimit, async (req, res) => {
+  const { token, body } = req.body || {};
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  if (!body || typeof body !== 'string' || !body.trim()) return res.status(400).json({ error: '"body" is required.' });
+  if (body.length > 500) return res.status(400).json({ error: 'Comment must be 500 characters or fewer.' });
+  try {
+    const { data, error } = await supabase.from('post_comments').insert({
+      post_id: req.params.id, author: sess.username, body: body.trim(),
+    }).select().single();
+    if (error) throw new Error(error.message);
+    const { count } = await supabase.from('post_comments')
+      .select('*', { count: 'exact', head: true }).eq('post_id', req.params.id);
+    await supabase.from('posts').update({ comment_count: count || 0 }).eq('id', req.params.id);
+    return res.status(201).json({ comment: data });
+  } catch (err) {
+    return res.status(500).json({ error: 'Could not add comment.' });
+  }
+});
+
+app.get('/api/posts/:id/comments', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('post_comments')
+      .select('*, profiles:author!inner(username, display_name, avatar_url)')
+      .eq('post_id', req.params.id)
+      .order('created_at', { ascending: true })
+      .limit(100);
+    if (error) throw new Error(error.message);
+    return res.json({ comments: (data || []).map(c => ({
+      id: c.id, postId: c.post_id, author: c.author,
+      displayName: c.profiles?.display_name || c.author,
+      avatarUrl: c.profiles?.avatar_url || null,
+      body: c.body, createdAt: c.created_at,
+    })) });
+  } catch (err) {
+    return res.status(500).json({ error: 'Could not load comments.' });
+  }
+});
+
+app.delete('/api/posts/:id/comments/:cid', rateLimit, async (req, res) => {
+  const { token } = req.body || {};
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  try {
+    const { data: comment } = await supabase.from('post_comments')
+      .select('author, post_id').eq('id', req.params.cid).maybeSingle();
+    if (!comment) return res.status(404).json({ error: 'Comment not found.' });
+    if (comment.author !== sess.username) return res.status(403).json({ error: 'Not your comment.' });
+    await supabase.from('post_comments').delete().eq('id', req.params.cid);
+    const { count } = await supabase.from('post_comments')
+      .select('*', { count: 'exact', head: true }).eq('post_id', req.params.id);
+    await supabase.from('posts').update({ comment_count: count || 0 }).eq('id', req.params.id);
+    return res.json({ deleted: true });
+  } catch (err) {
+    return res.status(500).json({ error: 'Could not delete comment.' });
+  }
+});
+
+// Also expose artist follower count recompute as admin util (GET returns current counts)
+app.post('/api/admin/recount-artist-followers', rateLimit, async (req, res) => {
+  const { token } = req.body || {};
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Not authorized.' });
+  try {
+    const { data: artists } = await supabase.from('artists').select('id');
+    let updated = 0;
+    for (const a of (artists || [])) {
+      const { count } = await supabase.from('artist_followers')
+        .select('*', { count: 'exact', head: true }).eq('artist_id', a.id);
+      await supabase.from('artists').update({ follower_count: count || 0 }).eq('id', a.id);
+      updated++;
+    }
+    return res.json({ recount: true, artistsUpdated: updated });
+  } catch (err) {
+    return res.status(500).json({ error: 'Recount failed.' });
+  }
+});
+
+// ─── END SOCIAL POSTS ────────────────────────────────────────────────────────
 
 app.get('/api/artists', async (req, res) => {
   const sort   = ['trending', 'recent', 'followers'].includes(req.query.sort) ? req.query.sort : 'followers';
