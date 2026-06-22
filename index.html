@@ -1211,6 +1211,151 @@ textarea.support-field { height:90px;resize:vertical; }
 }
 .cover-upload-wrap:hover .cover-upload-hint { opacity:1; }
 
+/* ─── Enhanced Profile Styles ────────────────────────────────────── */
+.profile-cover {
+  width:100%;height:140px;border-radius:8px 8px 0 0;background:var(--surface3);
+  background-size:cover;background-position:center;margin:-28px -28px 0 -28px;
+  position:relative;
+}
+.profile-avatar {
+  width:76px;height:76px;border-radius:50%;background:var(--surface3);
+  border:3px solid var(--surface);background-size:cover;background-position:center;
+  flex-shrink:0;display:flex;align-items:center;justify-content:center;
+  font-family:'Unbounded',sans-serif;font-weight:900;font-size:1.4rem;color:var(--accent);
+  box-shadow:0 4px 16px rgba(0,0,0,0.5);
+}
+.profile-artist-badge {
+  display:inline-flex;align-items:center;gap:5px;font-size:0.42rem;
+  color:var(--accent);background:rgba(232,255,71,0.08);border:1px solid rgba(232,255,71,0.25);
+  border-radius:var(--radius);padding:3px 8px;letter-spacing:0.06em;text-transform:uppercase;
+  margin-bottom:8px;
+}
+.profile-stats-grid {
+  display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin:14px 0;
+  font-size:0.42rem;color:var(--text-muted);text-align:center;
+}
+.profile-stats-grid strong {
+  display:block;font-size:0.68rem;color:var(--text);font-family:'Unbounded',sans-serif;
+  margin-bottom:2px;font-weight:700;
+}
+.profile-stats-grid span { padding:6px 2px;border-radius:var(--radius); }
+.profile-stats-grid span:hover { background:var(--surface2); }
+.profile-completion-bar-wrap {
+  margin:10px 0;
+}
+.profile-completion-label {
+  font-size:0.42rem;color:var(--text-muted);display:flex;justify-content:space-between;margin-bottom:4px;
+}
+.profile-completion-bar {
+  height:3px;background:var(--surface3);border-radius:2px;overflow:hidden;
+}
+.profile-completion-fill {
+  height:100%;background:var(--accent);border-radius:2px;transition:width 0.4s ease;
+}
+.profile-bio {
+  font-size:0.52rem;color:var(--text);line-height:1.8;white-space:pre-wrap;
+  margin:8px 0 14px;min-height:1.5em;
+}
+.profile-bio-empty { color:var(--text-muted);font-style:italic; }
+
+/* ─── Social Posts ───────────────────────────────────────────────── */
+.post-card {
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+  padding:12px 14px;margin-bottom:8px;transition:border-color 0.15s;
+}
+.post-card:hover { border-color:var(--surface3); }
+.post-header {
+  display:flex;align-items:center;gap:10px;margin-bottom:8px;
+}
+.post-avatar {
+  width:32px;height:32px;border-radius:50%;background:var(--surface3);
+  background-size:cover;background-position:center;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;
+  font-family:'Unbounded',sans-serif;font-weight:900;font-size:0.55rem;color:var(--accent);
+}
+.post-meta { flex:1;min-width:0; }
+.post-displayname {
+  font-size:0.52rem;font-family:'Unbounded',sans-serif;font-weight:700;color:var(--text);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;
+}
+.post-displayname:hover { color:var(--accent); }
+.post-username-time {
+  font-size:0.4rem;color:var(--text-muted);font-family:'Space Mono',monospace;
+}
+.post-type-badge {
+  font-size:0.36rem;color:var(--accent3);background:rgba(0,212,255,0.08);
+  border:1px solid rgba(0,212,255,0.2);border-radius:var(--radius);
+  padding:2px 6px;letter-spacing:0.06em;text-transform:uppercase;flex-shrink:0;
+}
+.post-body {
+  font-size:0.52rem;color:var(--text);line-height:1.7;margin:6px 0 10px;
+  white-space:pre-wrap;word-break:break-word;
+}
+.post-ref-card {
+  background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);
+  padding:8px 10px;margin-bottom:10px;font-size:0.44rem;color:var(--text-muted);
+  cursor:pointer;transition:border-color 0.15s;display:flex;align-items:center;gap:8px;
+}
+.post-ref-card:hover { border-color:var(--accent3);color:var(--text); }
+.post-actions {
+  display:flex;align-items:center;gap:12px;padding-top:6px;border-top:1px solid var(--border);
+}
+.post-action-btn {
+  background:none;border:none;color:var(--text-muted);font-family:'Space Mono',monospace;
+  font-size:0.42rem;cursor:pointer;display:flex;align-items:center;gap:4px;
+  padding:3px 6px;border-radius:var(--radius);transition:color 0.15s,background 0.15s;
+  letter-spacing:0.03em;
+}
+.post-action-btn:hover { color:var(--text);background:var(--surface2); }
+.post-action-btn.liked { color:var(--accent2); }
+.post-action-btn.liked:hover { color:var(--accent2); }
+.post-owner-actions { margin-left:auto;display:flex;gap:4px; }
+.post-compose {
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+  padding:12px 14px;margin-bottom:12px;
+}
+.post-compose-header {
+  display:flex;align-items:center;gap:10px;margin-bottom:8px;
+}
+.post-compose-input {
+  width:100%;background:var(--surface2);border:1px solid var(--border);
+  border-radius:var(--radius);color:var(--text);font-family:'Space Mono',monospace;
+  font-size:0.5rem;padding:8px 10px;box-sizing:border-box;resize:vertical;min-height:64px;
+  line-height:1.6;
+}
+.post-compose-input:focus { outline:none;border-color:var(--accent); }
+.post-compose-footer {
+  display:flex;align-items:center;justify-content:space-between;margin-top:8px;gap:8px;
+}
+.post-compose-footer select {
+  background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);
+  color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.42rem;
+  padding:5px 8px;cursor:pointer;
+}
+.post-comment-list { margin-top:10px;border-top:1px solid var(--border);padding-top:8px; }
+.post-comment {
+  display:flex;gap:8px;padding:6px 0;font-size:0.46rem;line-height:1.6;
+  border-bottom:1px solid rgba(255,255,255,0.03);
+}
+.post-comment-avatar {
+  width:22px;height:22px;border-radius:50%;background:var(--surface3);
+  background-size:cover;background-position:center;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;
+  font-family:'Unbounded',sans-serif;font-weight:900;font-size:0.36rem;color:var(--accent);
+}
+.post-comment-name { color:var(--accent);font-weight:700;margin-right:5px;cursor:pointer; }
+.post-comment-name:hover { text-decoration:underline; }
+.post-comment-body { color:var(--text);flex:1; }
+
+/* ─── Artist Dashboard Button upgrade ──────────────────────────────── */
+.artist-dash-btn {
+  display:none;flex:0 0 auto;background:var(--accent);color:var(--bg);
+  border:none;font-family:'Unbounded',sans-serif;font-weight:700;font-size:0.44rem;
+  padding:8px 12px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.05em;
+  text-transform:uppercase;transition:opacity 0.15s;
+}
+.artist-dash-btn:hover { opacity:0.85; }
+
 /* ─── Equalizer Presets Gallery ─────────────────────────────────── */
 .eq-preset-gallery {
   display:grid;grid-template-columns:repeat(auto-fill,minmax(80px,1fr));gap:5px;
@@ -2444,29 +2589,58 @@ body.oled-mode {
 
 <!-- User Profile Viewer -->
 <div class="lyrics-overlay" id="userProfileOverlay">
-  <div class="lyrics-panel" style="max-width:380px;">
+  <div class="lyrics-panel" style="max-width:420px;">
     <div id="userProfileLoading" style="text-align:center;padding:24px;color:var(--text-muted);font-size:0.6rem;">Loading profile…</div>
     <div id="userProfileContent" style="display:none;">
       <div class="profile-cover" id="userProfileCover"></div>
-      <div class="profile-avatar-row">
+      <div class="profile-avatar-row" style="margin-top:-44px;">
         <div class="profile-avatar" id="userProfileAvatar"></div>
+        <div style="flex:1;padding-bottom:4px;">
+          <div id="userProfileArtistBadge" style="display:none;" class="profile-artist-badge">🎤 Artist</div>
+        </div>
       </div>
-      <div class="lyrics-title" id="userProfileName">—</div>
-      <div class="lyrics-artist" id="userProfileUsername">@—</div>
+      <div class="lyrics-title" id="userProfileName" style="margin-top:4px;">—</div>
+      <div class="lyrics-artist" id="userProfileUsername" style="margin-bottom:2px;">@—</div>
       <div class="profile-join-date" id="userProfileJoinDate"></div>
-      <div class="profile-stats-grid">
+
+      <!-- Profile Completion Bar (own profile only) -->
+      <div id="userProfileCompletionWrap" style="display:none;" class="profile-completion-bar-wrap">
+        <div class="profile-completion-label">
+          <span>Profile Completion</span>
+          <span id="userProfileCompletionPct">0%</span>
+        </div>
+        <div class="profile-completion-bar">
+          <div class="profile-completion-fill" id="userProfileCompletionFill" style="width:0%"></div>
+        </div>
+      </div>
+
+      <!-- Stats grid: 4 per row, up to 8 stats -->
+      <div class="profile-stats-grid" id="userProfileStatsGrid">
         <span><strong id="userProfileFollowerCount">0</strong>Followers</span>
         <span><strong id="userProfileFollowingCount">0</strong>Following</span>
         <span><strong id="userProfilePlaylistCount">0</strong>Playlists</span>
         <span><strong id="userProfileTotalPlays">0</strong>Plays</span>
         <span><strong id="userProfileTotalLikes">0</strong>Likes</span>
+        <span id="userProfileTracksUploadedStat" style="display:none;"><strong id="userProfileTracksUploaded">0</strong>Tracks</span>
+        <span id="userProfileArtistFollowersStat" style="display:none;"><strong id="userProfileArtistFollowers">0</strong>Artist Fans</span>
+        <span id="userProfileArtistPlaysStat" style="display:none;"><strong id="userProfileArtistPlays">0</strong>Artist Plays</span>
       </div>
-      <div id="userProfileBio" style="font-size:0.55rem;color:var(--text);line-height:1.8;white-space:pre-wrap;margin-bottom:14px;">—</div>
+
+      <div class="profile-bio" id="userProfileBio"></div>
+
       <div id="userProfileArtistLinkWrap"></div>
       <div class="profile-action-row">
         <button id="userProfileFollowBtn" style="background:none;border:1px solid var(--accent3);color:var(--accent3);font-family:'Space Mono',monospace;font-size:0.5rem;padding:8px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.06em;text-transform:uppercase;">Follow</button>
         <button class="share-btn" id="userProfileShareBtn" style="flex:0 0 auto;padding:8px 12px;">⇪ Share</button>
       </div>
+
+      <!-- Posts section -->
+      <div id="userProfilePostsWrap" style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px;display:none;">
+        <div style="font-size:0.46rem;color:var(--text-dim);letter-spacing:0.05em;text-transform:uppercase;margin-bottom:8px;">Posts</div>
+        <div id="userProfilePostsList"></div>
+        <button id="userProfileLoadMorePostsBtn" onclick="loadMoreProfilePosts()" style="display:none;width:100%;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.42rem;padding:6px;border-radius:var(--radius);cursor:pointer;margin-top:6px;">Load More</button>
+      </div>
+
       <div id="userProfilePlaylistsWrap" style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px;display:none;">
         <div style="font-size:0.46rem;color:var(--text-dim);letter-spacing:0.05em;text-transform:uppercase;margin-bottom:8px;">Public Playlists</div>
         <div id="userProfilePlaylistsList"></div>
@@ -2504,7 +2678,7 @@ body.oled-mode {
       <div class="profile-action-row">
         <button id="artistProfileFollowBtn" style="background:none;border:1px solid var(--accent3);color:var(--accent3);font-family:'Space Mono',monospace;font-size:0.5rem;padding:8px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.06em;text-transform:uppercase;">Follow</button>
         <button class="share-btn" id="artistProfileShareBtn" style="flex:0 0 auto;padding:8px 12px;">⇪ Share</button>
-        <button id="artistDashboardToggleBtn" style="display:none;flex:0 0 auto;background:var(--accent);color:var(--bg);border:none;font-family:'Unbounded',sans-serif;font-weight:700;font-size:0.46rem;padding:8px 10px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.05em;text-transform:uppercase;">🎚 Dashboard</button>
+        <button id="artistDashboardToggleBtn" class="artist-dash-btn">🎤 Artist Dashboard</button>
       </div>
       <input type="file" id="artistAvatarFileInput" accept="image/png,image/jpeg,image/webp,image/gif" style="display:none;" />
       <input type="file" id="artistBannerFileInput" accept="image/png,image/jpeg,image/webp,image/gif" style="display:none;" />
@@ -2652,6 +2826,63 @@ body.oled-mode {
     </div>
     <div id="playlistViewerError" style="display:none;text-align:center;padding:24px;color:var(--text-muted);font-size:0.55rem;"></div>
     <button class="support-close-btn" onclick="closePlaylistViewer()" style="margin-top:16px;">Close</button>
+  </div>
+</div>
+
+<!-- Social Posts Feed Overlay -->
+<div class="lyrics-overlay" id="postsFeedOverlay">
+  <div class="lyrics-panel" style="max-width:480px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+      <div class="lyrics-title" style="margin:0;">📢 Posts</div>
+      <button class="support-close-btn" onclick="closePostsFeed()" style="margin:0;padding:6px 12px;">✕</button>
+    </div>
+
+    <!-- Compose box (signed-in users only) -->
+    <div id="postComposeBox" style="display:none;" class="post-compose">
+      <div class="post-compose-header">
+        <div class="post-avatar" id="postComposeAvatar"></div>
+        <div style="flex:1;font-size:0.46rem;color:var(--text-muted);">What's on your mind?</div>
+      </div>
+      <textarea id="postComposeBody" class="post-compose-input" maxlength="1000" placeholder="Write something… or share a track, playlist, or release."></textarea>
+      <div class="post-compose-footer">
+        <select id="postComposeType" onchange="updatePostComposeType()">
+          <option value="text">📝 Text Post</option>
+          <option value="track">🎵 Track Share</option>
+          <option value="playlist">📂 Playlist Share</option>
+          <option value="announcement">🎙 Release Announcement</option>
+        </select>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span id="postComposeCharCount" style="font-size:0.4rem;color:var(--text-muted);">0/1000</span>
+          <button id="postComposeSubmitBtn" onclick="submitPost()" style="background:var(--accent);color:var(--bg);border:none;font-family:'Unbounded',sans-serif;font-weight:700;font-size:0.44rem;padding:7px 14px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.05em;text-transform:uppercase;">Post</button>
+        </div>
+      </div>
+      <div id="postComposeRefRow" style="display:none;margin-top:6px;"></div>
+    </div>
+
+    <div id="postsFeedList" style="max-height:60vh;overflow-y:auto;"></div>
+    <div id="postsFeedLoading" style="text-align:center;padding:20px;color:var(--text-muted);font-size:0.5rem;">Loading posts…</div>
+    <button id="postsFeedLoadMoreBtn" onclick="loadMorePosts()" style="display:none;width:100%;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.44rem;padding:8px;border-radius:var(--radius);cursor:pointer;margin-top:8px;letter-spacing:0.04em;">Load More</button>
+  </div>
+</div>
+
+<!-- Post Comment Overlay -->
+<div class="lyrics-overlay" id="postCommentsOverlay">
+  <div class="lyrics-panel" style="max-width:420px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+      <div class="lyrics-title" style="margin:0;font-size:0.7rem;">Comments</div>
+      <button class="support-close-btn" onclick="closePostComments()" style="margin:0;padding:5px 10px;">✕</button>
+    </div>
+    <div id="postCommentsPostCard" style="margin-bottom:12px;"></div>
+    <div id="postCommentsList" style="max-height:280px;overflow-y:auto;margin-bottom:12px;" class="post-comment-list"></div>
+    <div id="postCommentsAddRow" style="display:none;">
+      <div style="display:flex;gap:8px;align-items:flex-start;">
+        <div class="post-avatar" id="postCommentAvatar" style="width:26px;height:26px;font-size:0.4rem;flex-shrink:0;margin-top:2px;"></div>
+        <textarea id="postCommentBody" maxlength="500" placeholder="Write a comment…" style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-family:'Space Mono',monospace;font-size:0.48rem;padding:7px 9px;resize:none;min-height:52px;box-sizing:border-box;"></textarea>
+      </div>
+      <div style="display:flex;justify-content:flex-end;margin-top:6px;">
+        <button onclick="submitComment()" style="background:var(--accent);color:var(--bg);border:none;font-family:'Unbounded',sans-serif;font-weight:700;font-size:0.44rem;padding:6px 14px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.04em;text-transform:uppercase;">Reply</button>
+      </div>
+    </div>
   </div>
 </div>
 
