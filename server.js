@@ -106,6 +106,73 @@ const upload = multer({
   },
 });
 
+// Separate multer instance for image uploads (avatars, covers, artist
+// avatars/banners). Distinct from `upload` above because the size ceiling
+// and accepted mimetypes are completely different from audio — a 20MB
+// fileSize limit makes no sense for what should be a compressed profile
+// picture, and accepting audio/* here would be wrong in the other direction.
+const imageUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1048576 },   // 5MB — generous for a compressed avatar/banner, not raw camera output
+  fileFilter: (_req, file, cb) => {
+    cb(null, /^image\/(png|jpeg|jpg|webp|gif)$/.test(file.mimetype));
+  },
+});
+
+// ─── Media storage (public bucket: avatars, covers, artist art) ───────────────
+// Separate bucket from CLOUD_AUDIO_BUCKET (private, signed-URL audio) — these
+// objects are meant to be hot-linked directly as <img src> and in og:image
+// meta tags, so the bucket is public and callers get back a plain
+// getPublicUrl() string, never a signed URL needing re-resolution.
+const MEDIA_BUCKET = 'media';
+
+// One small helper reused by all four image-upload routes (profile avatar,
+// profile cover, artist avatar, artist banner) rather than four near-copies
+// of the same upload+getPublicUrl dance. `pathPrefix` namespaces objects
+// within the single shared bucket (avatars/, covers/, artist-avatars/,
+// artist-banners/) so nothing else needs its own bucket later.
+async function uploadMediaImage(file, pathPrefix, id) {
+  const ext = (file.mimetype.split('/')[1] || 'png').replace('jpeg', 'jpg');
+  const objectPath = `${pathPrefix}/${id}.${ext}`;
+  const { error } = await supabase.storage.from(MEDIA_BUCKET).upload(objectPath, file.buffer, {
+    contentType: file.mimetype,
+    upsert: true, // overwrite on re-upload — one avatar/banner per id, no versioning needed
+  });
+  if (error) throw new Error(error.message);
+  const { data } = supabase.storage.from(MEDIA_BUCKET).getPublicUrl(objectPath);
+  return data.publicUrl;
+}
+
+// JS-side mirror of the Postgres slugify() function used in the artists
+// migration — needed here so /api/artists/create can predict/generate a
+// slug for a brand-new artist row without a round-trip just to read back
+// what the DB-side default would have produced (there is no DB-side
+// default; the column is NOT NULL with no default, by design, so every
+// insert path must supply one explicitly).
+function slugify(input) {
+  return String(input || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, '')
+    .trim()
+    .replace(/\s+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+// Generates a unique slug by suffixing -2, -3, ... on collision. Small
+// number of round-trips in the worst case (one per existing collision),
+// acceptable because artist creation is a rare, user-initiated action, not
+// a hot path like dbResolveArtist's per-play resolution.
+async function dbGenerateUniqueArtistSlug(name) {
+  const base = slugify(name) || 'artist';
+  let candidate = base;
+  let n = 2;
+  while (true) {
+    const { data } = await supabase.from('artists').select('id').eq('slug', candidate).maybeSingle();
+    if (!data) return candidate;
+    candidate = `${base}-${n++}`;
+  }
+}
+
 // ─── Supabase DB helpers ──────────────────────────────────────────────────────
 // All auth state now lives in Supabase. No local file, no in-memory Maps.
 
@@ -541,9 +608,14 @@ async function dbResolveArtist(rawName) {
   // hits that same partial index's constraint and raises 23505 on conflict,
   // which is the same race-handling shape dbFollowUser already uses below
   // for an ordinary (non-partial) unique constraint.
+  //
+  // slug is NOT NULL + unique on `artists`, so every insert path (auto-
+  // created here from a play, or explicit via /api/artists/create) must
+  // generate one up front — there's no DB-side default to fall back on.
+  const slug = await dbGenerateUniqueArtistSlug(rawName);
   const { data, error } = await supabase
     .from('artists')
-    .insert({ name: rawName.trim(), normalized_name: normalized })
+    .insert({ name: rawName.trim(), normalized_name: normalized, slug })
     .select('id')
     .single();
   if (!error) {
@@ -582,6 +654,12 @@ async function dbGetArtistById(id) {
 async function dbGetArtistByAccount(username) {
   const { data, error } = await supabase.from('artists').select('*').eq('account_id', username).maybeSingle();
   if (error) { console.error('[db] getArtistByAccount:', error.message); return null; }
+  return data;
+}
+
+async function dbGetArtistBySlug(slug) {
+  const { data, error } = await supabase.from('artists').select('*').eq('slug', slug).maybeSingle();
+  if (error) { console.error('[db] getArtistBySlug:', error.message); return null; }
   return data;
 }
 
@@ -730,7 +808,7 @@ async function dbGetReleaseTracks(releaseId) {
 //      (chart_rank_prev - chart_rank: positive = climbed, negative = fell).
 async function recomputeArtistStats() {
   try {
-    const { data: artists, error: artistsErr } = await supabase.from('artists').select('id');
+    const { data: artists, error: artistsErr } = await supabase.from('artists').select('id, account_id');
     if (artistsErr) { console.error('[artists] recompute fetch artists:', artistsErr.message); return; }
     if (!artists || !artists.length) return;
 
@@ -799,6 +877,18 @@ async function recomputeArtistStats() {
         chart_rank_prev: prevRank,
         computed_at: new Date().toISOString(),
       }, { onConflict: 'artist_id' });
+
+      // Write through to profiles.total_plays for claimed artists, so the
+      // public profile page's "Total Plays" stat is real, not a separate
+      // number that could drift from artist_stats. total_likes_received
+      // stays at its existing default (0) here — there's no track-likes
+      // table yet (see artist_stats.total_likes_received's own comment),
+      // and writing a fabricated number would be worse than an honest 0.
+      if (artist.account_id) {
+        await supabase.from('profiles')
+          .update({ total_plays: t.plays })
+          .eq('username', artist.account_id);
+      }
     }
   } catch (err) {
     console.error('[artists] recompute failed:', err);
@@ -2433,13 +2523,28 @@ app.get('/api/profiles/:username', async (req, res) => {
     // the follow button rather than show it in a misleading state.
     const isFollowing = (sess && sess.username !== key) ? await dbIsFollowing(sess.username, key) : null;
 
+    // isArtist/artistSlug drive the profile page's "Become an Artist" CTA
+    // vs "View Artist Page" link — a profile read is the natural place a
+    // visitor discovers someone has an artist page, so resolving it here
+    // (one indexed lookup) beats making the frontend fire a second request
+    // just to find out.
+    const artist = await dbGetArtistByAccount(key);
+
     return res.json({
-      username:       profile.username,
-      displayName:    profile.display_name,
-      bio:            profile.bio,
-      isPublic:       profile.is_public,
-      followerCount:  profile.follower_count,
-      followingCount: profile.following_count,
+      username:            profile.username,
+      displayName:         profile.display_name,
+      avatarUrl:           profile.avatar_url,
+      coverImageUrl:       profile.cover_image_url,
+      bio:                 profile.bio,
+      isPublic:            profile.is_public,
+      joinedAt:            profile.created_at,
+      followerCount:       profile.follower_count,
+      followingCount:      profile.following_count,
+      publicPlaylistCount: profile.public_playlist_count,
+      totalPlays:          Number(profile.total_plays) || 0,
+      totalLikesReceived:  profile.total_likes_received || 0,
+      isArtist:            !!artist,
+      artistSlug:          artist ? artist.slug : null,
       isFollowing,
       isSelf: !!(sess && sess.username === key),
     });
@@ -2483,6 +2588,39 @@ app.patch('/api/profiles/me', rateLimit, async (req, res) => {
   } catch (err) {
     console.error('[profiles patch]', err);
     return res.status(500).json({ error: 'Could not update profile.' });
+  }
+});
+
+// Profile avatar/cover upload — multipart, mirrors the cloud-files upload
+// pattern but targets the public `media` bucket via uploadMediaImage()
+// instead of the private cloud-audio bucket. Ownership is always resolved
+// from the session token, never from anything the client claims, same
+// discipline as every other mutating route in this file.
+app.post('/api/profiles/me/avatar', rateLimit, imageUpload.single('file'), async (req, res) => {
+  const sess = await dbGetSession(req.body?.token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  if (!req.file) return res.status(400).json({ error: 'No image file uploaded.' });
+  try {
+    const avatarUrl = await uploadMediaImage(req.file, 'avatars', sess.username);
+    await dbUpdateProfile(sess.username, { avatar_url: avatarUrl });
+    return res.json({ avatarUrl });
+  } catch (err) {
+    console.error('[profile avatar upload]', err);
+    return res.status(500).json({ error: 'Could not upload avatar.' });
+  }
+});
+
+app.post('/api/profiles/me/cover', rateLimit, imageUpload.single('file'), async (req, res) => {
+  const sess = await dbGetSession(req.body?.token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  if (!req.file) return res.status(400).json({ error: 'No image file uploaded.' });
+  try {
+    const coverImageUrl = await uploadMediaImage(req.file, 'covers', sess.username);
+    await dbUpdateProfile(sess.username, { cover_image_url: coverImageUrl });
+    return res.json({ coverImageUrl });
+  } catch (err) {
+    console.error('[profile cover upload]', err);
+    return res.status(500).json({ error: 'Could not upload cover image.' });
   }
 });
 
@@ -3917,13 +4055,17 @@ app.get('/api/activity/feed/realtime', async (req, res) => {
 //  used to compute isFollowing/isOwner for the requester.
 // ═══════════════════════════════════════════════════════════════════════════════
 
-// Resolves the :id path param to an artists row. Supports three shapes:
+// Resolves the :id path param to an artists row. Supports four shapes:
 //   - a bare artists.id (uuid)              -> dbGetArtistById
 //   - "@username"                           -> dbGetArtistByAccount (claimed page, looked up by the claiming account)
 //   - a bare username with no "@" that      -> falls back to dbGetArtistByAccount too, so
 //     happens not to look like a uuid          /api/artists/slimey2017 and /api/artists/@slimey2017
 //                                                both work without the caller needing to know which
 //                                                form an id is in.
+//   - a slug (artists.slug)                 -> dbGetArtistBySlug — the form /artist/:slug actually
+//                                                routes with, and the only one that resolves
+//                                                UNCLAIMED artists (no account_id, so no username to
+//                                                look up by at all).
 // This is the "single :id path param could plausibly be either" case the
 // comment above dbGetArtist already flagged as a future need — implementing
 // it at the route layer (rather than in dbGetArtist itself) keeps the DB
@@ -3935,9 +4077,13 @@ async function resolveArtistFromParam(idParam) {
   if (!raw) return null;
   if (raw.startsWith('@')) return dbGetArtistByAccount(raw.slice(1).toLowerCase());
   if (UUID_RE.test(raw)) return dbGetArtistById(raw);
-  // Not a uuid and no @ prefix — try it as a username anyway (the
-  // /api/artists/slimey2017 convenience form), since a bare artist id will
-  // always match UUID_RE and never reach this branch.
+  // Not a uuid and no @ prefix — try slug first (the canonical /artist/:slug
+  // form, and the only lookup that works for unclaimed artists), then fall
+  // back to account username for the older /api/artists/slimey2017 convenience
+  // form. Slug first because every artist has one (NOT NULL), while only
+  // claimed artists have an account_id to match against.
+  const bySlug = await dbGetArtistBySlug(raw.toLowerCase());
+  if (bySlug) return bySlug;
   return dbGetArtistByAccount(raw.toLowerCase());
 }
 
@@ -3950,7 +4096,7 @@ app.get('/api/artists', async (req, res) => {
     const artists = await dbListArtists({ sort, limit, offset, search });
     return res.json({
       artists: artists.map(a => ({
-        id: a.id, name: a.name, avatarUrl: a.avatar_url, bannerUrl: a.banner_url,
+        id: a.id, slug: a.slug, name: a.name, avatarUrl: a.avatar_url, bannerUrl: a.banner_url,
         isVerified: a.is_verified, isClaimed: !!a.account_id, followerCount: a.follower_count,
       })),
     });
@@ -3974,6 +4120,7 @@ app.get('/api/artists/:id', async (req, res) => {
 
     return res.json({
       id: artist.id,
+      slug: artist.slug,
       name: artist.name,
       avatarUrl: artist.avatar_url,
       bannerUrl: artist.banner_url,
@@ -4128,6 +4275,75 @@ app.delete('/api/artists/:id/follow', artistFollowRateLimit, async (req, res) =>
   }
 });
 
+// Creates a brand-new artist page for the signed-in account — this is the
+// actual "Become an Artist" entry point. /api/artists/claim (below) only
+// works if an unclaimed artist row ALREADY exists (e.g. auto-created by
+// dbResolveArtist from a prior anonymous play of that name); a user with
+// no plays under their name yet has nothing to claim, which is exactly
+// the gap this route fills.
+//
+// If an unclaimed row already exists under the normalized name (their
+// music got played before they signed up), this CLAIMS that row instead
+// of creating a duplicate — same merge principle dbResolveArtist already
+// uses for play-time dedup, just triggered from account creation instead.
+// `merged: true` in the response lets the frontend say "we found your
+// existing stats" rather than silently inheriting a stranger's-looking row.
+app.post('/api/artists/create', rateLimit, async (req, res) => {
+  const { token, name } = req.body || {};
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+
+  const existing = await dbGetArtistByAccount(sess.username);
+  if (existing) return res.status(409).json({ error: 'Your account has already claimed an artist page.' });
+
+  if (!name || typeof name !== 'string' || !name.trim()) {
+    return res.status(400).json({ error: '"name" is required.' });
+  }
+  const trimmedName = name.trim().slice(0, 100);
+  const normalized = normalizeArtistName(trimmedName);
+  if (!normalized) return res.status(400).json({ error: 'Please enter a valid artist name.' });
+
+  try {
+    const { data: existingUnclaimed } = await supabase
+      .from('artists').select('id, account_id').eq('normalized_name', normalized).maybeSingle();
+
+    if (existingUnclaimed) {
+      if (existingUnclaimed.account_id) {
+        return res.status(409).json({ error: 'An artist with this name already exists and is already claimed.' });
+      }
+      const updated = await dbUpdateArtist(existingUnclaimed.id, {
+        account_id: sess.username, claimed_at: new Date().toISOString(),
+      });
+      return res.status(200).json({
+        id: updated.id, slug: updated.slug, name: updated.name, isClaimed: true, merged: true,
+      });
+    }
+
+    const slug = await dbGenerateUniqueArtistSlug(trimmedName);
+    const { data: created, error } = await supabase
+      .from('artists')
+      .insert({
+        name: trimmedName, normalized_name: normalized, slug,
+        account_id: sess.username, claimed_at: new Date().toISOString(),
+      })
+      .select('*')
+      .single();
+    if (error) {
+      // Lost a race to a concurrent create/claim of the same normalized
+      // name — same shape as dbResolveArtist's own 23505 handling.
+      if (error.code === '23505') return res.status(409).json({ error: 'That artist name was just taken. Please try a different name.' });
+      throw new Error(error.message);
+    }
+    return res.status(201).json({
+      id: created.id, slug: created.slug, name: created.name, isClaimed: true, merged: false,
+    });
+  } catch (err) {
+    console.error('[artist create]', err);
+    return res.status(500).json({ error: 'Could not create artist page.' });
+  }
+});
+
+
 // Claims an existing unclaimed artist row for the signed-in account — the
 // "verified artist applications" flow this enables later is just: an admin
 // flips is_verified after a claim, not a separate table. One account can
@@ -4189,6 +4405,49 @@ app.patch('/api/artists/:id', rateLimit, async (req, res) => {
   }
 });
 
+// Artist avatar/banner upload — multipart, same uploadMediaImage() helper
+// as the profile avatar/cover routes, namespaced under artist-avatars/ and
+// artist-banners/ in the shared `media` bucket. Ownership check mirrors
+// PATCH /api/artists/:id exactly: only the account that claimed this artist
+// page can upload art for it.
+app.post('/api/artists/:id/avatar', rateLimit, imageUpload.single('file'), async (req, res) => {
+  const sess = await dbGetSession(req.body?.token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  if (!req.file) return res.status(400).json({ error: 'No image file uploaded.' });
+  try {
+    const artist = await resolveArtistFromParam(req.params.id);
+    if (!artist) return res.status(404).json({ error: 'Artist not found.' });
+    if (artist.account_id !== sess.username) {
+      return res.status(403).json({ error: 'Only the artist who claimed this page can upload art for it.' });
+    }
+    const avatarUrl = await uploadMediaImage(req.file, 'artist-avatars', artist.id);
+    await dbUpdateArtist(artist.id, { avatar_url: avatarUrl });
+    return res.json({ avatarUrl });
+  } catch (err) {
+    console.error('[artist avatar upload]', err);
+    return res.status(500).json({ error: 'Could not upload artist avatar.' });
+  }
+});
+
+app.post('/api/artists/:id/banner', rateLimit, imageUpload.single('file'), async (req, res) => {
+  const sess = await dbGetSession(req.body?.token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  if (!req.file) return res.status(400).json({ error: 'No image file uploaded.' });
+  try {
+    const artist = await resolveArtistFromParam(req.params.id);
+    if (!artist) return res.status(404).json({ error: 'Artist not found.' });
+    if (artist.account_id !== sess.username) {
+      return res.status(403).json({ error: 'Only the artist who claimed this page can upload art for it.' });
+    }
+    const bannerUrl = await uploadMediaImage(req.file, 'artist-banners', artist.id);
+    await dbUpdateArtist(artist.id, { banner_url: bannerUrl });
+    return res.json({ bannerUrl });
+  } catch (err) {
+    console.error('[artist banner upload]', err);
+    return res.status(500).json({ error: 'Could not upload artist banner.' });
+  }
+});
+
 app.post('/api/artists/:id/releases', rateLimit, async (req, res) => {
   const { token, title, releaseType, coverUrl, releaseDate, trackIds } = req.body || {};
   const sess = await dbGetSession(token);
@@ -4229,6 +4488,91 @@ app.post('/api/artists/:id/releases', rateLimit, async (req, res) => {
     console.error('[artist create release]', err);
     return res.status(500).json({ error: 'Could not create release.' });
   }
+});
+
+// ─── Shareable URLs — /u/:username and /artist/:slug ──────────────────────────
+// These exist purely so pasting a profile/artist link into Discord/Twitter/
+// iMessage shows that person's name and avatar instead of generic FREQ
+// branding — the entire point of a "shareable" URL is how it looks when
+// shared, not just that it resolves. Implementation is deliberately tiny:
+// read index.html, string-replace three meta tags, send. No templating
+// engine, no SSR framework — this is a few lines of value, not a system.
+//
+// BASE_URL prefers an explicit env var (set this on Render once a domain
+// is attached) and falls back to localhost for local dev; og:url would be
+// wrong without it, but the page still renders fine either way.
+const BASE_URL = (process.env.BASE_URL || `http://localhost:${PORT}`).replace(/\/$/, '');
+const DEFAULT_OG_IMAGE = `${BASE_URL}/Geometric%20Frequency%20Logo%20Emphasizing%20Modernity.ico`;
+
+function escapeHtmlAttr(s) {
+  return String(s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+async function injectOgTags({ title, description, image, url }) {
+  let html = await fs.promises.readFile(path.join(__dirname, 'index.html'), 'utf8');
+  const t = escapeHtmlAttr(title);
+  const d = escapeHtmlAttr(description);
+  const i = escapeHtmlAttr(image || DEFAULT_OG_IMAGE);
+  const u = escapeHtmlAttr(url);
+  // Replace the existing <title> + description meta (always present, see
+  // index.html's <head>) and append OG/Twitter card tags right after the
+  // description tag — additive, doesn't disturb anything else in <head>.
+  html = html.replace(/<title>.*?<\/title>/, `<title>${t}</title>`);
+  html = html.replace(
+    /<meta name="description"[^>]*>/,
+    `<meta name="description" content="${d}" />\n` +
+    `<meta property="og:title" content="${t}" />\n` +
+    `<meta property="og:description" content="${d}" />\n` +
+    `<meta property="og:image" content="${i}" />\n` +
+    `<meta property="og:url" content="${u}" />\n` +
+    `<meta property="og:type" content="profile" />\n` +
+    `<meta name="twitter:card" content="summary" />\n` +
+    `<meta name="twitter:title" content="${t}" />\n` +
+    `<meta name="twitter:description" content="${d}" />\n` +
+    `<meta name="twitter:image" content="${i}" />`
+  );
+  return html;
+}
+
+// Server-rendered entry point for shareable profile URLs. Falls through to
+// the plain SPA shell (no OG tags) for a private or missing profile, same
+// existence-probing protection GET /api/profiles/:username already has —
+// a private profile's page source shouldn't visibly differ from a 404 in
+// a way that confirms the username exists.
+app.get('/u/:username', async (req, res) => {
+  try {
+    const profile = await dbGetProfile((req.params.username || '').trim().toLowerCase());
+    if (profile && profile.is_public) {
+      const html = await injectOgTags({
+        title: `${profile.display_name || profile.username} (@${profile.username}) · FREQ`,
+        description: profile.bio || `${profile.follower_count || 0} followers on FREQ`,
+        image: profile.avatar_url,
+        url: `${BASE_URL}/u/${profile.username}`,
+      });
+      return res.send(html);
+    }
+  } catch (err) {
+    console.error('[og /u/:username]', err);
+  }
+  return res.sendFile(path.join(__dirname, 'index.html'));
+});
+
+app.get('/artist/:slug', async (req, res) => {
+  try {
+    const artist = await dbGetArtistBySlug((req.params.slug || '').trim().toLowerCase());
+    if (artist) {
+      const html = await injectOgTags({
+        title: `${artist.name} · FREQ`,
+        description: artist.bio || `${artist.follower_count || 0} followers on FREQ`,
+        image: artist.avatar_url,
+        url: `${BASE_URL}/artist/${artist.slug}`,
+      });
+      return res.send(html);
+    }
+  } catch (err) {
+    console.error('[og /artist/:slug]', err);
+  }
+  return res.sendFile(path.join(__dirname, 'index.html'));
 });
 
 app.get('*', (req, res) => {
