@@ -2725,6 +2725,11 @@ body.oled-mode {
         </div>
       </div>
 
+      <div id="artistProfilePostsWrap" style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px;display:none;">
+        <div style="font-size:0.46rem;color:var(--text-dim);letter-spacing:0.05em;text-transform:uppercase;margin-bottom:8px;">Posts</div>
+        <div id="artistProfilePostsList"></div>
+      </div>
+
       <div id="artistProfileTracksWrap" style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px;display:none;">
         <div style="font-size:0.46rem;color:var(--text-dim);letter-spacing:0.05em;text-transform:uppercase;margin-bottom:8px;">Top Tracks</div>
         <div id="artistProfileTracksList"></div>
@@ -3969,6 +3974,17 @@ async function openUserProfile(username) {
     $('userProfilePlaylistCount').textContent  = formatCompactCount(data.publicPlaylistCount ?? 0);
     $('userProfileTotalPlays').textContent     = formatCompactCount(data.totalPlays ?? 0);
     $('userProfileTotalLikes').textContent     = formatCompactCount(data.totalLikesReceived ?? 0);
+    const tracksStat = $('userProfileTracksUploadedStat');
+    const fansStat = $('userProfileArtistFollowersStat');
+    const artistPlaysStat = $('userProfileArtistPlaysStat');
+    if ($('userProfileTracksUploaded')) $('userProfileTracksUploaded').textContent = formatCompactCount(data.tracksUploaded ?? 0);
+    if ($('userProfileArtistFollowers')) $('userProfileArtistFollowers').textContent = formatCompactCount(data.artistFollowerCount ?? 0);
+    if ($('userProfileArtistPlays')) $('userProfileArtistPlays').textContent = formatCompactCount(data.artistTotalPlays ?? 0);
+    if (tracksStat) tracksStat.style.display = data.isArtist ? '' : 'none';
+    if (fansStat) fansStat.style.display = data.isArtist ? '' : 'none';
+    if (artistPlaysStat) artistPlaysStat.style.display = data.isArtist ? '' : 'none';
+    const artistBadge = $('userProfileArtistBadge');
+    if (artistBadge) artistBadge.style.display = data.isArtist ? '' : 'none';
 
     const avatarEl = $('userProfileAvatar');
     if (avatarEl) {
@@ -4007,6 +4023,7 @@ async function openUserProfile(username) {
       setFollowButtonState(data.isFollowing);
     }
 
+    loadProfilePosts(key);
     loadProfilePublicPlaylists(key); // fire-and-forget — a failed fetch here shouldn't block showing the rest of the profile
   } catch (err) {
     $('userProfileLoading').style.display = 'none';
@@ -4695,6 +4712,7 @@ async function openArtistProfile(idOrSlug) {
     $('artistProfileMonthlyListeners').textContent  = formatCompactCount(data.stats?.monthlyListeners ?? 0);
     $('artistProfileTotalPlays').textContent        = formatCompactCount(data.stats?.totalPlays ?? 0);
     $('artistProfileTotalLikes').textContent        = formatCompactCount(data.stats?.totalLikesReceived ?? 0);
+    loadArtistPosts(data.slug || data.id);
 
     // Avatar/banner upload affordances only show for the artist's own owner —
     // resolveArtistFromParam + isOwner on the server is the source of truth;
@@ -5661,6 +5679,184 @@ $('collabInviteBtn')?.addEventListener('click', async () => {
 
 // ─── Activity Feed ───────────────────────────────────────────────────────────
 
+// --- Social Posts -----------------------------------------------------------
+const POSTS_BASE = '/api/posts';
+let postsCursor = null;
+let currentPostCommentId = null;
+let profilePostsCursor = null;
+let profilePostsUser = null;
+
+function postTimeAgo(iso) { return typeof activityTimeAgo === 'function' ? activityTimeAgo(iso) : formatJoinDate(iso); }
+
+function renderPostCard(post) {
+  const initial = escapeHtml((post.displayName || post.author || '?')[0].toUpperCase());
+  const avatar = post.avatarUrl
+    ? '<div class="post-avatar" style="background-image:url(\'' + escapeHtml(post.avatarUrl) + '\');"></div>'
+    : '<div class="post-avatar">' + initial + '</div>';
+  const ownerActions = post.isOwner
+    ? '<button onclick="editPost(\'' + post.id + '\')" title="Edit post">Edit</button><button onclick="deletePost(\'' + post.id + '\')" title="Delete post">Delete</button>'
+    : '';
+  const ref = post.playlistId ? '<div class="post-ref" onclick="openPlaylistViewer(\'' + post.playlistId + '\')">Playlist</div>'
+    : post.artistId ? '<div class="post-ref" onclick="openArtistProfile(\'' + post.artistId + '\')">Artist</div>'
+    : post.trackId ? '<div class="post-ref">Track</div>'
+    : post.releaseId ? '<div class="post-ref">Release</div>' : '';
+  return '<div class="post-card" data-post-id="' + post.id + '">' +
+    '<div class="post-header">' + avatar + '<div style="flex:1;min-width:0;">' +
+    '<div class="post-name">' + escapeHtml(post.displayName || post.author) + '</div>' +
+    '<div class="post-meta">@' + escapeHtml(post.author) + ' � ' + postTimeAgo(post.createdAt) + ' � ' + escapeHtml(post.postType || 'text') + '</div>' +
+    '</div></div>' +
+    (post.body ? '<div class="post-body">' + escapeHtml(post.body) + '</div>' : '') + ref +
+    '<div class="post-actions">' +
+    '<button onclick="togglePostLike(\'' + post.id + '\',' + (post.likedByMe ? 'true' : 'false') + ')">' + (post.likedByMe ? '?' : '?') + ' <span>' + formatCompactCount(post.likeCount || 0) + '</span></button>' +
+    '<button onclick="openPostComments(\'' + post.id + '\')">Comment <span>' + formatCompactCount(post.commentCount || 0) + '</span></button>' +
+    '<button onclick="sharePost(\'' + post.id + '\')">Share <span>' + formatCompactCount(post.shareCount || 0) + '</span></button>' + ownerActions +
+    '</div></div>';
+}
+
+function closePostsFeed() { $('postsFeedOverlay')?.classList.remove('open'); }
+async function openPostsFeed() {
+  postsCursor = null;
+  $('postsFeedOverlay')?.classList.add('open');
+  const compose = $('postComposeBox');
+  if (compose) compose.style.display = AUTH.loggedIn ? '' : 'none';
+  await loadPosts(false);
+}
+async function loadPosts(append = false) {
+  const list = $('postsFeedList');
+  const loading = $('postsFeedLoading');
+  if (loading) loading.style.display = 'block';
+  try {
+    const params = new URLSearchParams({ limit: 20 });
+    if (AUTH.token) params.set('token', AUTH.token);
+    if (append && postsCursor) params.set('before', postsCursor);
+    const res = await fetch(POSTS_BASE + '?' + params);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not load posts.');
+    const posts = data.posts || [];
+    postsCursor = posts.length ? posts[posts.length - 1].createdAt : null;
+    const html = posts.map(renderPostCard).join('') || '<div class="empty-panel">No posts yet.</div>';
+    if (list) list.innerHTML = append ? list.innerHTML + html : html;
+    if ($('postsFeedLoadMoreBtn')) $('postsFeedLoadMoreBtn').style.display = data.hasMore ? 'block' : 'none';
+  } catch (err) {
+    if (list && !append) list.innerHTML = '<div class="empty-panel">Could not load posts.</div>';
+  } finally {
+    if (loading) loading.style.display = 'none';
+  }
+}
+function loadMorePosts() { return loadPosts(true); }
+function updatePostComposeType() {}
+async function submitPost() {
+  if (!AUTH.loggedIn) { showToast('Sign in required', 'Please sign in to post.', 'error'); return; }
+  const body = ($('postComposeBody')?.value || '').trim();
+  const postType = $('postComposeType')?.value || 'text';
+  try {
+    const res = await fetch(POSTS_BASE, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ token: AUTH.token, postType, body }) });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not create post.');
+    if ($('postComposeBody')) $('postComposeBody').value = '';
+    await loadPosts(false);
+    showToast('Posted', 'Your post is live.', 'success');
+  } catch (err) { showToast('Post failed', err.message, 'error'); }
+}
+async function togglePostLike(postId, liked) {
+  if (!AUTH.loggedIn) { showToast('Sign in required', 'Please sign in to like posts.', 'error'); return; }
+  try {
+    const res = await fetch(POSTS_BASE + '/' + encodeURIComponent(postId) + '/like', { method: liked ? 'DELETE' : 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ token: AUTH.token }) });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not update like.');
+    refreshVisiblePosts();
+  } catch (err) { showToast('Like failed', err.message, 'error'); }
+}
+async function sharePost(postId) {
+  const url = window.location.origin + '/posts/' + encodeURIComponent(postId);
+  try { await navigator.clipboard.writeText(url); } catch (_) {}
+  if (AUTH.loggedIn) {
+    try { await fetch(POSTS_BASE + '/' + encodeURIComponent(postId) + '/share', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ token: AUTH.token }) }); } catch (_) {}
+  }
+  showToast('Post Link Copied', url, 'success');
+  refreshVisiblePosts();
+}
+async function editPost(postId) {
+  const body = prompt('Edit post text:');
+  if (body == null) return;
+  try {
+    const res = await fetch(POSTS_BASE + '/' + encodeURIComponent(postId), { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ token: AUTH.token, body }) });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not edit post.');
+    refreshVisiblePosts();
+  } catch (err) { showToast('Edit failed', err.message, 'error'); }
+}
+async function deletePost(postId) {
+  if (!confirm('Delete this post?')) return;
+  try {
+    const res = await fetch(POSTS_BASE + '/' + encodeURIComponent(postId), { method:'DELETE', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ token: AUTH.token }) });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not delete post.');
+    refreshVisiblePosts();
+  } catch (err) { showToast('Delete failed', err.message, 'error'); }
+}
+async function loadProfilePosts(username, append = false) {
+  if (!append) profilePostsCursor = null;
+  profilePostsUser = username;
+  const wrap = $('userProfilePostsWrap');
+  const list = $('userProfilePostsList');
+  if (!wrap || !list) return;
+  try {
+    const params = new URLSearchParams({ limit: 10 });
+    if (AUTH.token) params.set('token', AUTH.token);
+    if (append && profilePostsCursor) params.set('before', profilePostsCursor);
+    const res = await fetch(POSTS_BASE + '/user/' + encodeURIComponent(username) + '?' + params);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not load posts.');
+    const posts = data.posts || [];
+    profilePostsCursor = posts.length ? posts[posts.length - 1].createdAt : null;
+    wrap.style.display = posts.length || append ? '' : 'none';
+    list.innerHTML = append ? list.innerHTML + posts.map(renderPostCard).join('') : posts.map(renderPostCard).join('');
+    if ($('userProfileLoadMorePostsBtn')) $('userProfileLoadMorePostsBtn').style.display = data.hasMore ? 'block' : 'none';
+  } catch (_) { wrap.style.display = 'none'; }
+}
+function loadMoreProfilePosts() { if (profilePostsUser) return loadProfilePosts(profilePostsUser, true); }
+async function loadArtistPosts(artistId) {
+  const wrap = $('artistProfilePostsWrap');
+  const list = $('artistProfilePostsList');
+  if (!wrap || !list) return;
+  try {
+    const params = new URLSearchParams({ limit: 6 });
+    if (AUTH.token) params.set('token', AUTH.token);
+    const res = await fetch(POSTS_BASE + '/artist/' + encodeURIComponent(artistId) + '?' + params);
+    const data = await res.json();
+    const posts = data.posts || [];
+    wrap.style.display = posts.length ? '' : 'none';
+    list.innerHTML = posts.map(renderPostCard).join('');
+  } catch (_) { wrap.style.display = 'none'; }
+}
+async function refreshVisiblePosts() {
+  if ($('postsFeedOverlay')?.classList.contains('open')) await loadPosts(false);
+  if (profilePostsUser) await loadProfilePosts(profilePostsUser, false);
+  if (viewedArtist) await loadArtistPosts(viewedArtist.slug || viewedArtist.id);
+}
+function closePostComments() { $('postCommentsOverlay')?.classList.remove('open'); currentPostCommentId = null; }
+async function openPostComments(postId) {
+  currentPostCommentId = postId;
+  $('postCommentsOverlay')?.classList.add('open');
+  if ($('postCommentsAddRow')) $('postCommentsAddRow').style.display = AUTH.loggedIn ? '' : 'none';
+  await loadPostComments();
+}
+async function loadPostComments() {
+  const list = $('postCommentsList');
+  if (!currentPostCommentId || !list) return;
+  const res = await fetch(POSTS_BASE + '/' + encodeURIComponent(currentPostCommentId) + '/comments');
+  const data = await res.json();
+  const comments = data.comments || [];
+  list.innerHTML = comments.map(c => '<div class="post-comment"><strong>' + escapeHtml(c.displayName || c.author) + '</strong><div>' + escapeHtml(c.body || '') + '</div><span>' + postTimeAgo(c.createdAt) + '</span></div>').join('') || '<div class="empty-panel">No comments yet.</div>';
+}
+async function submitComment() {
+  const body = ($('postCommentBody')?.value || '').trim();
+  if (!AUTH.loggedIn || !currentPostCommentId || !body) return;
+  const res = await fetch(POSTS_BASE + '/' + encodeURIComponent(currentPostCommentId) + '/comments', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ token: AUTH.token, body }) });
+  if (res.ok) { if ($('postCommentBody')) $('postCommentBody').value = ''; await loadPostComments(); await refreshVisiblePosts(); }
+}
+$('postComposeBody')?.addEventListener('input', e => { if ($('postComposeCharCount')) $('postComposeCharCount').textContent = e.target.value.length + '/1000'; });
 const ACTIVITY_BASE = '/api/activity';
 let activityScope      = 'following';  // 'following' | 'global'
 let activityCursor     = null;         // ISO string — pagination cursor
