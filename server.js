@@ -710,8 +710,9 @@ async function dbGetArtistTracks(artistId, { sort = 'plays', limit = 20 } = {}) 
   const col = sort === 'trending' ? 'play_count_7d' : 'play_count';
   const { data, error } = await supabase
     .from('tracks')
-    .select('id, original_url, platform, title, play_count, play_count_7d, last_played_at')
+    .select('id, original_url, platform, title, play_count, play_count_7d, last_played_at, cover_url, cloud_file_id, published_at')
     .eq('artist_id', artistId)
+    .eq('is_published', true)
     .order(col, { ascending: false })
     .limit(limit);
   if (error) { console.error('[db] getArtistTracks:', error.message); return []; }
@@ -1025,7 +1026,8 @@ async function dbGetTopTracks({ window = 'all', limit = 50 } = {}) {
   const col = window === '7d' ? 'play_count_7d' : 'play_count';
   const { data, error } = await supabase
     .from('tracks')
-    .select('id, original_url, platform, title, play_count, play_count_7d, last_played_at')
+    .select('id, original_url, platform, title, play_count, play_count_7d, last_played_at, cover_url, artist_id, artist_name')
+    .eq('is_published', true)
     .gt(col, 0)
     .order(col, { ascending: false })
     .order('last_played_at', { ascending: false }) // tiebreak: more recently played ranks higher
@@ -1101,6 +1103,58 @@ async function dbDiscoverProfiles({ limit = 20, excludeUsername = null } = {}) {
   if (excludeUsername) q = q.neq('username', excludeUsername);
   const { data, error } = await q.limit(limit);
   if (error) { console.error('[db] discoverProfiles:', error.message); return []; }
+  return data || [];
+}
+
+// ─── Artist Discovery ───────────────────────────────────────────────────────
+// Three modes, all reading the same `artists` + `artist_stats` join (a left
+// join via the FK, so a brand-new artist with no artist_stats row yet still
+// comes back — stats fields just arrive null, handled at the mapping layer
+// in the route, not here):
+//
+//   trending — ranked by chart_rank (set by recomputeArtistStats off
+//              total_plays_7d), nulls last. This is "what's hot right now",
+//              and an artist with zero plays in the last 7 days has no
+//              chart_rank at all (see that function's comment), so they
+//              correctly never appear here — that's what "trending" means.
+//
+//   new      — created within NEW_ARTIST_WINDOW_DAYS, ordered newest-first,
+//              zero dependency on plays/followers/chart_rank. This is the
+//              guaranteed-visibility path: every artist passes through this
+//              list for a fixed window right after creation, independent of
+//              whether anyone's listened yet.
+//
+//   search   — name ILIKE match, ranked by follower_count as a reasonable
+//              relevance proxy among matches (no trigram/full-text index on
+//              artists.name yet — exact-substring ILIKE is the right cost
+//              for what's realistically a small table).
+const NEW_ARTIST_WINDOW_DAYS = 30;
+
+async function dbDiscoverArtists({ mode = 'trending', limit = 20, query = null } = {}) {
+  let q = supabase.from('artists').select('*, artist_stats(*)');
+
+  if (mode === 'search' && query) {
+    q = q.ilike('name', `%${query}%`).order('follower_count', { ascending: false }).limit(limit);
+  } else if (mode === 'new') {
+    const cutoff = new Date(Date.now() - NEW_ARTIST_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
+    q = q.gte('created_at', cutoff).order('created_at', { ascending: false }).limit(limit);
+  } else {
+    // trending — chart_rank lives on artist_stats, a related table, so it
+    // can't be ordered via the embedded-select query builder directly;
+    // pull a generous candidate set ordered by created_at (cheap, indexed)
+    // and rank client-side instead. Candidate set is capped well above any
+    // realistic `limit` so this stays correct without scaling badly.
+    const { data, error } = await q.limit(500);
+    if (error) { console.error('[db] discoverArtists (trending):', error.message); return []; }
+    const ranked = (data || [])
+      .filter(a => a.artist_stats?.chart_rank != null)
+      .sort((a, b) => a.artist_stats.chart_rank - b.artist_stats.chart_rank)
+      .slice(0, limit);
+    return ranked;
+  }
+
+  const { data, error } = await q;
+  if (error) { console.error('[db] discoverArtists:', mode, error.message); return []; }
   return data || [];
 }
 
@@ -3106,6 +3160,9 @@ app.get('/api/charts/tracks', async (req, res) => {
         playCount: window === '7d' ? t.play_count_7d : t.play_count,
         allTimePlayCount: t.play_count,
         lastPlayedAt: t.last_played_at,
+        coverUrl: t.cover_url || null,
+        artistId: t.artist_id || null,
+        artistName: t.artist_name || null,
       })),
     });
   } catch (err) {
@@ -3161,6 +3218,40 @@ app.get('/api/discover/profiles', async (req, res) => {
   } catch (err) {
     console.error('[discover profiles]', err);
     return res.status(500).json({ error: 'Could not load discovery profiles.' });
+  }
+});
+
+// ?mode=trending|new|search (default trending). search requires ?q=.
+// Unauthenticated-friendly like every other Discovery route — same
+// philosophy as Charts, this is meant to work for a visitor browsing
+// before signing in.
+app.get('/api/discover/artists', async (req, res) => {
+  const mode  = ['trending', 'new', 'search'].includes(req.query.mode) ? req.query.mode : 'trending';
+  const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), DISCOVER_MAX_LIMIT);
+  const query = (req.query.q || '').toString().trim().slice(0, 100) || null;
+  if (mode === 'search' && !query) return res.json({ mode, artists: [] });
+  try {
+    const rows = await dbDiscoverArtists({ mode, limit, query });
+    return res.json({
+      mode,
+      artists: rows.map(a => {
+        const stats = a.artist_stats || {};
+        return {
+          id: a.id, slug: a.slug, name: a.name,
+          avatarUrl: a.avatar_url, bannerUrl: a.banner_url,
+          isVerified: a.is_verified, followerCount: a.follower_count,
+          createdAt: a.created_at,
+          isNew: (Date.now() - new Date(a.created_at).getTime()) < NEW_ARTIST_WINDOW_DAYS * 24 * 60 * 60 * 1000,
+          totalPlays: Number(stats.total_plays) || 0,
+          totalPlays7d: stats.total_plays_7d || 0,
+          monthlyListeners: stats.monthly_listeners || 0,
+          chartRank: stats.chart_rank ?? null,
+        };
+      }),
+    });
+  } catch (err) {
+    console.error('[discover artists]', err);
+    return res.status(500).json({ error: 'Could not load discovery artists.' });
   }
 });
 
@@ -4163,6 +4254,10 @@ app.get('/api/artists/:id/tracks', async (req, res) => {
         playCount: t.play_count, playCount7d: t.play_count_7d,
         likeCount: 0, // honest placeholder — see dbGetArtistTracks comment, no per-track likes exist yet
         lastPlayedAt: t.last_played_at,
+        coverUrl: t.cover_url || null,
+        cloudFileId: t.cloud_file_id || null,
+        publishedAt: t.published_at || null,
+        isUpload: !!t.cloud_file_id,
       })),
     });
   } catch (err) {
@@ -4490,7 +4585,255 @@ app.post('/api/artists/:id/releases', rateLimit, async (req, res) => {
   }
 });
 
-// ─── Shareable URLs — /u/:username and /artist/:slug ──────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+//  PUBLISHING — turning a private cloud_files upload into a public track
+//
+//  GET    /api/artists/:id/publishable          ?token=   → owner's unpublished uploads
+//  POST   /api/artists/:id/publish               { token, cloudFileId, title, coverUrl, releaseId }
+//  PATCH  /api/tracks/:trackId                   { token, title, coverUrl }
+//  DELETE /api/tracks/:trackId                   { token }
+//
+//  Publishing does NOT create a second track system — it creates exactly
+//  one new `tracks` row per cloud_files row, linked via tracks.cloud_file_id
+//  (see add_publishing_to_tracks migration). Every existing consumer of
+//  `tracks` — charts, artist tracks, releases, plays — works on a published
+//  upload with zero changes, since it's the same table `tracks` always was
+//  for YouTube-resolved tracks (the only kind FREQ had until now). A
+//  partial unique index on cloud_file_id (see migration) guarantees at
+//  most one published track per cloud_files row, so re-publishing the same
+//  file is rejected, not silently duplicated.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Cloud files this artist owns that haven't been published yet — i.e. not
+// already linked to a tracks row. LEFT JOIN-via-NOT-IN rather than a
+// second round trip per file; cloud_files belonging to this account that
+// have no matching tracks.cloud_file_id are exactly the publishable set.
+async function dbGetPublishableCloudFiles(username) {
+  const { data: files, error } = await supabase
+    .from('cloud_files')
+    .select('id, filename, title, artist, duration, mime_type, size, uploaded_at, folder')
+    .eq('owner', username)
+    .order('uploaded_at', { ascending: false });
+  if (error) { console.error('[db] getPublishableCloudFiles:', error.message); return []; }
+  if (!files || !files.length) return [];
+
+  const { data: published, error: pubErr } = await supabase
+    .from('tracks')
+    .select('cloud_file_id')
+    .not('cloud_file_id', 'is', null)
+    .in('cloud_file_id', files.map(f => f.id));
+  if (pubErr) { console.error('[db] getPublishableCloudFiles (published lookup):', pubErr.message); return []; }
+  const publishedIds = new Set((published || []).map(p => p.cloud_file_id));
+
+  return files.filter(f => !publishedIds.has(f.id));
+}
+
+// Publishes one cloud_files row as a tracks row. originalUrl is a synthetic
+// `cloud:<cloud_file_id>` value — tracks.original_url is NOT NULL + UNIQUE
+// and was designed around real external URLs (YouTube etc), so a published
+// upload needs *some* unique value there; cloud_file_id already guarantees
+// uniqueness, so reusing it as the URL avoids inventing a second identity
+// scheme. platform is the literal string 'cloud' so the frontend/queue can
+// tell a published upload apart from a YouTube-resolved track without
+// needing to check cloud_file_id specifically.
+async function dbPublishTrack({ cloudFile, artist, title, coverUrl }) {
+  const finalTitle = (title && title.trim()) ? title.trim().slice(0, 255) : (cloudFile.title || cloudFile.filename);
+  const { data, error } = await supabase
+    .from('tracks')
+    .insert({
+      original_url: `cloud:${cloudFile.id}`,
+      platform: 'cloud',
+      title: finalTitle,
+      artist_id: artist.id,
+      artist_name: artist.name,
+      cloud_file_id: cloudFile.id,
+      cover_url: coverUrl || null,
+      is_published: true,
+      published_at: new Date().toISOString(),
+    })
+    .select()
+    .single();
+  if (error) {
+    if (error.code === '23505') throw Object.assign(new Error('This file has already been published.'), { code: 'ALREADY_PUBLISHED' });
+    throw new Error(error.message);
+  }
+  return data;
+}
+
+async function dbGetTrackById(trackId) {
+  const { data, error } = await supabase.from('tracks').select('*').eq('id', trackId).maybeSingle();
+  if (error) { console.error('[db] getTrackById:', error.message); return null; }
+  return data;
+}
+
+async function dbUpdatePublishedTrack(trackId, patch) {
+  const { data, error } = await supabase.from('tracks').update(patch).eq('id', trackId).select().single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+async function dbUnpublishTrack(trackId) {
+  // Hard-delete, not a soft "is_published = false" flip — an unpublished
+  // upload's tracks row has no further purpose (it's not playable from
+  // anywhere once removed from charts/discovery/releases), and leaving a
+  // dead row around would just be a second place the same cloud_files
+  // upload could accidentally get "republished" against. artist_release_tracks
+  // rows referencing this track cascade-delete via their FK, so the release
+  // it belonged to has its track removed cleanly, not left dangling.
+  const { error } = await supabase.from('tracks').delete().eq('id', trackId);
+  if (error) throw new Error(error.message);
+}
+
+app.get('/api/artists/:id/publishable', rateLimit, async (req, res) => {
+  const token = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  try {
+    const artist = await resolveArtistFromParam(req.params.id);
+    if (!artist) return res.status(404).json({ error: 'Artist not found.' });
+    if (artist.account_id !== sess.username) {
+      return res.status(403).json({ error: 'Only the artist who claimed this page can view publishable files.' });
+    }
+    const files = await dbGetPublishableCloudFiles(sess.username);
+    return res.json({
+      files: files.map(f => ({
+        id: f.id, filename: f.filename, title: f.title, artist: f.artist,
+        duration: f.duration, mimeType: f.mime_type, size: f.size,
+        uploadedAt: f.uploaded_at, folder: f.folder,
+      })),
+    });
+  } catch (err) {
+    console.error('[artist publishable]', err);
+    return res.status(500).json({ error: 'Could not load publishable files.' });
+  }
+});
+
+// Cover-art upload for a single published track (not part of a release) —
+// same uploadMediaImage() helper as every other image route, namespaced
+// under track-covers/ in the shared media bucket. Takes a cloudFileId, not
+// a trackId, because this is meant to be called *before* publish (pick the
+// cover while setting up metadata) as well as after — the frontend can
+// always re-PATCH a track's coverUrl later via PATCH /api/tracks/:trackId
+// using the URL this returns.
+app.post('/api/artists/:id/track-cover', rateLimit, imageUpload.single('file'), async (req, res) => {
+  const sess = await dbGetSession(req.body?.token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  if (!req.file) return res.status(400).json({ error: 'No image file uploaded.' });
+  const cloudFileId = Number(req.body?.cloudFileId);
+  if (!cloudFileId) return res.status(400).json({ error: '"cloudFileId" is required.' });
+  try {
+    const artist = await resolveArtistFromParam(req.params.id);
+    if (!artist) return res.status(404).json({ error: 'Artist not found.' });
+    if (artist.account_id !== sess.username) {
+      return res.status(403).json({ error: 'Only the artist who claimed this page can upload cover art.' });
+    }
+    const owned = await dbGetCloudFile(cloudFileId, sess.username);
+    if (!owned) return res.status(404).json({ error: 'File not found in your library.' });
+    const coverUrl = await uploadMediaImage(req.file, 'track-covers', cloudFileId);
+    return res.json({ coverUrl });
+  } catch (err) {
+    console.error('[track cover upload]', err);
+    return res.status(500).json({ error: 'Could not upload cover art.' });
+  }
+});
+
+app.post('/api/artists/:id/publish', rateLimit, async (req, res) => {
+  const { token, cloudFileId, title, coverUrl, releaseId } = req.body || {};
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  if (!cloudFileId) return res.status(400).json({ error: '"cloudFileId" is required.' });
+  try {
+    const artist = await resolveArtistFromParam(req.params.id);
+    if (!artist) return res.status(404).json({ error: 'Artist not found.' });
+    if (artist.account_id !== sess.username) {
+      return res.status(403).json({ error: 'Only the artist who claimed this page can publish releases.' });
+    }
+    const cloudFile = await dbGetCloudFile(Number(cloudFileId), sess.username);
+    if (!cloudFile) return res.status(404).json({ error: 'File not found in your library.' });
+
+    let release = null;
+    if (releaseId) {
+      const { data } = await supabase.from('artist_releases').select('*').eq('id', releaseId).eq('artist_id', artist.id).maybeSingle();
+      if (!data) return res.status(404).json({ error: 'Release not found.' });
+      release = data;
+    }
+
+    const track = await dbPublishTrack({
+      cloudFile, artist, title,
+      coverUrl: coverUrl || release?.cover_url || null,
+    });
+
+    if (release) {
+      await dbAddTrackToRelease(release.id, track.id);
+    }
+
+    // Surfaces in Activity Feed (and, via dbGetFollowingFeed's artistId
+    // clause, to anyone following this artist) and is the same event the
+    // Discovery/Charts/Search "appears automatically" requirement leans
+    // on — nothing else needs to separately notify those surfaces, since
+    // they all read off either this feed entry or the tracks row directly.
+    dbWriteArtistActivity('track_published', artist.id, {
+      trackId: track.id, trackTitle: track.title, artistName: artist.name,
+      releaseId: release ? release.id : null, releaseTitle: release ? release.title : null,
+    });
+
+    return res.status(201).json({
+      id: track.id, title: track.title, coverUrl: track.cover_url,
+      publishedAt: track.published_at, releaseId: release ? release.id : null,
+    });
+  } catch (err) {
+    if (err.code === 'ALREADY_PUBLISHED') return res.status(409).json({ error: err.message });
+    console.error('[artist publish]', err);
+    return res.status(500).json({ error: 'Could not publish track.' });
+  }
+});
+
+app.patch('/api/tracks/:trackId', rateLimit, async (req, res) => {
+  const { token, title, coverUrl } = req.body || {};
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  try {
+    const track = await dbGetTrackById(req.params.trackId);
+    if (!track || !track.cloud_file_id) return res.status(404).json({ error: 'Published track not found.' });
+    const artist = await dbGetArtistById(track.artist_id);
+    if (!artist || artist.account_id !== sess.username) {
+      return res.status(403).json({ error: 'Only the artist who published this track can edit it.' });
+    }
+    const patch = {};
+    if (title !== undefined) {
+      if (typeof title !== 'string' || !title.trim()) return res.status(400).json({ error: '"title" must be a non-empty string.' });
+      patch.title = title.trim().slice(0, 255);
+    }
+    if (coverUrl !== undefined) {
+      patch.cover_url = (typeof coverUrl === 'string' && coverUrl.trim()) ? coverUrl.trim().slice(0, 2000) : null;
+    }
+    if (!Object.keys(patch).length) return res.status(400).json({ error: 'No valid fields to update.' });
+    const updated = await dbUpdatePublishedTrack(track.id, patch);
+    return res.json({ id: updated.id, title: updated.title, coverUrl: updated.cover_url });
+  } catch (err) {
+    console.error('[track update]', err);
+    return res.status(500).json({ error: 'Could not update track.' });
+  }
+});
+
+app.delete('/api/tracks/:trackId', rateLimit, async (req, res) => {
+  const token = req.body?.token || req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  try {
+    const track = await dbGetTrackById(req.params.trackId);
+    if (!track || !track.cloud_file_id) return res.status(404).json({ error: 'Published track not found.' });
+    const artist = await dbGetArtistById(track.artist_id);
+    if (!artist || artist.account_id !== sess.username) {
+      return res.status(403).json({ error: 'Only the artist who published this track can remove it.' });
+    }
+    await dbUnpublishTrack(track.id);
+    return res.json({ success: true });
+  } catch (err) {
+    console.error('[track delete]', err);
+    return res.status(500).json({ error: 'Could not remove track.' });
+  }
+});
 // These exist purely so pasting a profile/artist link into Discord/Twitter/
 // iMessage shows that person's name and avatar instead of generic FREQ
 // branding — the entire point of a "shareable" URL is how it looks when
