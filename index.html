@@ -1158,6 +1158,59 @@ textarea.support-field { height:90px;resize:vertical; }
   text-align:center;padding:32px;color:var(--text-muted);font-size:0.6rem;
 }
 
+/* Profile / Artist page media — shared by userProfileOverlay and artistProfileOverlay */
+.profile-cover {
+  width:100%;height:120px;border-radius:8px;background:var(--surface3);
+  background-size:cover;background-position:center;margin:-28px -28px 0 -28px;
+  position:relative;
+}
+.profile-avatar-row {
+  display:flex;align-items:flex-end;gap:12px;margin-top:-32px;margin-bottom:10px;position:relative;z-index:1;
+}
+.profile-avatar {
+  width:64px;height:64px;border-radius:50%;background:var(--surface3);
+  border:3px solid var(--surface2);background-size:cover;background-position:center;
+  flex-shrink:0;display:flex;align-items:center;justify-content:center;
+  font-family:'Unbounded',sans-serif;font-weight:900;font-size:1.1rem;color:var(--accent);
+}
+.profile-stats-grid {
+  display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:12px 0;
+  font-size:0.46rem;color:var(--text-muted);text-align:center;
+}
+.profile-stats-grid strong {
+  display:block;font-size:0.62rem;color:var(--text-main);font-family:'Unbounded',sans-serif;margin-bottom:1px;
+}
+.profile-join-date { font-size:0.42rem;color:var(--text-muted);margin-bottom:8px; }
+.profile-action-row { display:flex;gap:8px;margin-bottom:6px; }
+.profile-action-row button { flex:1; }
+.share-btn {
+  background:none;border:1px solid var(--border);color:var(--text-muted);
+  font-family:'Space Mono',monospace;font-size:0.5rem;padding:8px;border-radius:var(--radius);
+  cursor:pointer;letter-spacing:0.06em;text-transform:uppercase;transition:color 0.15s,border-color 0.15s;
+}
+.share-btn:hover { color:var(--accent3);border-color:var(--accent3); }
+.artist-cta-link {
+  display:block;text-align:center;font-size:0.46rem;color:var(--accent);
+  border:1px solid var(--accent);border-radius:var(--radius);padding:7px;margin-bottom:10px;
+  cursor:pointer;letter-spacing:0.06em;text-transform:uppercase;text-decoration:none;
+  background:rgba(232,255,71,0.06);transition:opacity 0.15s;
+}
+.artist-cta-link:hover { opacity:0.8; }
+.avatar-upload-wrap { position:relative;display:inline-block;cursor:pointer; }
+.avatar-upload-wrap .avatar-upload-hint {
+  position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  background:rgba(0,0,0,0.55);border-radius:50%;opacity:0;transition:opacity 0.15s;
+  font-size:0.38rem;color:#fff;text-align:center;letter-spacing:0.04em;text-transform:uppercase;
+}
+.avatar-upload-wrap:hover .avatar-upload-hint { opacity:1; }
+.cover-upload-wrap { position:relative;cursor:pointer; }
+.cover-upload-wrap .cover-upload-hint {
+  position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  background:rgba(0,0,0,0.45);opacity:0;transition:opacity 0.15s;border-radius:8px;
+  font-size:0.42rem;color:#fff;letter-spacing:0.04em;text-transform:uppercase;
+}
+.cover-upload-wrap:hover .cover-upload-hint { opacity:1; }
+
 /* ─── Equalizer Presets Gallery ─────────────────────────────────── */
 .eq-preset-gallery {
   display:grid;grid-template-columns:repeat(auto-fill,minmax(80px,1fr));gap:5px;
@@ -2394,14 +2447,26 @@ body.oled-mode {
   <div class="lyrics-panel" style="max-width:380px;">
     <div id="userProfileLoading" style="text-align:center;padding:24px;color:var(--text-muted);font-size:0.6rem;">Loading profile…</div>
     <div id="userProfileContent" style="display:none;">
+      <div class="profile-cover" id="userProfileCover"></div>
+      <div class="profile-avatar-row">
+        <div class="profile-avatar" id="userProfileAvatar"></div>
+      </div>
       <div class="lyrics-title" id="userProfileName">—</div>
       <div class="lyrics-artist" id="userProfileUsername">@—</div>
-      <div style="display:flex;gap:14px;margin:10px 0;font-size:0.48rem;color:var(--text-muted);">
-        <span><strong id="userProfileFollowerCount" style="color:var(--text-main);">0</strong> followers</span>
-        <span><strong id="userProfileFollowingCount" style="color:var(--text-main);">0</strong> following</span>
+      <div class="profile-join-date" id="userProfileJoinDate"></div>
+      <div class="profile-stats-grid">
+        <span><strong id="userProfileFollowerCount">0</strong>Followers</span>
+        <span><strong id="userProfileFollowingCount">0</strong>Following</span>
+        <span><strong id="userProfilePlaylistCount">0</strong>Playlists</span>
+        <span><strong id="userProfileTotalPlays">0</strong>Plays</span>
+        <span><strong id="userProfileTotalLikes">0</strong>Likes</span>
       </div>
       <div id="userProfileBio" style="font-size:0.55rem;color:var(--text);line-height:1.8;white-space:pre-wrap;margin-bottom:14px;">—</div>
-      <button id="userProfileFollowBtn" style="width:100%;background:none;border:1px solid var(--accent3);color:var(--accent3);font-family:'Space Mono',monospace;font-size:0.5rem;padding:8px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.06em;text-transform:uppercase;">Follow</button>
+      <div id="userProfileArtistLinkWrap"></div>
+      <div class="profile-action-row">
+        <button id="userProfileFollowBtn" style="background:none;border:1px solid var(--accent3);color:var(--accent3);font-family:'Space Mono',monospace;font-size:0.5rem;padding:8px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.06em;text-transform:uppercase;">Follow</button>
+        <button class="share-btn" id="userProfileShareBtn" style="flex:0 0 auto;padding:8px 12px;">⇪ Share</button>
+      </div>
       <div id="userProfilePlaylistsWrap" style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px;display:none;">
         <div style="font-size:0.46rem;color:var(--text-dim);letter-spacing:0.05em;text-transform:uppercase;margin-bottom:8px;">Public Playlists</div>
         <div id="userProfilePlaylistsList"></div>
@@ -2409,6 +2474,60 @@ body.oled-mode {
     </div>
     <div id="userProfileError" style="display:none;text-align:center;padding:24px;color:var(--text-muted);font-size:0.55rem;"></div>
     <button class="support-close-btn" onclick="closeUserProfileModal()" style="margin-top:16px;">Close</button>
+  </div>
+</div>
+
+<!-- Artist Profile Overlay -->
+<div class="lyrics-overlay" id="artistProfileOverlay">
+  <div class="lyrics-panel" style="max-width:420px;">
+    <div id="artistProfileLoading" style="text-align:center;padding:24px;color:var(--text-muted);font-size:0.6rem;">Loading artist…</div>
+    <div id="artistProfileContent" style="display:none;">
+      <div class="cover-upload-wrap" id="artistBannerUploadWrap">
+        <div class="profile-cover" id="artistProfileBanner"></div>
+        <div class="cover-upload-hint" id="artistBannerUploadHint">Change Banner</div>
+      </div>
+      <div class="profile-avatar-row">
+        <div class="avatar-upload-wrap" id="artistAvatarUploadWrap">
+          <div class="profile-avatar" id="artistProfileAvatar"></div>
+          <div class="avatar-upload-hint" id="artistAvatarUploadHint">Change</div>
+        </div>
+      </div>
+      <div class="lyrics-title" id="artistProfileName">—<span id="artistVerifiedBadge" style="display:none;color:var(--accent3);"> ✓</span></div>
+      <div class="lyrics-artist" id="artistProfileJoinDate"></div>
+      <div class="profile-stats-grid" style="grid-template-columns:repeat(4,1fr);">
+        <span><strong id="artistProfileFollowerCount">0</strong>Followers</span>
+        <span><strong id="artistProfileMonthlyListeners">0</strong>Monthly</span>
+        <span><strong id="artistProfileTotalPlays">0</strong>Plays</span>
+        <span><strong id="artistProfileTotalLikes">0</strong>Likes</span>
+      </div>
+      <div id="artistProfileBio" style="font-size:0.55rem;color:var(--text);line-height:1.8;white-space:pre-wrap;margin-bottom:14px;">—</div>
+      <div class="profile-action-row">
+        <button id="artistProfileFollowBtn" style="background:none;border:1px solid var(--accent3);color:var(--accent3);font-family:'Space Mono',monospace;font-size:0.5rem;padding:8px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.06em;text-transform:uppercase;">Follow</button>
+        <button class="share-btn" id="artistProfileShareBtn" style="flex:0 0 auto;padding:8px 12px;">⇪ Share</button>
+      </div>
+      <input type="file" id="artistAvatarFileInput" accept="image/png,image/jpeg,image/webp,image/gif" style="display:none;" />
+      <input type="file" id="artistBannerFileInput" accept="image/png,image/jpeg,image/webp,image/gif" style="display:none;" />
+      <div id="artistProfileTracksWrap" style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px;display:none;">
+        <div style="font-size:0.46rem;color:var(--text-dim);letter-spacing:0.05em;text-transform:uppercase;margin-bottom:8px;">Top Tracks</div>
+        <div id="artistProfileTracksList"></div>
+      </div>
+    </div>
+    <div id="artistProfileError" style="display:none;text-align:center;padding:24px;color:var(--text-muted);font-size:0.55rem;"></div>
+    <button class="support-close-btn" onclick="closeArtistProfileModal()" style="margin-top:16px;">Close</button>
+  </div>
+</div>
+
+<!-- Become an Artist modal -->
+<div class="lyrics-overlay" id="becomeArtistOverlay">
+  <div class="lyrics-panel" style="max-width:340px;">
+    <div class="lyrics-title" style="font-size:0.7rem;">Become an Artist</div>
+    <div style="font-size:0.5rem;color:var(--text-muted);line-height:1.8;margin-bottom:14px;">
+      Create your artist page. You can upload an avatar, banner, and start publishing music right after.
+    </div>
+    <input type="text" id="becomeArtistNameInput" maxlength="100" placeholder="Artist name…" style="width:100%;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-main);font-family:'Space Mono',monospace;font-size:0.55rem;padding:9px 11px;box-sizing:border-box;margin-bottom:10px;" />
+    <div id="becomeArtistStatus" style="font-size:0.42rem;color:var(--text-muted);margin-bottom:10px;min-height:1.2em;"></div>
+    <button id="becomeArtistSubmitBtn" style="width:100%;background:var(--accent);color:var(--bg);border:none;font-family:'Unbounded',sans-serif;font-weight:700;font-size:0.52rem;padding:10px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.05em;text-transform:uppercase;margin-bottom:8px;">Create Artist Page</button>
+    <button class="support-close-btn" onclick="closeBecomeArtistModal()">Cancel</button>
   </div>
 </div>
 
@@ -2915,6 +3034,21 @@ body.oled-mode {
         <div style="font-size:0.5rem;color:var(--text-muted);line-height:1.8;margin-bottom:10px;">
           A short, public bio other FREQ users can see. You can set it up now and toggle visibility any time.
         </div>
+
+        <!-- Avatar / Cover upload -->
+        <div class="cover-upload-wrap" id="myCoverUploadWrap" style="margin-bottom:10px;">
+          <div class="profile-cover" id="myCoverPreview" style="height:80px;margin:0;"></div>
+          <div class="cover-upload-hint" id="myCoverUploadHint">Change Cover</div>
+        </div>
+        <div class="profile-avatar-row" style="margin-top:-28px;">
+          <div class="avatar-upload-wrap" id="myAvatarUploadWrap">
+            <div class="profile-avatar" id="myAvatarPreview" style="width:52px;height:52px;"></div>
+            <div class="avatar-upload-hint" id="myAvatarUploadHint">Change</div>
+          </div>
+        </div>
+        <input type="file" id="myAvatarFileInput" accept="image/png,image/jpeg,image/webp,image/gif" style="display:none;" />
+        <input type="file" id="myCoverFileInput" accept="image/png,image/jpeg,image/webp,image/gif" style="display:none;" />
+
         <div style="display:flex;gap:10px;margin-bottom:8px;font-size:0.46rem;color:var(--text-muted);">
           <span><strong id="profileFollowerCount" style="color:var(--text-main);">0</strong> followers</span>
           <span><strong id="profileFollowingCount" style="color:var(--text-main);">0</strong> following</span>
@@ -2937,6 +3071,11 @@ body.oled-mode {
           <button id="profileSaveBtn" style="background:none;border:1px solid var(--accent3);color:var(--accent3);font-family:'Space Mono',monospace;font-size:0.46rem;padding:5px 12px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.06em;text-transform:uppercase;">Save Profile</button>
         </div>
         <div id="profileSaveStatus" style="font-size:0.42rem;color:var(--text-muted);margin-top:6px;text-align:center;min-height:1.2em;"></div>
+
+        <button class="share-btn" id="myProfileShareBtn" style="width:100%;margin-top:8px;">⇪ Share My Profile</button>
+
+        <!-- Become an Artist / View Artist Page -->
+        <div id="myArtistCtaWrap" style="margin-top:12px;"></div>
 
         <!-- Find another user's profile -->
         <div style="margin-top:12px;border-top:1px solid var(--border);padding-top:10px;">
@@ -3330,10 +3469,40 @@ async function loadOwnProfile() {
     setProfilePublicToggleVisual(data.isPublic);
     if ($('profileFollowerCount'))  $('profileFollowerCount').textContent  = data.followerCount  ?? 0;
     if ($('profileFollowingCount')) $('profileFollowingCount').textContent = data.followingCount ?? 0;
+    renderMyAvatarCoverPreview(data);
+    renderMyArtistCta(data);
   } catch (err) {
     // Non-fatal — profile editor just stays at its defaults; the rest of
     // the Account overlay (playlists, sync) still works fine without this.
     console.error('[loadOwnProfile]', err);
+  }
+}
+
+// Fills in the avatar/cover preview swatches in the Account overlay editor
+// with whatever's currently saved — shows initials as a placeholder when no
+// avatar has been uploaded yet, same fallback used everywhere else avatars render.
+function renderMyAvatarCoverPreview(data) {
+  const avatarEl = $('myAvatarPreview');
+  const coverEl  = $('myCoverPreview');
+  if (avatarEl) {
+    if (data.avatarUrl) { avatarEl.style.backgroundImage = `url("${data.avatarUrl}")`; avatarEl.textContent = ''; }
+    else { avatarEl.style.backgroundImage = 'none'; avatarEl.textContent = (data.displayName || data.username || '?')[0].toUpperCase(); }
+  }
+  if (coverEl) {
+    coverEl.style.backgroundImage = data.coverImageUrl ? `url("${data.coverImageUrl}")` : 'none';
+  }
+}
+
+// Renders the "Become an Artist" CTA (no artist page yet) or "View Artist
+// Page" link (already has one) at the bottom of the profile editor — this
+// is the actual entry point into the artist-creation flow.
+function renderMyArtistCta(data) {
+  const wrap = $('myArtistCtaWrap');
+  if (!wrap) return;
+  if (data.isArtist && data.artistSlug) {
+    wrap.innerHTML = `<a class="artist-cta-link" onclick="openArtistProfile('${data.artistSlug}');return false;" href="/artist/${encodeURIComponent(data.artistSlug)}">🎤 View My Artist Page</a>`;
+  } else {
+    wrap.innerHTML = `<a class="artist-cta-link" onclick="openBecomeArtistModal();return false;" href="#">🎤 Become an Artist</a>`;
   }
 }
 
@@ -3372,6 +3541,76 @@ $('profileSaveBtn')?.addEventListener('click', async () => {
     if (btn) { btn.disabled = false; btn.textContent = 'Save Profile'; }
   }
 });
+
+// ─── Avatar / Cover upload (own profile) ───────────────────────────────────
+// Plain fetch + FormData, not the XHR-with-progress pattern cloud files use —
+// a 5MB image upload is fast enough that a progress bar would be more UI
+// than the wait justifies. Click the preview swatch to open the file picker;
+// the actual <input type=file> stays hidden, same indirection cloudFileInput
+// already uses elsewhere in this file.
+$('myAvatarUploadWrap')?.addEventListener('click', () => $('myAvatarFileInput')?.click());
+$('myCoverUploadWrap')?.addEventListener('click', () => $('myCoverFileInput')?.click());
+
+async function uploadOwnImage(file, endpoint, urlField, onDone) {
+  if (!AUTH.loggedIn) { showToast('Sign in required', 'Please sign in first.', 'error'); return; }
+  const form = new FormData();
+  form.append('token', AUTH.token);
+  form.append('file', file);
+  try {
+    const res = await fetch(endpoint, { method: 'POST', body: form });
+    const data = await res.json();
+    if (!res.ok) {
+      if (res.status === 401) { handleTokenExpiry(); return; }
+      throw new Error(data.error || 'Upload failed.');
+    }
+    onDone(data[urlField]);
+    showToast('Uploaded', 'Image updated.', 'success');
+  } catch (err) {
+    showToast('Upload Error', err.message || 'Could not upload image.', 'error');
+  }
+}
+
+$('myAvatarFileInput')?.addEventListener('change', function() {
+  const file = this.files?.[0];
+  this.value = ''; // allow re-selecting the same file later
+  if (!file) return;
+  uploadOwnImage(file, `${PROFILE_BASE}/me/avatar`, 'avatarUrl', (url) => {
+    const el = $('myAvatarPreview');
+    if (el) { el.style.backgroundImage = `url("${url}")`; el.textContent = ''; }
+    if (ownProfile) ownProfile.avatarUrl = url;
+  });
+});
+
+$('myCoverFileInput')?.addEventListener('change', function() {
+  const file = this.files?.[0];
+  this.value = '';
+  if (!file) return;
+  uploadOwnImage(file, `${PROFILE_BASE}/me/cover`, 'coverImageUrl', (url) => {
+    const el = $('myCoverPreview');
+    if (el) el.style.backgroundImage = `url("${url}")`;
+    if (ownProfile) ownProfile.coverImageUrl = url;
+  });
+});
+
+$('myProfileShareBtn')?.addEventListener('click', () => {
+  if (!AUTH.username) return;
+  shareProfileLink(`${window.location.origin}/u/${encodeURIComponent(AUTH.username)}`, AUTH.name || AUTH.username);
+});
+
+// Shared by every "Share" button (own profile, viewed profile, artist page)
+// — uses the Web Share API on mobile/supporting browsers, falls back to
+// copying the link to the clipboard everywhere else.
+async function shareProfileLink(url, label) {
+  if (navigator.share) {
+    try { await navigator.share({ title: label, url }); return; } catch (e) { /* user cancelled — fall through to nothing */ return; }
+  }
+  try {
+    await navigator.clipboard.writeText(url);
+    showToast('Link Copied', url, 'success');
+  } catch (e) {
+    showToast('Share', url, 'success'); // clipboard blocked — at least show the link
+  }
+}
 
 // ─── Follow Users ───────────────────────────────────────────────────────────
 const FOLLOWS_BASE = '/api/follows';
@@ -3412,8 +3651,29 @@ async function openUserProfile(username) {
     $('userProfileName').textContent      = data.displayName || data.username;
     $('userProfileUsername').textContent  = '@' + data.username;
     $('userProfileBio').textContent       = data.bio || '(no bio set)';
-    $('userProfileFollowerCount').textContent  = data.followerCount  ?? 0;
-    $('userProfileFollowingCount').textContent = data.followingCount ?? 0;
+    $('userProfileFollowerCount').textContent  = formatCompactCount(data.followerCount  ?? 0);
+    $('userProfileFollowingCount').textContent = formatCompactCount(data.followingCount ?? 0);
+    $('userProfilePlaylistCount').textContent  = formatCompactCount(data.publicPlaylistCount ?? 0);
+    $('userProfileTotalPlays').textContent     = formatCompactCount(data.totalPlays ?? 0);
+    $('userProfileTotalLikes').textContent     = formatCompactCount(data.totalLikesReceived ?? 0);
+
+    const avatarEl = $('userProfileAvatar');
+    if (avatarEl) {
+      if (data.avatarUrl) { avatarEl.style.backgroundImage = `url("${data.avatarUrl}")`; avatarEl.textContent = ''; }
+      else { avatarEl.style.backgroundImage = 'none'; avatarEl.textContent = (data.displayName || data.username || '?')[0].toUpperCase(); }
+    }
+    const coverEl = $('userProfileCover');
+    if (coverEl) coverEl.style.backgroundImage = data.coverImageUrl ? `url("${data.coverImageUrl}")` : 'none';
+
+    const joinEl = $('userProfileJoinDate');
+    if (joinEl) joinEl.textContent = data.joinedAt ? `Joined ${formatJoinDate(data.joinedAt)}` : '';
+
+    const artistLinkWrap = $('userProfileArtistLinkWrap');
+    if (artistLinkWrap) {
+      artistLinkWrap.innerHTML = (data.isArtist && data.artistSlug)
+        ? `<a class="artist-cta-link" onclick="closeUserProfileModal();openArtistProfile('${data.artistSlug}');return false;" href="/artist/${encodeURIComponent(data.artistSlug)}">🎤 View Artist Page</a>`
+        : '';
+    }
 
     const followBtn = $('userProfileFollowBtn');
     if (data.isSelf) {
@@ -3440,6 +3700,22 @@ async function openUserProfile(username) {
     $('userProfileError').style.display   = 'block';
     $('userProfileError').textContent     = err.message || 'Could not load profile.';
   }
+}
+
+// Shared compact-number formatter for follower/play/like counts — 1.2K,
+// 48.3K, 2.1M — so a popular profile's stats row doesn't overflow into
+// seven-digit numbers at small font sizes.
+function formatCompactCount(n) {
+  n = Number(n) || 0;
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1).replace(/\.0$/, '') + 'M';
+  if (n >= 1_000)      return (n / 1_000).toFixed(1).replace(/\.0$/, '') + 'K';
+  return String(n);
+}
+
+function formatJoinDate(iso) {
+  try {
+    return new Date(iso).toLocaleDateString(undefined, { month: 'short', year: 'numeric' });
+  } catch (e) { return ''; }
 }
 
 function setFollowButtonState(isFollowing) {
@@ -3473,13 +3749,18 @@ $('userProfileFollowBtn')?.addEventListener('click', async () => {
       throw new Error(data.error || 'Action failed.');
     }
     setFollowButtonState(data.following);
-    if (data.followerCount != null) $('userProfileFollowerCount').textContent = data.followerCount;
+    if (data.followerCount != null) $('userProfileFollowerCount').textContent = formatCompactCount(data.followerCount);
     showToast(data.following ? 'Followed' : 'Unfollowed', '@' + viewedProfileUsername, 'success');
   } catch (err) {
     showToast('Error', err.message || 'Could not update follow status.', 'error');
   } finally {
     btn.disabled = false;
   }
+});
+
+$('userProfileShareBtn')?.addEventListener('click', () => {
+  if (!viewedProfileUsername) return;
+  shareProfileLink(`${window.location.origin}/u/${encodeURIComponent(viewedProfileUsername)}`, viewedProfileUsername);
 });
 
 $('profileLookupBtn')?.addEventListener('click', () => {
@@ -3976,6 +4257,245 @@ async function loadProfilePublicPlaylists(username) {
     wrap.style.display = 'none';
   }
 }
+
+// ─── Artist Pages ───────────────────────────────────────────────────────────
+const ARTISTS_BASE = '/api/artists';
+let viewedArtist = null; // full artist object currently shown in artistProfileOverlay — null when closed
+
+function closeArtistProfileModal() {
+  $('artistProfileOverlay')?.classList.remove('open');
+  viewedArtist = null;
+}
+
+// Opens the artist page modal. `idOrSlug` can be a slug, an artists.id, or
+// "@username" — anything resolveArtistFromParam accepts server-side, since
+// this hits the exact same GET /api/artists/:id route.
+async function openArtistProfile(idOrSlug) {
+  const key = (idOrSlug || '').trim();
+  if (!key) return;
+  $('artistProfileOverlay')?.classList.add('open');
+  $('artistProfileLoading').style.display = 'block';
+  $('artistProfileContent').style.display = 'none';
+  $('artistProfileError').style.display   = 'none';
+
+  try {
+    const params = new URLSearchParams(AUTH.token ? { token: AUTH.token } : {});
+    const res  = await fetch(`${ARTISTS_BASE}/${encodeURIComponent(key)}?${params}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(res.status === 404 ? 'Artist not found.' : (data.error || 'Could not load artist.'));
+    viewedArtist = data;
+
+    $('artistProfileLoading').style.display = 'none';
+    $('artistProfileContent').style.display = 'block';
+    $('artistProfileName').textContent = data.name;
+    $('artistVerifiedBadge').style.display = data.isVerified ? 'inline' : 'none';
+    $('artistProfileJoinDate').textContent = data.joinedAt ? `Joined ${formatJoinDate(data.joinedAt)}` : '';
+    $('artistProfileBio').textContent = data.bio || (data.isOwner ? 'Add a bio to tell people about your music.' : '(no bio set)');
+
+    const avatarEl = $('artistProfileAvatar');
+    if (avatarEl) {
+      if (data.avatarUrl) { avatarEl.style.backgroundImage = `url("${data.avatarUrl}")`; avatarEl.textContent = ''; }
+      else { avatarEl.style.backgroundImage = 'none'; avatarEl.textContent = (data.name || '?')[0].toUpperCase(); }
+    }
+    const bannerEl = $('artistProfileBanner');
+    if (bannerEl) bannerEl.style.backgroundImage = data.bannerUrl ? `url("${data.bannerUrl}")` : 'none';
+
+    $('artistProfileFollowerCount').textContent     = formatCompactCount(data.followerCount ?? 0);
+    $('artistProfileMonthlyListeners').textContent  = formatCompactCount(data.stats?.monthlyListeners ?? 0);
+    $('artistProfileTotalPlays').textContent        = formatCompactCount(data.stats?.totalPlays ?? 0);
+    $('artistProfileTotalLikes').textContent        = formatCompactCount(data.stats?.totalLikesReceived ?? 0);
+
+    // Avatar/banner upload affordances only show for the artist's own owner —
+    // resolveArtistFromParam + isOwner on the server is the source of truth;
+    // hiding the hint client-side here is just UX, the upload routes
+    // themselves re-check ownership independently.
+    $('artistAvatarUploadHint').style.display = data.isOwner ? '' : 'none';
+    $('artistBannerUploadHint').style.display = data.isOwner ? '' : 'none';
+    $('artistAvatarUploadWrap').style.cursor = data.isOwner ? 'pointer' : 'default';
+    $('artistBannerUploadWrap').style.cursor = data.isOwner ? 'pointer' : 'default';
+
+    const followBtn = $('artistProfileFollowBtn');
+    if (data.isOwner) {
+      followBtn.style.display = 'none'; // can't follow your own artist page
+    } else if (!AUTH.loggedIn) {
+      followBtn.style.display = '';
+      followBtn.textContent = 'Sign in to Follow';
+      followBtn.disabled = true;
+      followBtn.style.opacity = '0.5';
+    } else {
+      followBtn.style.display = '';
+      followBtn.disabled = false;
+      followBtn.style.opacity = '1';
+      setArtistFollowButtonState(data.isFollowing);
+    }
+
+    loadArtistTopTracks(data.id); // fire-and-forget, same non-blocking pattern as loadProfilePublicPlaylists
+  } catch (err) {
+    $('artistProfileLoading').style.display = 'none';
+    $('artistProfileError').style.display   = 'block';
+    $('artistProfileError').textContent     = err.message || 'Could not load artist.';
+  }
+}
+
+function setArtistFollowButtonState(isFollowing) {
+  const btn = $('artistProfileFollowBtn');
+  if (!btn) return;
+  if (isFollowing) {
+    btn.textContent = 'Following ✓';
+    btn.style.background = 'var(--accent3)';
+    btn.style.color = 'var(--bg)';
+  } else {
+    btn.textContent = 'Follow';
+    btn.style.background = 'none';
+    btn.style.color = 'var(--accent3)';
+  }
+}
+
+$('artistProfileFollowBtn')?.addEventListener('click', async () => {
+  if (!AUTH.loggedIn || !viewedArtist) return;
+  const btn = $('artistProfileFollowBtn');
+  const currentlyFollowing = btn.textContent.startsWith('Following');
+  btn.disabled = true;
+  try {
+    const res = await fetch(`${ARTISTS_BASE}/${encodeURIComponent(viewedArtist.id)}/follow`, {
+      method: currentlyFollowing ? 'DELETE' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: AUTH.token }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      if (res.status === 401) { handleTokenExpiry(); return; }
+      throw new Error(data.error || 'Action failed.');
+    }
+    setArtistFollowButtonState(data.following);
+    if (data.followerCount != null) $('artistProfileFollowerCount').textContent = formatCompactCount(data.followerCount);
+    showToast(data.following ? 'Followed' : 'Unfollowed', viewedArtist.name, 'success');
+  } catch (err) {
+    showToast('Error', err.message || 'Could not update follow status.', 'error');
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+$('artistProfileShareBtn')?.addEventListener('click', () => {
+  if (!viewedArtist?.slug) return;
+  shareProfileLink(`${window.location.origin}/artist/${encodeURIComponent(viewedArtist.slug)}`, viewedArtist.name);
+});
+
+// Artist avatar/banner upload — owner-only, enforced both here (click only
+// wired when isOwner, see openArtistProfile above) and again server-side.
+$('artistAvatarUploadWrap')?.addEventListener('click', () => { if (viewedArtist?.isOwner) $('artistAvatarFileInput')?.click(); });
+$('artistBannerUploadWrap')?.addEventListener('click', () => { if (viewedArtist?.isOwner) $('artistBannerFileInput')?.click(); });
+
+async function uploadArtistImage(file, kind) {
+  if (!viewedArtist) return;
+  const form = new FormData();
+  form.append('token', AUTH.token);
+  form.append('file', file);
+  try {
+    const res = await fetch(`${ARTISTS_BASE}/${encodeURIComponent(viewedArtist.id)}/${kind}`, { method: 'POST', body: form });
+    const data = await res.json();
+    if (!res.ok) {
+      if (res.status === 401) { handleTokenExpiry(); return; }
+      throw new Error(data.error || 'Upload failed.');
+    }
+    if (kind === 'avatar') {
+      const el = $('artistProfileAvatar');
+      if (el) { el.style.backgroundImage = `url("${data.avatarUrl}")`; el.textContent = ''; }
+      viewedArtist.avatarUrl = data.avatarUrl;
+    } else {
+      const el = $('artistProfileBanner');
+      if (el) el.style.backgroundImage = `url("${data.bannerUrl}")`;
+      viewedArtist.bannerUrl = data.bannerUrl;
+    }
+    showToast('Uploaded', 'Image updated.', 'success');
+  } catch (err) {
+    showToast('Upload Error', err.message || 'Could not upload image.', 'error');
+  }
+}
+
+$('artistAvatarFileInput')?.addEventListener('change', function() {
+  const file = this.files?.[0]; this.value = '';
+  if (file) uploadArtistImage(file, 'avatar');
+});
+$('artistBannerFileInput')?.addEventListener('change', function() {
+  const file = this.files?.[0]; this.value = '';
+  if (file) uploadArtistImage(file, 'banner');
+});
+
+async function loadArtistTopTracks(artistId) {
+  const wrap = $('artistProfileTracksWrap');
+  const list = $('artistProfileTracksList');
+  if (!wrap || !list) return;
+  try {
+    const res  = await fetch(`${ARTISTS_BASE}/${encodeURIComponent(artistId)}/tracks?limit=10`);
+    const data = await res.json();
+    const tracks = data.tracks || [];
+    if (!tracks.length) { wrap.style.display = 'none'; return; }
+    wrap.style.display = 'block';
+    list.innerHTML = tracks.map(t => `
+      <div style="padding:6px 0;border-bottom:1px solid var(--border);">
+        <div style="font-size:0.5rem;color:var(--text-main);">${escapeHtml(t.title)}</div>
+        <div style="font-size:0.4rem;color:var(--text-muted);">${formatCompactCount(t.playCount)} plays</div>
+      </div>
+    `).join('');
+  } catch (err) {
+    console.error('[loadArtistTopTracks]', err);
+    wrap.style.display = 'none';
+  }
+}
+
+// ─── Become an Artist ───────────────────────────────────────────────────────
+function openBecomeArtistModal() {
+  if (!AUTH.loggedIn) { showToast('Sign in required', 'Please sign in to become an artist.', 'error'); return; }
+  $('becomeArtistOverlay')?.classList.add('open');
+  const input = $('becomeArtistNameInput');
+  if (input) { input.value = AUTH.name || ''; }
+  setBecomeArtistStatus('');
+}
+function closeBecomeArtistModal() {
+  $('becomeArtistOverlay')?.classList.remove('open');
+}
+function setBecomeArtistStatus(msg, color) {
+  const el = $('becomeArtistStatus');
+  if (!el) return;
+  el.textContent = msg;
+  el.style.color = color || 'var(--text-muted)';
+}
+
+$('becomeArtistSubmitBtn')?.addEventListener('click', async () => {
+  const name = $('becomeArtistNameInput')?.value.trim();
+  if (!name) { setBecomeArtistStatus('Enter an artist name first.', 'var(--accent2)'); return; }
+  const btn = $('becomeArtistSubmitBtn');
+  btn.disabled = true; btn.textContent = 'Creating…';
+  setBecomeArtistStatus('');
+  try {
+    const res = await fetch(`${ARTISTS_BASE}/create`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: AUTH.token, name }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      if (res.status === 401) { handleTokenExpiry(); return; }
+      throw new Error(data.error || 'Could not create artist page.');
+    }
+    closeBecomeArtistModal();
+    showToast(
+      data.merged ? 'Welcome Back!' : 'Artist Page Created',
+      data.merged ? 'We found existing plays under this name and linked them to your new page.' : `${data.name} is live.`,
+      'success'
+    );
+    renderMyArtistCta({ isArtist: true, artistSlug: data.slug });
+    openArtistProfile(data.slug);
+  } catch (err) {
+    setBecomeArtistStatus(err.message || 'Could not create artist page.', 'var(--accent2)');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Create Artist Page';
+  }
+});
+$('becomeArtistNameInput')?.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') $('becomeArtistSubmitBtn')?.click();
+});
 
 // ─── Public Playlist Viewer ─────────────────────────────────────────────────
 let viewedPlaylist = null; // full playlist payload from the last successful openPlaylistViewer call
@@ -8841,11 +9361,32 @@ document.addEventListener('keydown', e => {
 })();
 
 // ─── Patch: Close new overlays via clicking outside ──────────────────────────
-['supportOverlay','aboutOverlay','settingsOverlay','lyricsOverlay','userProfileOverlay'].forEach(id => {
+['supportOverlay','aboutOverlay','settingsOverlay','lyricsOverlay','userProfileOverlay','artistProfileOverlay','becomeArtistOverlay'].forEach(id => {
   const el = $(id);
   if (!el) return;
   el.addEventListener('click', e => { if (e.target === el) el.classList.remove('open'); });
 });
+
+// ─── Initial route: shared /u/:username and /artist/:slug links ──────────────
+// The server's /u/:username and /artist/:slug routes exist so a shared link
+// shows the right og:title/og:image when pasted elsewhere (see server.js),
+// but they still serve this same index.html — without this, a visitor who
+// actually clicks the link lands on the bare player with no profile shown.
+// This reads the path once at load and opens the matching modal, then
+// cleans the URL back to "/" via replaceState so refreshing or sharing
+// again from inside the app doesn't re-trigger it or fight with in-app
+// navigation that was never built around real routing.
+(function handleSharedProfileLink() {
+  const path = window.location.pathname;
+  let match;
+  if ((match = path.match(/^\/u\/([^\/]+)\/?$/))) {
+    openUserProfile(decodeURIComponent(match[1]));
+    history.replaceState(null, '', '/');
+  } else if ((match = path.match(/^\/artist\/([^\/]+)\/?$/))) {
+    openArtistProfile(decodeURIComponent(match[1]));
+    history.replaceState(null, '', '/');
+  }
+})();
 
 // ─── Update cloud UI when auth state changes ──────────────────────────────────
 const _origUpdateAuthUI = updateAuthUI;
