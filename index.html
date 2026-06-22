@@ -2504,9 +2504,53 @@ body.oled-mode {
       <div class="profile-action-row">
         <button id="artistProfileFollowBtn" style="background:none;border:1px solid var(--accent3);color:var(--accent3);font-family:'Space Mono',monospace;font-size:0.5rem;padding:8px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.06em;text-transform:uppercase;">Follow</button>
         <button class="share-btn" id="artistProfileShareBtn" style="flex:0 0 auto;padding:8px 12px;">⇪ Share</button>
+        <button id="artistDashboardToggleBtn" style="display:none;flex:0 0 auto;background:var(--accent);color:var(--bg);border:none;font-family:'Unbounded',sans-serif;font-weight:700;font-size:0.46rem;padding:8px 10px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.05em;text-transform:uppercase;">🎚 Dashboard</button>
       </div>
       <input type="file" id="artistAvatarFileInput" accept="image/png,image/jpeg,image/webp,image/gif" style="display:none;" />
       <input type="file" id="artistBannerFileInput" accept="image/png,image/jpeg,image/webp,image/gif" style="display:none;" />
+
+      <!-- Owner-only Artist Dashboard — publishing, releases, stats. Hidden
+           entirely for visitors; isOwner is re-checked server-side on every
+           route this panel calls, this is just UI gating. -->
+      <div id="artistDashboardPanel" style="display:none;margin-top:14px;border-top:1px solid var(--border);padding-top:12px;">
+        <div style="display:flex;gap:6px;margin-bottom:12px;">
+          <button class="dash-tab-btn active" data-tab="upload" onclick="setArtistDashboardTab('upload')" style="flex:1;background:none;border:1px solid var(--accent);color:var(--accent);font-family:'Space Mono',monospace;font-size:0.4rem;letter-spacing:0.05em;text-transform:uppercase;padding:6px 4px;border-radius:var(--radius);cursor:pointer;">Publish</button>
+          <button class="dash-tab-btn" data-tab="releases" onclick="setArtistDashboardTab('releases')" style="flex:1;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.4rem;letter-spacing:0.05em;text-transform:uppercase;padding:6px 4px;border-radius:var(--radius);cursor:pointer;">Releases</button>
+          <button class="dash-tab-btn" data-tab="tracks" onclick="setArtistDashboardTab('tracks')" style="flex:1;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.4rem;letter-spacing:0.05em;text-transform:uppercase;padding:6px 4px;border-radius:var(--radius);cursor:pointer;">Manage</button>
+          <button class="dash-tab-btn" data-tab="stats" onclick="setArtistDashboardTab('stats')" style="flex:1;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.4rem;letter-spacing:0.05em;text-transform:uppercase;padding:6px 4px;border-radius:var(--radius);cursor:pointer;">Stats</button>
+        </div>
+
+        <!-- Publish tab: pick an unpublished upload, optionally upload cover art,
+             optionally attach to a release, publish. -->
+        <div id="dashPaneUpload" class="dash-pane">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+            <div style="font-size:0.46rem;color:var(--text-dim);letter-spacing:0.05em;text-transform:uppercase;">Unpublished Uploads</div>
+            <button onclick="openCloudLibraryForUpload()" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.4rem;padding:5px 8px;border-radius:var(--radius);cursor:pointer;">↑ Upload Audio</button>
+          </div>
+          <div id="dashPublishableList" style="display:flex;flex-direction:column;gap:6px;max-height:260px;overflow-y:auto;"></div>
+        </div>
+
+        <!-- Releases tab -->
+        <div id="dashPaneReleases" class="dash-pane" style="display:none;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+            <div style="font-size:0.46rem;color:var(--text-dim);letter-spacing:0.05em;text-transform:uppercase;">Discography</div>
+            <button onclick="openCreateReleaseModal()" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.4rem;padding:5px 8px;border-radius:var(--radius);cursor:pointer;">+ New Release</button>
+          </div>
+          <div id="dashReleasesList" style="display:flex;flex-direction:column;gap:6px;max-height:260px;overflow-y:auto;"></div>
+        </div>
+
+        <!-- Manage tab: edit/delete already-published tracks -->
+        <div id="dashPaneTracks" class="dash-pane" style="display:none;">
+          <div style="font-size:0.46rem;color:var(--text-dim);letter-spacing:0.05em;text-transform:uppercase;margin-bottom:8px;">Published Tracks</div>
+          <div id="dashTracksList" style="display:flex;flex-direction:column;gap:6px;max-height:260px;overflow-y:auto;"></div>
+        </div>
+
+        <!-- Stats tab -->
+        <div id="dashPaneStats" class="dash-pane" style="display:none;">
+          <div id="dashStatsList" style="display:flex;flex-direction:column;gap:8px;"></div>
+        </div>
+      </div>
+
       <div id="artistProfileTracksWrap" style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px;display:none;">
         <div style="font-size:0.46rem;color:var(--text-dim);letter-spacing:0.05em;text-transform:uppercase;margin-bottom:8px;">Top Tracks</div>
         <div id="artistProfileTracksList"></div>
@@ -2514,6 +2558,44 @@ body.oled-mode {
     </div>
     <div id="artistProfileError" style="display:none;text-align:center;padding:24px;color:var(--text-muted);font-size:0.55rem;"></div>
     <button class="support-close-btn" onclick="closeArtistProfileModal()" style="margin-top:16px;">Close</button>
+  </div>
+</div>
+
+<!-- Publish modal: set title + cover art for a chosen unpublished upload -->
+<div class="lyrics-overlay" id="publishTrackOverlay">
+  <div class="lyrics-panel" style="max-width:380px;">
+    <div class="lyrics-title" style="font-size:0.65rem;">Publish Track</div>
+    <div style="font-size:0.46rem;color:var(--text-dim);margin-bottom:12px;" id="publishTrackSourceFilename"></div>
+    <div id="publishCoverPreviewWrap" style="width:100%;aspect-ratio:1;background:var(--surface2);border-radius:var(--radius);margin-bottom:10px;display:flex;align-items:center;justify-content:center;cursor:pointer;overflow:hidden;border:1px dashed var(--border);">
+      <span id="publishCoverPreviewHint" style="font-size:0.46rem;color:var(--text-muted);">+ Add Cover Art</span>
+      <img id="publishCoverPreviewImg" style="display:none;width:100%;height:100%;object-fit:cover;" />
+    </div>
+    <input type="file" id="publishCoverFileInput" accept="image/png,image/jpeg,image/webp,image/gif" style="display:none;" />
+    <input type="text" id="publishTrackTitleInput" maxlength="255" placeholder="Track title…" style="width:100%;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-main);font-family:'Space Mono',monospace;font-size:0.55rem;padding:9px 11px;box-sizing:border-box;margin-bottom:10px;" />
+    <select id="publishReleaseSelect" style="width:100%;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-main);font-family:'Space Mono',monospace;font-size:0.5rem;padding:9px 11px;box-sizing:border-box;margin-bottom:10px;">
+      <option value="">— Standalone single (no release) —</option>
+    </select>
+    <div id="publishTrackStatus" style="font-size:0.42rem;color:var(--text-muted);margin-bottom:10px;min-height:1.2em;"></div>
+    <button id="publishTrackSubmitBtn" style="width:100%;background:var(--accent);color:var(--bg);border:none;font-family:'Unbounded',sans-serif;font-weight:700;font-size:0.52rem;padding:10px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.05em;text-transform:uppercase;margin-bottom:8px;">Publish</button>
+    <button class="support-close-btn" onclick="closePublishTrackModal()">Cancel</button>
+  </div>
+</div>
+
+<!-- Create Release modal -->
+<div class="lyrics-overlay" id="createReleaseOverlay">
+  <div class="lyrics-panel" style="max-width:380px;">
+    <div class="lyrics-title" style="font-size:0.65rem;">New Release</div>
+    <input type="text" id="createReleaseTitleInput" maxlength="200" placeholder="Release title…" style="width:100%;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-main);font-family:'Space Mono',monospace;font-size:0.55rem;padding:9px 11px;box-sizing:border-box;margin-bottom:10px;" />
+    <select id="createReleaseTypeSelect" style="width:100%;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-main);font-family:'Space Mono',monospace;font-size:0.5rem;padding:9px 11px;box-sizing:border-box;margin-bottom:10px;">
+      <option value="single">Single</option>
+      <option value="ep">EP</option>
+      <option value="album">Album</option>
+      <option value="mixtape">Mixtape</option>
+    </select>
+    <input type="date" id="createReleaseDateInput" style="width:100%;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-main);font-family:'Space Mono',monospace;font-size:0.5rem;padding:9px 11px;box-sizing:border-box;margin-bottom:10px;" />
+    <div id="createReleaseStatus" style="font-size:0.42rem;color:var(--text-muted);margin-bottom:10px;min-height:1.2em;"></div>
+    <button id="createReleaseSubmitBtn" style="width:100%;background:var(--accent);color:var(--bg);border:none;font-family:'Unbounded',sans-serif;font-weight:700;font-size:0.52rem;padding:10px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.05em;text-transform:uppercase;margin-bottom:8px;">Create Release</button>
+    <button class="support-close-btn" onclick="closeCreateReleaseModal()">Cancel</button>
   </div>
 </div>
 
@@ -2602,10 +2684,10 @@ body.oled-mode {
 
     <!-- Artists sub-view -->
     <div id="discoverPaneArtists" class="discover-pane" style="display:none;">
-      <div style="display:flex;gap:6px;margin-bottom:10px;">
+      <input type="text" id="discoverArtistsSearchInput" placeholder="Search artists… (e.g. Kanye West)" oninput="handleDiscoverArtistsSearchInput(this.value)" style="width:100%;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-main);font-family:'Space Mono',monospace;font-size:0.5rem;padding:8px 11px;box-sizing:border-box;margin-bottom:8px;" />
+      <div style="display:flex;gap:6px;margin-bottom:10px;" id="discoverArtistsSortRow">
         <button id="discoverArtistsTrending" onclick="setDiscoverArtistsSort('trending')" style="flex:1;background:none;border:1px solid var(--accent3);color:var(--accent3);font-family:'Space Mono',monospace;font-size:0.4rem;letter-spacing:0.05em;text-transform:uppercase;padding:5px 4px;border-radius:var(--radius);cursor:pointer;">Trending</button>
-        <button id="discoverArtistsRecent" onclick="setDiscoverArtistsSort('recent')" style="flex:1;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.4rem;letter-spacing:0.05em;text-transform:uppercase;padding:5px 4px;border-radius:var(--radius);cursor:pointer;">Rising</button>
-        <button id="discoverArtistsFollowers" onclick="setDiscoverArtistsSort('followers')" style="flex:1;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.4rem;letter-spacing:0.05em;text-transform:uppercase;padding:5px 4px;border-radius:var(--radius);cursor:pointer;">Most Followed</button>
+        <button id="discoverArtistsNew" onclick="setDiscoverArtistsSort('new')" style="flex:1;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.4rem;letter-spacing:0.05em;text-transform:uppercase;padding:5px 4px;border-radius:var(--radius);cursor:pointer;">✦ New Artists</button>
       </div>
       <div id="discoverArtistsList" style="max-height:380px;overflow-y:auto;"><div class="empty-panel">Loading…</div></div>
     </div>
@@ -3929,6 +4011,9 @@ let discoverPlaylistsSort = 'likes';
 let discoverTracksLoaded    = false;
 let discoverPlaylistsLoaded = false;
 let discoverPeopleLoaded    = false;
+let discoverArtistsLoaded   = false;
+let discoverArtistsSort     = 'trending'; // 'trending' | 'new' | 'search'
+let discoverArtistsSearchTimer = null;
 let discoverTracksData    = []; // separate cache from chartsTracks — same shape, different lifecycle/UI
 
 function openDiscoverOverlay() {
@@ -3943,7 +4028,7 @@ function closeDiscoverOverlay() {
 function setDiscoverTab(tab) {
   if (discoverTab === tab) return;
   discoverTab = tab;
-  ['Tracks', 'Playlists', 'People'].forEach(name => {
+  ['Tracks', 'Artists', 'Playlists', 'People'].forEach(name => {
     const isActive = name.toLowerCase() === tab;
     const btn = $(`discoverTab${name}`);
     const pane = $(`discoverPane${name}`);
@@ -3954,6 +4039,7 @@ function setDiscoverTab(tab) {
     if (pane) pane.style.display = isActive ? 'block' : 'none';
   });
   if (tab === 'tracks' && !discoverTracksLoaded) loadDiscoverTracks();
+  if (tab === 'artists' && !discoverArtistsLoaded) loadDiscoverArtists();
   if (tab === 'playlists' && !discoverPlaylistsLoaded) loadDiscoverPlaylists();
   if (tab === 'people' && !discoverPeopleLoaded) loadDiscoverPeople();
 }
@@ -3974,6 +4060,80 @@ function setDiscoverPlaylistsSort(sort) {
   if (likesBtn)  { likesBtn.style.color = sort === 'likes' ? 'var(--accent3)' : 'var(--text-muted)'; likesBtn.style.borderColor = sort === 'likes' ? 'var(--accent3)' : 'var(--border)'; }
   if (recentBtn) { recentBtn.style.color = sort === 'recent' ? 'var(--accent3)' : 'var(--text-muted)'; recentBtn.style.borderColor = sort === 'recent' ? 'var(--accent3)' : 'var(--border)'; }
   loadDiscoverPlaylists();
+}
+
+// ── Artists sub-view ────────────────────────────────────────────────────────
+// Three states: trending (chart_rank-ranked, server-side), new (creation-date
+// window, server-side — see NEW_ARTIST_WINDOW_DAYS), and search (name match,
+// active whenever the search box has text — typing clears the trending/new
+// button highlight since search is its own mode, not a filter on top of them).
+function setDiscoverArtistsSort(sort) {
+  if (discoverArtistsSort === sort) return;
+  discoverArtistsSort = sort;
+  $('discoverArtistsSearchInput').value = ''; // switching sort modes exits search
+  const trendBtn = $('discoverArtistsTrending'), newBtn = $('discoverArtistsNew');
+  if (trendBtn) { trendBtn.style.color = sort === 'trending' ? 'var(--accent3)' : 'var(--text-muted)'; trendBtn.style.borderColor = sort === 'trending' ? 'var(--accent3)' : 'var(--border)'; }
+  if (newBtn)   { newBtn.style.color   = sort === 'new' ? 'var(--accent3)' : 'var(--text-muted)';   newBtn.style.borderColor   = sort === 'new' ? 'var(--accent3)' : 'var(--border)'; }
+  loadDiscoverArtists();
+}
+
+// Debounced — fires 300ms after typing stops, same pattern as the Cloud
+// Library search input, so a fast typist doesn't fire one request per
+// keystroke against /api/discover/artists.
+function handleDiscoverArtistsSearchInput(value) {
+  clearTimeout(discoverArtistsSearchTimer);
+  discoverArtistsSearchTimer = setTimeout(() => {
+    const trimmed = value.trim();
+    const sortRow = $('discoverArtistsSortRow');
+    if (trimmed) {
+      if (sortRow) sortRow.style.opacity = '0.4'; // visually de-emphasize sort buttons while searching, without hiding/reflowing layout
+      loadDiscoverArtists(trimmed);
+    } else {
+      if (sortRow) sortRow.style.opacity = '1';
+      loadDiscoverArtists(); // empty box — fall back to the active sort mode
+    }
+  }, 300);
+}
+
+async function loadDiscoverArtists(searchQuery = null) {
+  const list = $('discoverArtistsList');
+  if (!list) return;
+  list.innerHTML = '<div class="empty-panel">Loading…</div>';
+  try {
+    const params = new URLSearchParams({ limit: 30 });
+    if (searchQuery) { params.set('mode', 'search'); params.set('q', searchQuery); }
+    else params.set('mode', discoverArtistsSort);
+    const res  = await fetch(`/api/discover/artists?${params}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not load artists.');
+    discoverArtistsLoaded = true;
+    renderDiscoverArtists(data.artists || [], searchQuery);
+  } catch (err) {
+    console.error('[loadDiscoverArtists]', err);
+    list.innerHTML = '<div class="empty-panel">Could not load artists — server may be offline.</div>';
+  }
+}
+
+function renderDiscoverArtists(artists, searchQuery) {
+  const list = $('discoverArtistsList');
+  if (!list) return;
+  if (!artists.length) {
+    list.innerHTML = `<div class="empty-panel">${
+      searchQuery ? `No artists matching "${escapeHtml(searchQuery)}".`
+      : discoverArtistsSort === 'new' ? 'No new artist pages in the last 30 days.'
+      : 'No trending artists yet — plays need a little time to show up here.'
+    }</div>`;
+    return;
+  }
+  list.innerHTML = artists.map(a => `
+    <div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border);cursor:pointer;" onclick="closeDiscoverOverlay(); openArtistProfile('${a.slug}')">
+      <div style="width:30px;height:30px;border-radius:50%;background:var(--surface3) center/cover;flex:0 0 auto;display:flex;align-items:center;justify-content:center;font-size:0.5rem;color:var(--text-muted);${a.avatarUrl ? `background-image:url('${a.avatarUrl}');` : ''}">${a.avatarUrl ? '' : escapeHtml((a.name || '?')[0].toUpperCase())}</div>
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:0.55rem;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(a.name)}${a.isVerified ? ' <span style="color:var(--accent3);">✓</span>' : ''}${a.isNew ? ' <span style="color:var(--accent);font-size:0.4rem;">● NEW</span>' : ''}</div>
+        <div style="font-size:0.42rem;color:var(--text-muted);">${formatCompactCount(a.followerCount)} follower${a.followerCount === 1 ? '' : 's'}${a.chartRank ? ` · #${a.chartRank} on Charts` : ''}</div>
+      </div>
+    </div>
+  `).join('');
 }
 
 async function loadDiscoverTracks() {
@@ -4314,6 +4474,9 @@ async function openArtistProfile(idOrSlug) {
     $('artistAvatarUploadWrap').style.cursor = data.isOwner ? 'pointer' : 'default';
     $('artistBannerUploadWrap').style.cursor = data.isOwner ? 'pointer' : 'default';
 
+    $('artistDashboardToggleBtn').style.display = data.isOwner ? '' : 'none';
+    if (!data.isOwner) { $('artistDashboardPanel').style.display = 'none'; }
+
     const followBtn = $('artistProfileFollowBtn');
     if (data.isOwner) {
       followBtn.style.display = 'none'; // can't follow your own artist page
@@ -4423,26 +4586,325 @@ $('artistBannerFileInput')?.addEventListener('change', function() {
   if (file) uploadArtistImage(file, 'banner');
 });
 
-async function loadArtistTopTracks(artistId) {
-  const wrap = $('artistProfileTracksWrap');
-  const list = $('artistProfileTracksList');
-  if (!wrap || !list) return;
+// ─── Artist Dashboard ───────────────────────────────────────────────────────
+// Owner-only publishing surface, gated by isOwner from openArtistProfile and
+// re-checked on every route server-side. Lives inside the existing
+// artistProfileOverlay rather than a new overlay — same modal stack, same
+// viewedArtist state, just an additional panel that only the artist who
+// claimed this page ever sees rendered.
+
+let dashReleasesCache = []; // [{id,title,...}] — populated by loadDashReleases, reused by the publish modal's release dropdown
+
+$('artistDashboardToggleBtn')?.addEventListener('click', () => {
+  const panel = $('artistDashboardPanel');
+  const opening = panel.style.display === 'none';
+  panel.style.display = opening ? 'block' : 'none';
+  if (opening) loadArtistDashboard();
+});
+
+function loadArtistDashboard() {
+  if (!viewedArtist) return;
+  loadDashPublishable();
+  loadDashReleases();
+  loadDashTracks();
+  loadDashStats();
+}
+
+function setArtistDashboardTab(tab) {
+  document.querySelectorAll('.dash-tab-btn').forEach(btn => {
+    const active = btn.dataset.tab === tab;
+    btn.classList.toggle('active', active);
+    btn.style.borderColor = active ? 'var(--accent)' : 'var(--border)';
+    btn.style.color = active ? 'var(--accent)' : 'var(--text-muted)';
+  });
+  ['upload', 'releases', 'tracks', 'stats'].forEach(t => {
+    const pane = $('dashPane' + t.charAt(0).toUpperCase() + t.slice(1));
+    if (pane) pane.style.display = (t === tab) ? 'block' : 'none';
+  });
+}
+
+// ── Publish tab ──────────────────────────────────────────────────────────
+async function loadDashPublishable() {
+  const list = $('dashPublishableList');
+  if (!list || !viewedArtist) return;
+  list.innerHTML = '<div class="empty-panel" style="font-size:0.46rem;">Loading…</div>';
   try {
-    const res  = await fetch(`${ARTISTS_BASE}/${encodeURIComponent(artistId)}/tracks?limit=10`);
+    const res = await fetch(`${ARTISTS_BASE}/${encodeURIComponent(viewedArtist.id)}/publishable?token=${encodeURIComponent(AUTH.token)}`);
     const data = await res.json();
-    const tracks = data.tracks || [];
-    if (!tracks.length) { wrap.style.display = 'none'; return; }
-    wrap.style.display = 'block';
-    list.innerHTML = tracks.map(t => `
-      <div style="padding:6px 0;border-bottom:1px solid var(--border);">
-        <div style="font-size:0.5rem;color:var(--text-main);">${escapeHtml(t.title)}</div>
-        <div style="font-size:0.4rem;color:var(--text-muted);">${formatCompactCount(t.playCount)} plays</div>
+    if (!res.ok) { if (res.status === 401) { handleTokenExpiry(); return; } throw new Error(data.error || 'Could not load uploads.'); }
+    const files = data.files || [];
+    if (!files.length) {
+      list.innerHTML = '<div class="empty-panel" style="font-size:0.46rem;">No unpublished uploads. Use "Upload Audio" above to add one, then publish it here.</div>';
+      return;
+    }
+    list.innerHTML = files.map(f => `
+      <div style="display:flex;align-items:center;gap:8px;padding:8px;background:var(--surface2);border-radius:var(--radius);">
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:0.5rem;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(f.title || f.filename)}</div>
+          <div style="font-size:0.4rem;color:var(--text-muted);">${f.artist ? escapeHtml(f.artist) + ' • ' : ''}${formatDuration(f.duration)}</div>
+        </div>
+        <button onclick="openPublishTrackModal(${f.id})" style="flex:0 0 auto;background:var(--accent);color:var(--bg);border:none;font-family:'Space Mono',monospace;font-weight:700;font-size:0.42rem;padding:6px 10px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.04em;text-transform:uppercase;">Publish</button>
       </div>
     `).join('');
   } catch (err) {
-    console.error('[loadArtistTopTracks]', err);
-    wrap.style.display = 'none';
+    list.innerHTML = `<div class="empty-panel" style="font-size:0.46rem;">${escapeHtml(err.message || 'Could not load uploads.')}</div>`;
   }
+}
+
+function openCloudLibraryForUpload() {
+  // Cloud Library lives inside the main "Add Music" panel (Local Files →
+  // Cloud Files tab), not a separate overlay — there's no single function
+  // that jumps straight there from here without assuming a specific UI
+  // navigation path that may change. Closing this modal and pointing the
+  // artist at it directly is simpler and won't silently break if that
+  // panel's structure changes later.
+  closeArtistProfileModal();
+  showToast('Upload Audio', 'Open Add Music → Local Files → ☁ Cloud Files to upload, then return here to publish it.', 'info');
+}
+
+let publishingCloudFileId = null;
+let publishingCoverUrl = null;
+
+async function openPublishTrackModal(cloudFileId) {
+  publishingCloudFileId = cloudFileId;
+  publishingCoverUrl = null;
+  $('publishTrackTitleInput').value = '';
+  $('publishCoverPreviewImg').style.display = 'none';
+  $('publishCoverPreviewHint').style.display = 'block';
+  $('publishTrackStatus').textContent = '';
+  $('publishTrackSourceFilename').textContent = '';
+
+  // Populate the release dropdown from the cached releases list — refresh
+  // first in case a release was created since the dashboard last loaded.
+  await loadDashReleases();
+  const select = $('publishReleaseSelect');
+  select.innerHTML = '<option value="">— Standalone single (no release) —</option>' +
+    dashReleasesCache.map(r => `<option value="${r.id}">${escapeHtml(r.title)} (${r.releaseType})</option>`).join('');
+
+  $('publishTrackOverlay')?.classList.add('open');
+}
+function closePublishTrackModal() {
+  $('publishTrackOverlay')?.classList.remove('open');
+  publishingCloudFileId = null;
+  publishingCoverUrl = null;
+}
+
+$('publishCoverPreviewWrap')?.addEventListener('click', () => $('publishCoverFileInput')?.click());
+$('publishCoverFileInput')?.addEventListener('change', async function() {
+  const file = this.files?.[0]; this.value = '';
+  if (!file || !viewedArtist || !publishingCloudFileId) return;
+  const form = new FormData();
+  form.append('token', AUTH.token);
+  form.append('file', file);
+  form.append('cloudFileId', String(publishingCloudFileId));
+  try {
+    const res = await fetch(`${ARTISTS_BASE}/${encodeURIComponent(viewedArtist.id)}/track-cover`, { method: 'POST', body: form });
+    const data = await res.json();
+    if (!res.ok) { if (res.status === 401) { handleTokenExpiry(); return; } throw new Error(data.error || 'Cover upload failed.'); }
+    publishingCoverUrl = data.coverUrl;
+    $('publishCoverPreviewImg').src = data.coverUrl;
+    $('publishCoverPreviewImg').style.display = 'block';
+    $('publishCoverPreviewHint').style.display = 'none';
+  } catch (err) {
+    showToast('Upload Error', err.message || 'Could not upload cover art.', 'error');
+  }
+});
+
+$('publishTrackSubmitBtn')?.addEventListener('click', async () => {
+  if (!viewedArtist || !publishingCloudFileId) return;
+  const btn = $('publishTrackSubmitBtn');
+  btn.disabled = true; btn.textContent = 'Publishing…';
+  $('publishTrackStatus').textContent = '';
+  try {
+    const res = await fetch(`${ARTISTS_BASE}/${encodeURIComponent(viewedArtist.id)}/publish`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        token: AUTH.token,
+        cloudFileId: publishingCloudFileId,
+        title: $('publishTrackTitleInput').value.trim() || undefined,
+        coverUrl: publishingCoverUrl || undefined,
+        releaseId: $('publishReleaseSelect').value || undefined,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      if (res.status === 401) { handleTokenExpiry(); return; }
+      throw new Error(data.error || 'Could not publish track.');
+    }
+    showToast('Published', `"${data.title}" is now live.`, 'success');
+    closePublishTrackModal();
+    loadDashPublishable();
+    loadDashTracks();
+    loadDashReleases();
+    loadArtistTopTracks(viewedArtist.id);
+  } catch (err) {
+    $('publishTrackStatus').textContent = err.message || 'Could not publish track.';
+    $('publishTrackStatus').style.color = 'var(--accent2)';
+  } finally {
+    btn.disabled = false; btn.textContent = 'Publish';
+  }
+});
+
+// ── Releases tab ─────────────────────────────────────────────────────────
+async function loadDashReleases() {
+  const list = $('dashReleasesList');
+  if (!viewedArtist) return;
+  try {
+    const res = await fetch(`${ARTISTS_BASE}/${encodeURIComponent(viewedArtist.id)}/releases`);
+    const data = await res.json();
+    dashReleasesCache = (data.releases || []).map(r => ({
+      id: r.id, title: r.title, releaseType: r.releaseType, coverUrl: r.coverUrl,
+      releaseDate: r.releaseDate, trackCount: r.trackCount,
+    }));
+    if (!list) return; // called from publish modal too, where #dashReleasesList may not be the active pane
+    if (!dashReleasesCache.length) {
+      list.innerHTML = '<div class="empty-panel" style="font-size:0.46rem;">No releases yet. Create one, then publish tracks into it.</div>';
+      return;
+    }
+    list.innerHTML = dashReleasesCache.map(r => `
+      <div style="display:flex;align-items:center;gap:8px;padding:8px;background:var(--surface2);border-radius:var(--radius);">
+        <div style="width:32px;height:32px;border-radius:4px;background:var(--surface3) center/cover;flex:0 0 auto;${r.coverUrl ? `background-image:url('${r.coverUrl}');` : ''}"></div>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:0.5rem;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(r.title)}</div>
+          <div style="font-size:0.4rem;color:var(--text-muted);text-transform:uppercase;">${r.releaseType} • ${r.trackCount} track${r.trackCount === 1 ? '' : 's'}</div>
+        </div>
+      </div>
+    `).join('');
+  } catch (err) {
+    if (list) list.innerHTML = `<div class="empty-panel" style="font-size:0.46rem;">${escapeHtml(err.message || 'Could not load releases.')}</div>`;
+  }
+}
+
+function openCreateReleaseModal() {
+  $('createReleaseTitleInput').value = '';
+  $('createReleaseTypeSelect').value = 'single';
+  $('createReleaseDateInput').value = '';
+  $('createReleaseStatus').textContent = '';
+  $('createReleaseOverlay')?.classList.add('open');
+}
+function closeCreateReleaseModal() { $('createReleaseOverlay')?.classList.remove('open'); }
+
+$('createReleaseSubmitBtn')?.addEventListener('click', async () => {
+  if (!viewedArtist) return;
+  const title = $('createReleaseTitleInput').value.trim();
+  if (!title) { $('createReleaseStatus').textContent = 'Enter a title first.'; $('createReleaseStatus').style.color = 'var(--accent2)'; return; }
+  const btn = $('createReleaseSubmitBtn');
+  btn.disabled = true; btn.textContent = 'Creating…';
+  try {
+    const res = await fetch(`${ARTISTS_BASE}/${encodeURIComponent(viewedArtist.id)}/releases`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        token: AUTH.token, title,
+        releaseType: $('createReleaseTypeSelect').value,
+        releaseDate: $('createReleaseDateInput').value || undefined,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) { if (res.status === 401) { handleTokenExpiry(); return; } throw new Error(data.error || 'Could not create release.'); }
+    showToast('Release Created', `"${data.title}" — now publish tracks into it.`, 'success');
+    closeCreateReleaseModal();
+    loadDashReleases();
+  } catch (err) {
+    $('createReleaseStatus').textContent = err.message || 'Could not create release.';
+    $('createReleaseStatus').style.color = 'var(--accent2)';
+  } finally {
+    btn.disabled = false; btn.textContent = 'Create Release';
+  }
+});
+
+// ── Manage tab (edit/delete published tracks) ───────────────────────────
+async function loadDashTracks() {
+  const list = $('dashTracksList');
+  if (!list || !viewedArtist) return;
+  list.innerHTML = '<div class="empty-panel" style="font-size:0.46rem;">Loading…</div>';
+  try {
+    const res = await fetch(`${ARTISTS_BASE}/${encodeURIComponent(viewedArtist.id)}/tracks?limit=50`);
+    const data = await res.json();
+    const tracks = (data.tracks || []).filter(t => t.isUpload); // only self-published uploads are editable/removable here
+    if (!tracks.length) {
+      list.innerHTML = '<div class="empty-panel" style="font-size:0.46rem;">No published tracks yet.</div>';
+      return;
+    }
+    list.innerHTML = tracks.map(t => `
+      <div style="display:flex;align-items:center;gap:8px;padding:8px;background:var(--surface2);border-radius:var(--radius);">
+        <div style="width:32px;height:32px;border-radius:4px;background:var(--surface3) center/cover;flex:0 0 auto;${t.coverUrl ? `background-image:url('${t.coverUrl}');` : ''}"></div>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:0.5rem;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(t.title)}</div>
+          <div style="font-size:0.4rem;color:var(--text-muted);">${formatCompactCount(t.playCount)} plays</div>
+        </div>
+        <button onclick="renameDashTrack('${t.id}', ${JSON.stringify(t.title)})" style="flex:0 0 auto;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.4rem;padding:5px 7px;border-radius:var(--radius);cursor:pointer;">Edit</button>
+        <button onclick="deleteDashTrack('${t.id}')" style="flex:0 0 auto;background:none;border:1px solid var(--accent2);color:var(--accent2);font-family:'Space Mono',monospace;font-size:0.4rem;padding:5px 7px;border-radius:var(--radius);cursor:pointer;">Remove</button>
+      </div>
+    `).join('');
+  } catch (err) {
+    list.innerHTML = `<div class="empty-panel" style="font-size:0.46rem;">${escapeHtml(err.message || 'Could not load tracks.')}</div>`;
+  }
+}
+
+async function renameDashTrack(trackId, currentTitle) {
+  const next = prompt('Track title:', currentTitle || '');
+  if (next == null) return; // cancelled
+  const trimmed = next.trim();
+  if (!trimmed || trimmed === currentTitle) return;
+  try {
+    const res = await fetch(`/api/tracks/${encodeURIComponent(trackId)}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: AUTH.token, title: trimmed }),
+    });
+    const data = await res.json();
+    if (!res.ok) { if (res.status === 401) { handleTokenExpiry(); return; } throw new Error(data.error || 'Could not update track.'); }
+    showToast('Updated', 'Track title updated.', 'success');
+    loadDashTracks();
+    loadArtistTopTracks(viewedArtist.id);
+  } catch (err) {
+    showToast('Error', err.message || 'Could not update track.', 'error');
+  }
+}
+
+async function deleteDashTrack(trackId) {
+  if (!confirm('Remove this track? It will disappear from your page, Charts, Discovery, and any release it belongs to. The original upload stays in your Cloud Library and can be republished later.')) return;
+  try {
+    const res = await fetch(`/api/tracks/${encodeURIComponent(trackId)}`, {
+      method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: AUTH.token }),
+    });
+    const data = await res.json();
+    if (!res.ok) { if (res.status === 401) { handleTokenExpiry(); return; } throw new Error(data.error || 'Could not remove track.'); }
+    showToast('Removed', 'Track unpublished.', 'success');
+    loadDashTracks();
+    loadDashPublishable();
+    loadDashReleases();
+    loadArtistTopTracks(viewedArtist.id);
+  } catch (err) {
+    showToast('Error', err.message || 'Could not remove track.', 'error');
+  }
+}
+
+// ── Stats tab ─────────────────────────────────────────────────────────────
+function loadDashStats() {
+  const wrap = $('dashStatsList');
+  if (!wrap || !viewedArtist) return;
+  // Reuses the same stats payload openArtistProfile already fetched —
+  // no second request needed, this is the owner-facing breakdown of
+  // numbers already shown publicly at the top of the page.
+  const s = viewedArtist.stats || {};
+  wrap.innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+      ${[
+        ['Total Plays', formatCompactCount(s.totalPlays ?? 0)],
+        ['Plays (7d)', formatCompactCount(s.totalPlays7d ?? 0)],
+        ['Monthly Listeners', formatCompactCount(s.monthlyListeners ?? 0)],
+        ['Followers', formatCompactCount(viewedArtist.followerCount ?? 0)],
+        ['Chart Rank', s.chartRank ? `#${s.chartRank}` : '—'],
+        ['Likes Received', formatCompactCount(s.totalLikesReceived ?? 0)],
+      ].map(([label, val]) => `
+        <div style="background:var(--surface2);border-radius:var(--radius);padding:10px;">
+          <div style="font-size:0.7rem;color:var(--accent);font-family:'Unbounded',sans-serif;font-weight:700;">${val}</div>
+          <div style="font-size:0.4rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em;margin-top:2px;">${label}</div>
+        </div>
+      `).join('')}
+    </div>
+  `;
 }
 
 // ─── Become an Artist ───────────────────────────────────────────────────────
@@ -6513,7 +6975,7 @@ function manageSleepTimer() {
   if (AQ_DEFAULTS.sleepTimer) {
     const ms = parseInt(AQ_DEFAULTS.sleepDur) * 60 * 1000;
     sleepTimerTimeout = setTimeout(() => {
-      localAudio.pause();
+      PlaybackManager.requestPause();
       showToast('Sleep Timer', 'Playback stopped.', 'info');
     }, ms);
     showToast('Sleep Timer', `Will stop in ${AQ_DEFAULTS.sleepDur} min.`, 'info');
@@ -6860,6 +7322,112 @@ function scrollActiveIntoView() {
 }
 
 // ─── Play Item ────────────────────────────────────────────────────────────────
+// ─── Playback Manager ──────────────────────────────────────────────────────
+// Every direct .play()/.pause() call on localAudio used to be made from
+// several independent sites — playItem(), the mini-player button, the full
+// player bar button, MediaSession action handlers, prev/next, repeat, and
+// the 'ended' auto-advance listener — with no coordination between them.
+// Rapid actions (double-clicking next, auto-advance racing a manual click)
+// could fire a new .play() while a previous one's promise was still
+// pending, and the browser interrupts the stale promise the moment .pause()
+// or a new .src assignment happens — that's the literal cause of "The
+// play() request was interrupted by a call to pause()."
+//
+// Fix: every play/pause request goes through this object instead of
+// touching localAudio directly. A monotonic token identifies each
+// requestPlay() call; when that call's .play() promise settles, it checks
+// whether it's still the current token before doing anything with the
+// result. A stale resolution/rejection (because something newer started in
+// the meantime) is silently dropped — exactly the rejection Chrome throws
+// in the race case, and exactly the one case where surfacing it as an error
+// toast would be wrong, since nothing actually failed for the listener.
+const PlaybackManager = (() => {
+  let token = 0;
+  let pendingPlay = null; // the in-flight .play() promise, or null
+  let _state = 'idle';    // idle | loading | playing | paused | error
+  const listeners = [];
+
+  function setState(next) {
+    if (_state === next) return;
+    _state = next;
+    listeners.forEach(fn => { try { fn(_state); } catch (_) {} });
+  }
+  function getState() { return _state; }
+  function onStateChange(fn) { listeners.push(fn); }
+
+  // Cancels whatever play attempt is in flight by invalidating its token —
+  // does NOT call .pause() itself, callers decide whether a pause/src-swap
+  // should follow. This is what makes overlapping requests safe: the old
+  // request's eventual resolution becomes a no-op instead of fighting the
+  // new one for UI/state ownership.
+  function cancelPending() {
+    token++;
+  }
+
+  // The only sanctioned way to start playback on localAudio. Caller is
+  // responsible for everything that must happen synchronously BEFORE
+  // calling this (crossOrigin, .src assignment, Web Audio graph connect,
+  // volume/rate) — this function owns only the play() call itself and its
+  // outcome, not track setup, since setup order constraints (crossOrigin
+  // before src, etc) live with the code that already gets them right.
+  function requestPlay() {
+    const myToken = ++token;
+    setState('loading');
+    let p;
+    try {
+      p = localAudio.play();
+    } catch (err) {
+      // Some browsers throw synchronously rather than rejecting a promise
+      // for certain invalid states (e.g. no src) — normalize to the same
+      // stale-check path as the async rejection branch below.
+      if (myToken === token) { setState('error'); }
+      return Promise.resolve();
+    }
+    pendingPlay = p;
+    return p.then(() => {
+      if (myToken !== token) return; // superseded — silently drop, this is the fix
+      pendingPlay = null;
+      setState('playing');
+    }).catch(err => {
+      if (myToken !== token) return; // superseded — this is the exact "interrupted by pause()" rejection, now harmless
+      pendingPlay = null;
+      setState('error');
+      showToast('Playback error', err?.message || 'Could not play file.', 'error');
+    });
+  }
+
+  // The only sanctioned way to pause. Invalidates any in-flight play token
+  // first so its eventual rejection is recognized as stale, not a real error.
+  function requestPause() {
+    cancelPending();
+    localAudio.pause();
+    setState('paused');
+  }
+
+  // Toggle, used by both player-bar click handlers — replaces the
+  // `audio.paused ? audio.play() : audio.pause()` pattern that was
+  // duplicated at two separate call sites with no shared state.
+  function toggle() {
+    if (localAudio.paused) requestPlay();
+    else requestPause();
+  }
+
+  // For .src reassignment / track switches — invalidates any in-flight
+  // play before the caller swaps the source, so the upcoming interrupted-
+  // promise rejection (browsers reject the OLD play() promise the instant
+  // .src changes) is already recognized as stale by the time it fires.
+  function prepareForTrackChange() {
+    cancelPending();
+    setState('idle');
+  }
+
+  localAudio.addEventListener('waiting', () => setState('loading'));
+  localAudio.addEventListener('playing', () => setState('playing'));
+  localAudio.addEventListener('pause',   () => { if (_state !== 'loading') setState('paused'); });
+
+  return { requestPlay, requestPause, toggle, prepareForTrackChange, cancelPending, getState, onStateChange };
+})();
+
 function playItem(index) {
   if (index < 0 || index >= state.queue.length) return;
   state.activeIndex = index;
@@ -6890,6 +7458,12 @@ function playItem(index) {
     // Ensure audio context is set up
     setupAudioContext();
 
+    // Invalidate any in-flight play request before swapping .src — the
+    // browser is about to reject that old promise the instant .src changes
+    // below, and this ensures PlaybackManager already recognizes it as
+    // stale by the time that rejection arrives, rather than racing it.
+    PlaybackManager.prepareForTrackChange();
+
     // Cross-origin sources (Supabase signed URLs) must have crossOrigin set
     // BEFORE assigning .src, or createMediaElementSource() taints the output
     // and the Web Audio graph plays back silently with no error of any kind.
@@ -6912,9 +7486,7 @@ function playItem(index) {
 
     if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
 
-    localAudio.play().catch(err => {
-      showToast('Playback error', err.message || 'Could not play file.', 'error');
-    });
+    PlaybackManager.requestPlay();
 
     if (item.artworkUrl) {
       localArtworkImg.src = item.artworkUrl;
@@ -6936,6 +7508,7 @@ function playItem(index) {
     // Stop local playback
     if (visFAF) { cancelAnimationFrame(visFAF); visFAF = null; }
     localPlayer.classList.remove('visible');
+    PlaybackManager.prepareForTrackChange();
     localAudio.pause();
     localAudio.src = '';
 
@@ -6995,7 +7568,7 @@ function advanceTrack() {
 // ─── Local audio auto-advance ─────────────────────────────────────────────────
 localAudio.addEventListener('ended', () => {
   const doAdvance = () => {
-    if (state.repeat === 2) { localAudio.currentTime = 0; localAudio.play(); }
+    if (state.repeat === 2) { localAudio.currentTime = 0; PlaybackManager.requestPlay(); }
     else if (state.repeat === 1) playItem((state.activeIndex + 1) % state.queue.length);
     else { const next = state.activeIndex + 1; if (next < state.queue.length) playItem(next); }
   };
@@ -7289,6 +7862,7 @@ clearBtn.addEventListener('click', () => {
   playSfx('remove');
   state.queue.forEach(q => { if (q.platform==='local' && q.blobUrl) URL.revokeObjectURL(q.blobUrl); });
   state.queue = []; state.activeIndex = -1; state.currentUrl = null;
+  PlaybackManager.prepareForTrackChange();
   localAudio.pause(); localAudio.src = '';
   // Close toolbar panels
   if (typeof statsOpen !== 'undefined') { statsOpen = false; bulkOpen = false; if(typeof statsPanel!=='undefined'){statsPanel.style.display='none';} if(typeof bulkDeletePanel!=='undefined'){bulkDeletePanel.style.display='none';} }
@@ -7330,7 +7904,7 @@ document.addEventListener('keydown', e => {
   if (e.key === ' ') {
     e.preventDefault();
     if (localPlayer.classList.contains('visible')) {
-      localAudio.paused ? localAudio.play() : localAudio.pause();
+      PlaybackManager.toggle();
     }
   }
   if (e.key === 'o' || e.key === 'O') openBtn.click();
@@ -8111,8 +8685,7 @@ function initKeepAliveUI() {
   audio.addEventListener('ended', () => { playBtn.textContent = '▶'; playBtn.classList.remove('playing'); });
 
   playBtn.addEventListener('click', () => {
-    if (audio.paused) audio.play().catch(()=>{});
-    else audio.pause();
+    PlaybackManager.toggle();
   });
   if (prevBtn2) prevBtn2.addEventListener('click', () => { playSfx('nav'); prevBtn && prevBtn.click(); });
   if (nextBtn2) nextBtn2.addEventListener('click', () => { playSfx('nav'); nextBtn && nextBtn.click(); });
@@ -9052,9 +9625,7 @@ async function deleteCloudFile(index) {
   ov.innerHTML = '⏵';
   artwork.appendChild(ov);
   artwork.addEventListener('click', () => {
-    const audio = localAudio;
-    if (audio.paused) audio.play().catch(()=>{});
-    else audio.pause();
+    PlaybackManager.toggle();
   });
 })();
 
@@ -9202,8 +9773,8 @@ function updateMediaSession(item) {
   ]});
   navigator.mediaSession.setActionHandler('previoustrack', () => prevBtn?.click());
   navigator.mediaSession.setActionHandler('nexttrack',     () => nextBtn?.click());
-  navigator.mediaSession.setActionHandler('play',  () => localAudio.play().catch(()=>{}));
-  navigator.mediaSession.setActionHandler('pause', () => localAudio.pause());
+  navigator.mediaSession.setActionHandler('play',  () => PlaybackManager.requestPlay());
+  navigator.mediaSession.setActionHandler('pause', () => PlaybackManager.requestPause());
 }
 
 // ─── 26. Dynamic favicon update ──────────────────────────────────────────────
