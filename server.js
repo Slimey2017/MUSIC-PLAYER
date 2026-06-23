@@ -833,6 +833,18 @@ async function dbAddTrackToRelease(releaseId, trackId) {
   await supabase.from('artist_releases').update({ track_count: position + 1, updated_at: new Date().toISOString() }).eq('id', releaseId);
 }
 
+// Deletes the release row itself. artist_release_tracks rows pointing at it
+// cascade-delete via their release_id FK (ON DELETE CASCADE — see migration),
+// which only removes the *junction* rows, not the underlying tracks — a
+// deleted release un-links its tracks back to standalone published tracks
+// rather than deleting the music itself. That's deliberate: removing a
+// release (e.g. an EP) shouldn't silently delete songs an artist still
+// wants live on their page as standalone tracks.
+async function dbDeleteRelease(releaseId) {
+  const { error } = await supabase.from('artist_releases').delete().eq('id', releaseId);
+  if (error) throw new Error(error.message);
+}
+
 async function dbGetReleaseTracks(releaseId) {
   const { data, error } = await supabase
     .from('artist_release_tracks')
@@ -5003,6 +5015,33 @@ app.post('/api/artists/:id/releases', rateLimit, async (req, res) => {
   }
 });
 
+// DELETE /api/artists/:id/releases/:releaseId  { token }  (owner only)
+// Removes the release row only — its tracks aren't deleted, just unlinked
+// from this release (see dbDeleteRelease comment). Same 401/403 ownership
+// pattern as every other artist-mutation route in this file: missing/bad
+// session is 401, a real session that isn't this artist's owner is 403.
+app.delete('/api/artists/:id/releases/:releaseId', rateLimit, async (req, res) => {
+  const token = req.body?.token || req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  try {
+    const artist = await resolveArtistFromParam(req.params.id);
+    if (!artist) return res.status(404).json({ error: 'Artist not found.' });
+    if (artist.account_id !== sess.username) {
+      return res.status(403).json({ error: 'Only the artist who claimed this page can delete releases.' });
+    }
+    const { data: release } = await supabase
+      .from('artist_releases').select('id').eq('id', req.params.releaseId).eq('artist_id', artist.id).maybeSingle();
+    if (!release) return res.status(404).json({ error: 'Release not found.' });
+
+    await dbDeleteRelease(release.id);
+    return res.json({ success: true });
+  } catch (err) {
+    console.error('[artist delete release]', err);
+    return res.status(500).json({ error: 'Could not delete release.' });
+  }
+});
+
 // ═══════════════════════════════════════════════════════════════════════════════
 //  PUBLISHING — turning a private cloud_files upload into a public track
 //
@@ -5250,6 +5289,50 @@ app.delete('/api/tracks/:trackId', rateLimit, async (req, res) => {
   } catch (err) {
     console.error('[track delete]', err);
     return res.status(500).json({ error: 'Could not remove track.' });
+  }
+});
+
+// GET /api/tracks/:trackId/stream  ?token=  (token optional — anyone can
+// stream a published track, same "browsable by a visitor who hasn't signed
+// in" philosophy as the artist routes above).
+//
+// Deliberately NOT the same code path as GET /api/cloud-files/:id — that
+// route scopes its signed-url lookup to `.eq('owner', sess.username)`,
+// correct for "manage my private uploads" but would 404 for every visitor
+// trying to stream someone else's published music. The authorization
+// boundary here is different on purpose: not "do you own this file" but
+// "is this track actually published" — is_published=true is the only gate.
+// An unpublished/draft upload can never reach this route's happy path even
+// if someone guesses its trackId, because dbGetTrackById's row won't have
+// is_published=true until the artist explicitly publishes it.
+app.get('/api/tracks/:trackId/stream', rateLimit, async (req, res) => {
+  try {
+    const track = await dbGetTrackById(req.params.trackId);
+    if (!track || !track.is_published || !track.cloud_file_id) {
+      return res.status(404).json({ error: 'Track not found.' });
+    }
+    // Bypasses dbGetCloudFile's owner-scoped lookup on purpose — see comment
+    // above. Goes straight to the table since the publish/ownership check
+    // already happened once, permanently, at publish time.
+    const { data: cloudFile, error: cfErr } = await supabase
+      .from('cloud_files').select('storage_path, filename, mime_type, duration')
+      .eq('id', track.cloud_file_id).maybeSingle();
+    if (cfErr || !cloudFile) return res.status(404).json({ error: 'Track audio not found.' });
+
+    const { data, error } = await supabase.storage
+      .from(CLOUD_BUCKET)
+      .createSignedUrl(cloudFile.storage_path, SIGNED_URL_TTL_SECONDS);
+    if (error) throw new Error(error.message);
+
+    return res.json({
+      id: track.id, title: track.title, coverUrl: track.cover_url,
+      artistId: track.artist_id, artistName: track.artist_name,
+      mimeType: cloudFile.mime_type, duration: cloudFile.duration,
+      url: data.signedUrl, expiresIn: SIGNED_URL_TTL_SECONDS,
+    });
+  } catch (err) {
+    console.error('[track stream]', err);
+    return res.status(500).json({ error: 'Could not load track audio.' });
   }
 });
 // These exist purely so pasting a profile/artist link into Discord/Twitter/
