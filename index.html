@@ -1349,7 +1349,16 @@ textarea.support-field { height:90px;resize:vertical; }
 
 /* ─── Artist Dashboard Button upgrade ──────────────────────────────── */
 .artist-dash-btn {
-  display:none;flex:0 0 auto;background:var(--accent);color:var(--bg);
+  /* No default display:none here — this button is shown/hidden purely via
+     inline style.display from JS (data.isOwner in openArtistProfile). If
+     this rule sets display:none, then JS's `style.display = ''` (its
+     "show" case) just clears the inline style and falls back to THIS rule,
+     so the button silently stays hidden for every owner. flex:0 0 auto is
+     still needed since it lives in a flex .profile-action-row. The HTML
+     button itself starts with no inline display, so openArtistProfile's
+     first run sets it explicitly either way — this rule only matters as
+     the fallback, and now the fallback is "visible" not "hidden". */
+  flex:0 0 auto;background:var(--accent);color:var(--bg);
   border:none;font-family:'Unbounded',sans-serif;font-weight:700;font-size:0.44rem;
   padding:8px 12px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.05em;
   text-transform:uppercase;transition:opacity 0.15s;
