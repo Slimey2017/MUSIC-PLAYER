@@ -2665,6 +2665,13 @@ body.oled-mode {
   <div class="lyrics-panel" style="max-width:420px;">
     <div id="artistProfileLoading" style="text-align:center;padding:24px;color:var(--text-muted);font-size:0.6rem;">Loading artist…</div>
     <div id="artistProfileContent" style="display:none;">
+      <!-- ─── Header: banner, avatar, name, bio, actions ───────────────────
+           Kept intentionally compact — this is identification, not the
+           page's content. Everything below this point is music, per the
+           "feels like Spotify/SoundCloud/Bandcamp, not a user profile"
+           redesign goal: a visitor should hit a track list almost
+           immediately after the artist's name, not scroll past a profile-
+           style block first. -->
       <div class="cover-upload-wrap" id="artistBannerUploadWrap">
         <div class="profile-cover" id="artistProfileBanner"></div>
         <div class="cover-upload-hint" id="artistBannerUploadHint">Change Banner</div>
@@ -2692,9 +2699,27 @@ body.oled-mode {
       <input type="file" id="artistAvatarFileInput" accept="image/png,image/jpeg,image/webp,image/gif" style="display:none;" />
       <input type="file" id="artistBannerFileInput" accept="image/png,image/jpeg,image/webp,image/gif" style="display:none;" />
 
-      <!-- Owner-only Artist Dashboard — publishing, releases, stats. Hidden
-           entirely for visitors; isOwner is re-checked server-side on every
-           route this panel calls, this is just UI gating. -->
+      <!-- ─── Music content: Popular Tracks, then Releases ─────────────────
+           This is the page's actual content, placed directly below the
+           header per the music-first redesign — a visitor scrolling down
+           from the artist's name hits playable tracks immediately, not
+           profile chrome. -->
+      <div id="artistProfileTracksWrap" style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px;display:none;">
+        <div style="font-size:0.46rem;color:var(--text-dim);letter-spacing:0.05em;text-transform:uppercase;margin-bottom:8px;">Popular Tracks</div>
+        <div id="artistProfileTracksList"></div>
+      </div>
+
+      <div id="artistProfileReleasesWrap" style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px;display:none;">
+        <div style="font-size:0.46rem;color:var(--text-dim);letter-spacing:0.05em;text-transform:uppercase;margin-bottom:8px;">Releases</div>
+        <div id="artistProfileReleasesList"></div>
+      </div>
+
+      <!-- ─── Owner-only Artist Dashboard — publishing, releases, stats. ───
+           Hidden entirely for visitors; isOwner is re-checked server-side
+           on every route this panel calls, this is just UI gating. Placed
+           below the public music content (rather than above, where it used
+           to sit) so an owner sees their page the same way a visitor does
+           first, with management tools below that, not interleaved with it. -->
       <div id="artistDashboardPanel" style="display:none;margin-top:14px;border-top:1px solid var(--border);padding-top:12px;">
         <div style="display:flex;gap:6px;margin-bottom:12px;">
           <button class="dash-tab-btn active" data-tab="upload" onclick="setArtistDashboardTab('upload')" style="flex:1;background:none;border:1px solid var(--accent);color:var(--accent);font-family:'Space Mono',monospace;font-size:0.4rem;letter-spacing:0.05em;text-transform:uppercase;padding:6px 4px;border-radius:var(--radius);cursor:pointer;">Publish</button>
@@ -2737,11 +2762,6 @@ body.oled-mode {
       <div id="artistProfilePostsWrap" style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px;display:none;">
         <div style="font-size:0.46rem;color:var(--text-dim);letter-spacing:0.05em;text-transform:uppercase;margin-bottom:8px;">Posts</div>
         <div id="artistProfilePostsList"></div>
-      </div>
-
-      <div id="artistProfileTracksWrap" style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px;display:none;">
-        <div style="font-size:0.46rem;color:var(--text-dim);letter-spacing:0.05em;text-transform:uppercase;margin-bottom:8px;">Top Tracks</div>
-        <div id="artistProfileTracksList"></div>
       </div>
     </div>
     <div id="artistProfileError" style="display:none;text-align:center;padding:24px;color:var(--text-muted);font-size:0.55rem;"></div>
@@ -3631,6 +3651,12 @@ const PLATFORM_CONFIG = {
   deezer:     { label:'Deezer',       color:'#a259ff', icon:'◆' },
   lastfm:     { label:'Last.fm',      color:'#d51007', icon:'⊕' },
   local:      { label:'Local File',   color:'#a78bfa', icon:'⊡' },
+  // FREQ-published artist tracks — streamed via /api/tracks/:id/stream, not
+  // a user's own local/cloud file. Plays through the same local-audio-element
+  // path as 'local' (see the platform check in playItem below), but is its
+  // own identity so download/export logic — which checks specifically for
+  // 'local' — never matches it. Streaming, not downloadable, by construction.
+  freq:       { label:'FREQ',         color:'var(--accent)', icon:'🎤' },
 };
 
 const REPEAT_MODES = ['','ALL','ONE'];
@@ -4677,6 +4703,7 @@ async function loadProfilePublicPlaylists(username) {
 
 // ─── Artist Pages ───────────────────────────────────────────────────────────
 const ARTISTS_BASE = '/api/artists';
+const TRACKS_BASE = '/api/tracks';
 let viewedArtist = null; // full artist object currently shown in artistProfileOverlay — null when closed
 
 function closeArtistProfileModal() {
@@ -4751,10 +4778,168 @@ async function openArtistProfile(idOrSlug) {
     }
 
     loadArtistTopTracks(data.id); // fire-and-forget, same non-blocking pattern as loadProfilePublicPlaylists
+    loadArtistReleases(data.id); // fire-and-forget, same pattern
   } catch (err) {
     $('artistProfileLoading').style.display = 'none';
     $('artistProfileError').style.display   = 'block';
     $('artistProfileError').textContent     = err.message || 'Could not load artist.';
+  }
+}
+
+// Renders the artist page's Top Tracks list — published FREQ tracks only
+// (GET /api/artists/:id/tracks already filters to is_published=true server
+// side). Each row plays via playPublishedTrack, which streams through
+// GET /api/tracks/:id/stream rather than touching cloud_files directly, so
+// a visitor with no ownership of the underlying file can still listen.
+// Fire-and-forget from openArtistProfile: a failure here just leaves the
+// section hidden, it never blocks or breaks the rest of the artist page.
+async function loadArtistTopTracks(artistId) {
+  const wrap = $('artistProfileTracksWrap');
+  const list = $('artistProfileTracksList');
+  if (!wrap || !list) return;
+  try {
+    const res = await fetch(`${ARTISTS_BASE}/${encodeURIComponent(artistId)}/tracks?sort=plays&limit=10`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not load tracks.');
+    const tracks = data.tracks || [];
+    wrap.style.display = tracks.length ? '' : 'none';
+    if (!tracks.length) { list.innerHTML = ''; return; }
+    list.innerHTML = tracks.map((t, i) => `
+      <div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border);">
+        <div style="width:16px;flex-shrink:0;text-align:right;font-size:0.46rem;color:var(--text-dim);">${i + 1}</div>
+        <div style="flex:1;min-width:0;cursor:pointer;" onclick="playPublishedTrack('${t.id}')">
+          <div style="font-size:0.55rem;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(t.title)}</div>
+          <div style="font-size:0.42rem;color:var(--text-muted);">${formatCompactCount(t.playCount || 0)} play${t.playCount === 1 ? '' : 's'}</div>
+        </div>
+        <button onclick="event.stopPropagation(); queuePublishedTrack('${t.id}')" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.42rem;padding:4px 8px;border-radius:var(--radius);cursor:pointer;flex-shrink:0;letter-spacing:0.04em;text-transform:uppercase;" title="Add to queue">+ Queue</button>
+      </div>
+    `).join('');
+  } catch (err) {
+    wrap.style.display = 'none';
+    console.error('[loadArtistTopTracks]', err);
+  }
+}
+
+// Public discography section — Albums/EPs/Singles/Mixtapes, click to expand
+// a release and reveal its tracks inline. Distinct from loadDashReleases
+// (the owner-only Dashboard's Releases tab, which manages releases);
+// this one is read-only and visible to every visitor, same way Bandcamp/
+// Spotify show a discography on the artist page itself rather than gating
+// it behind a login.
+async function loadArtistReleases(artistId) {
+  const wrap = $('artistProfileReleasesWrap');
+  const list = $('artistProfileReleasesList');
+  if (!wrap || !list) return;
+  try {
+    const res = await fetch(`${ARTISTS_BASE}/${encodeURIComponent(artistId)}/releases`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not load releases.');
+    const releases = data.releases || [];
+    wrap.style.display = releases.length ? '' : 'none';
+    if (!releases.length) { list.innerHTML = ''; return; }
+    list.innerHTML = releases.map(r => `
+      <div class="artist-release-row" data-release-id="${r.id}">
+        <div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border);cursor:pointer;" onclick="toggleReleaseExpand('${r.id}')">
+          <div style="width:36px;height:36px;border-radius:4px;background:var(--surface3) center/cover;flex:0 0 auto;${r.coverUrl ? `background-image:url('${r.coverUrl}');` : ''}"></div>
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:0.55rem;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(r.title)}</div>
+            <div style="font-size:0.4rem;color:var(--text-muted);text-transform:uppercase;">${escapeHtml(r.releaseType)} • ${r.trackCount} track${r.trackCount === 1 ? '' : 's'}${r.releaseDate ? ' • ' + formatJoinDate(r.releaseDate) : ''}</div>
+          </div>
+          <div style="font-size:0.5rem;color:var(--text-dim);flex-shrink:0;" id="releaseChevron-${r.id}">▾</div>
+        </div>
+        <div id="releaseTracks-${r.id}" style="display:none;padding:4px 0 4px 12px;"></div>
+      </div>
+    `).join('');
+  } catch (err) {
+    wrap.style.display = 'none';
+    console.error('[loadArtistReleases]', err);
+  }
+}
+
+// Expands a release row in place to show its tracks, lazy-loaded on first
+// open and cached in the DOM thereafter (re-clicking just toggles display,
+// doesn't re-fetch) — same lazy-then-cache approach as the Discovery tabs.
+async function toggleReleaseExpand(releaseId) {
+  const tracksWrap = $('releaseTracks-' + releaseId);
+  const chevron    = $('releaseChevron-' + releaseId);
+  if (!tracksWrap) return;
+  const isOpen = tracksWrap.style.display !== 'none';
+  if (isOpen) {
+    tracksWrap.style.display = 'none';
+    if (chevron) chevron.textContent = '▾';
+    return;
+  }
+  tracksWrap.style.display = 'block';
+  if (chevron) chevron.textContent = '▴';
+  if (tracksWrap.dataset.loaded === '1') return; // already fetched once
+
+  tracksWrap.innerHTML = '<div style="font-size:0.42rem;color:var(--text-muted);padding:4px 0;">Loading…</div>';
+  try {
+    const res = await fetch(`${ARTISTS_BASE}/${encodeURIComponent(viewedArtist?.id || '')}/releases/${encodeURIComponent(releaseId)}/tracks`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not load tracks.');
+    const tracks = data.tracks || [];
+    tracksWrap.innerHTML = tracks.length
+      ? tracks.map((t, i) => `
+          <div style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;" onclick="playPublishedTrack('${t.id}')">
+            <div style="width:14px;flex-shrink:0;text-align:right;font-size:0.42rem;color:var(--text-dim);">${i + 1}</div>
+            <div style="flex:1;min-width:0;font-size:0.48rem;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(t.title)}</div>
+          </div>
+        `).join('')
+      : '<div style="font-size:0.42rem;color:var(--text-muted);padding:4px 0;">No tracks in this release yet.</div>';
+    tracksWrap.dataset.loaded = '1';
+  } catch (err) {
+    tracksWrap.innerHTML = `<div style="font-size:0.42rem;color:var(--text-muted);padding:4px 0;">${escapeHtml(err.message || 'Could not load tracks.')}</div>`;
+  }
+}
+
+// Resolves a published track to a playable queue item via the public
+// stream endpoint. platform:'freq' (not 'local') is what keeps this out of
+// the download button and the local-file Add/Export flows — it shares the
+// local <audio> playback path (see playItem's platform check) but is a
+// distinct, non-downloadable identity, same way cloud files are distinct
+// from true local blob: files despite both currently riding platform:'local'.
+async function resolvePublishedTrack(trackId) {
+  const res = await fetch(`${TRACKS_BASE}/${encodeURIComponent(trackId)}/stream`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Could not load track.');
+  return {
+    platform: 'freq', type: 'freq', title: data.title || 'Unknown Track',
+    originalUrl: `cloud:${data.id}`, // matches dbPublishTrack's identity, so logPlay increments the SAME tracks row, not a fork
+    blobUrl: data.url, id: data.id, customLabel: data.title,
+    artist: data.artistName || undefined, artistId: data.artistId || undefined,
+    artworkUrl: data.coverUrl || undefined, fileType: data.mimeType,
+  };
+}
+
+async function playPublishedTrack(trackId) {
+  try {
+    const item = await resolvePublishedTrack(trackId);
+    if (!state.allowDups && state.queue.some(q => q.originalUrl === item.originalUrl)) {
+      const qi = state.queue.findIndex(q => q.originalUrl === item.originalUrl);
+      playItem(qi);
+      return;
+    }
+    state.queue.push(item);
+    save(); renderQueue();
+    playItem(state.queue.length - 1);
+  } catch (err) {
+    showToast('Error', err.message || 'Could not play this track.', 'error');
+  }
+}
+
+async function queuePublishedTrack(trackId) {
+  try {
+    const item = await resolvePublishedTrack(trackId);
+    if (!state.allowDups && state.queue.some(q => q.originalUrl === item.originalUrl)) {
+      showToast('Already in Queue', item.title, 'info');
+      return;
+    }
+    state.queue.push(item);
+    save(); renderQueue();
+    showToast('Added to Queue', item.title, 'success');
+  } catch (err) {
+    showToast('Error', err.message || 'Could not add this track.', 'error');
   }
 }
 
@@ -6904,7 +7089,7 @@ function ytPostCmd(funcName, args) {
 
 function applyAudioToLocalIfActive() {
   const item = state.activeIndex >= 0 ? state.queue[state.activeIndex] : null;
-  const isLocal = item && item.platform === 'local';
+  const isLocal = item && (item.platform === 'local' || item.platform === 'freq');
   const isYT    = item && (item.platform === 'youtube' || item.platform === 'ytmusic');
 
   if (isLocal) {
@@ -7876,7 +8061,16 @@ function playItem(index) {
   pushHistory(item);
   logPlay(item);
 
-  if (item.platform === 'local') {
+  // Download is a Local Files affordance only. FREQ-published tracks stream
+  // from a signed URL the same way local files do (same <audio> element,
+  // same code path below), so the click-handler's `platform !== 'local'`
+  // guard already blocks a freq-track download — but per the
+  // streaming-not-downloading requirement for published music, the button
+  // itself shouldn't be present at all for a freq track, not just inert.
+  const dlBtn = $('fpbDownload');
+  if (dlBtn) dlBtn.style.display = (item.platform === 'local') ? '' : 'none';
+
+  if (item.platform === 'local' || item.platform === 'freq') {
     welcomeScreen.style.display = 'none';
     $('flexBanner').style.display = 'none';
     embedFrame.classList.remove('visible');
@@ -7887,7 +8081,7 @@ function playItem(index) {
     if (typeof hideEmbedBlockBanner === 'function') hideEmbedBlockBanner();
 
     localTitle.textContent  = item.customLabel || item.title || 'Unknown Track';
-    localMeta.textContent   = item.meta    || 'Local File';
+    localMeta.textContent   = item.meta    || (item.platform === 'freq' ? (item.artist || 'FREQ') : 'Local File');
     localFormat.textContent = item.format  || '—';
     localSize.textContent   = item.sizeLabel || '—';
 
@@ -10266,7 +10460,7 @@ const origShowWelcome = typeof showWelcome === 'function' ? showWelcome : null;
 document.addEventListener('keydown', e => {
   if (['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName)) return;
   const item = state.queue[state.activeIndex];
-  const isLocal = item && item.platform === 'local';
+  const isLocal = item && (item.platform === 'local' || item.platform === 'freq');
   if (!isLocal) return;
   if (e.key === 'j' || e.key === 'J') { localAudio.currentTime = Math.max(0, localAudio.currentTime - 10); showStatus('⏪ -10s','',900); }
   if (e.key === 'k' || e.key === 'K') { localAudio.currentTime = Math.max(0, localAudio.currentTime - 5);  showStatus('⏪ -5s','',900); }
@@ -10323,7 +10517,7 @@ localAudio.addEventListener('pause', () => { if('mediaSession' in navigator) nav
 let _titleScrollTimer = null;
 localAudio.addEventListener('play', () => {
   const item = state.queue[state.activeIndex];
-  if (!item || item.platform !== 'local') return;
+  if (!item || (item.platform !== 'local' && item.platform !== 'freq')) return;
   updateMediaSession(item);
 });
 
