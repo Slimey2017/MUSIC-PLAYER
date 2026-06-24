@@ -1260,56 +1260,71 @@ textarea.support-field { height:90px;resize:vertical; }
 
 /* ─── Social Posts ───────────────────────────────────────────────── */
 .post-card {
-  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
-  padding:12px 14px;margin-bottom:8px;transition:border-color 0.15s;
+  background:var(--surface);border:1px solid var(--border);border-radius:12px;
+  padding:16px 18px;margin-bottom:10px;transition:border-color 0.15s;
 }
 .post-card:hover { border-color:var(--surface3); }
 .post-header {
-  display:flex;align-items:center;gap:10px;margin-bottom:8px;
+  display:flex;align-items:flex-start;gap:13px;margin-bottom:0;
 }
 .post-avatar {
-  width:32px;height:32px;border-radius:50%;background:var(--surface3);
+  width:44px;height:44px;border-radius:50%;background:var(--surface3);
   background-size:cover;background-position:center;flex-shrink:0;
   display:flex;align-items:center;justify-content:center;
-  font-family:'Unbounded',sans-serif;font-weight:900;font-size:0.55rem;color:var(--accent);
+  font-family:'Unbounded',sans-serif;font-weight:900;font-size:0.64rem;color:var(--accent);
+  cursor:pointer;transition:opacity 0.15s;border:2px solid transparent;
 }
-.post-meta { flex:1;min-width:0; }
+.post-avatar:hover { opacity:0.82; }
+.post-meta { flex:1;min-width:0;padding-top:2px; }
 .post-displayname {
-  font-size:0.52rem;font-family:'Unbounded',sans-serif;font-weight:700;color:var(--text);
+  font-size:0.58rem;font-family:'Unbounded',sans-serif;font-weight:700;color:var(--text);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;
+  line-height:1.3;margin-bottom:2px;
 }
 .post-displayname:hover { color:var(--accent); }
 .post-username-time {
-  font-size:0.4rem;color:var(--text-muted);font-family:'Space Mono',monospace;
+  font-size:0.41rem;color:var(--text-muted);font-family:'Space Mono',monospace;
+  display:flex;align-items:center;gap:5px;flex-wrap:wrap;
 }
+.post-username-time .dot { opacity:0.35; }
 .post-type-badge {
-  font-size:0.36rem;color:var(--accent3);background:rgba(0,212,255,0.08);
-  border:1px solid rgba(0,212,255,0.2);border-radius:var(--radius);
-  padding:2px 6px;letter-spacing:0.06em;text-transform:uppercase;flex-shrink:0;
+  font-size:0.33rem;color:var(--accent3);background:rgba(0,212,255,0.07);
+  border:1px solid rgba(0,212,255,0.18);border-radius:20px;
+  padding:2px 7px;letter-spacing:0.06em;text-transform:uppercase;flex-shrink:0;
 }
 .post-body {
-  font-size:0.52rem;color:var(--text);line-height:1.7;margin:6px 0 10px;
+  font-size:0.54rem;color:var(--text);line-height:1.78;margin:10px 0 12px 57px;
   white-space:pre-wrap;word-break:break-word;
 }
 .post-ref-card {
-  background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);
-  padding:8px 10px;margin-bottom:10px;font-size:0.44rem;color:var(--text-muted);
+  background:var(--surface2);border:1px solid var(--border);border-radius:8px;
+  padding:10px 12px;margin:0 0 12px 57px;font-size:0.44rem;color:var(--text-muted);
   cursor:pointer;transition:border-color 0.15s;display:flex;align-items:center;gap:8px;
 }
 .post-ref-card:hover { border-color:var(--accent3);color:var(--text); }
 .post-actions {
-  display:flex;align-items:center;gap:12px;padding-top:6px;border-top:1px solid var(--border);
+  display:flex;align-items:center;gap:2px;padding-top:10px;border-top:1px solid var(--border);
+  margin-top:4px;padding-left:52px;
 }
 .post-action-btn {
   background:none;border:none;color:var(--text-muted);font-family:'Space Mono',monospace;
-  font-size:0.42rem;cursor:pointer;display:flex;align-items:center;gap:4px;
-  padding:3px 6px;border-radius:var(--radius);transition:color 0.15s,background 0.15s;
-  letter-spacing:0.03em;
+  font-size:0.42rem;cursor:pointer;display:flex;align-items:center;gap:5px;
+  padding:6px 11px;border-radius:22px;transition:color 0.15s,background 0.15s;
+  letter-spacing:0.02em;
 }
-.post-action-btn:hover { color:var(--text);background:var(--surface2); }
-.post-action-btn.liked { color:var(--accent2); }
-.post-action-btn.liked:hover { color:var(--accent2); }
-.post-owner-actions { margin-left:auto;display:flex;gap:4px; }
+.post-action-btn:hover { color:var(--text);background:rgba(255,255,255,0.05); }
+.post-action-btn.liked { color:#f04; }
+.post-action-btn.liked:hover { background:rgba(255,0,68,0.08); }
+.post-action-btn.liked:hover { color:#f04; }
+.post-action-icon { font-size:0.95em;line-height:1; }
+.post-owner-actions { margin-left:auto;display:flex;gap:3px; }
+.post-owner-btn {
+  background:none;border:none;color:var(--text-dim);font-family:'Space Mono',monospace;
+  font-size:0.37rem;cursor:pointer;padding:5px 8px;border-radius:20px;
+  transition:color 0.15s,background 0.15s;
+}
+.post-owner-btn:hover { color:var(--text-muted);background:rgba(255,255,255,0.05); }
+.post-owner-btn.danger:hover { color:var(--accent2);background:rgba(255,77,0,0.08); }
 .post-compose {
   background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
   padding:12px 14px;margin-bottom:12px;
@@ -2973,7 +2988,9 @@ body.oled-mode {
           <div class="dash-section-label">Quick Actions</div>
           <div style="display:flex;gap:10px;flex-wrap:wrap;">
             <button onclick="setDashSection('publish')" style="background:var(--accent);color:var(--bg);border:none;font-family:'Unbounded',sans-serif;font-weight:700;font-size:0.48rem;padding:10px 16px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.04em;text-transform:uppercase;">↑ Publish a Track</button>
-            <button onclick="setDashSection('releases');openCreateReleaseModal();" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.48rem;padding:10px 16px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.04em;text-transform:uppercase;">+ New Release</button>
+            <button onclick="setDashSection('releases');openCreateReleaseModal('album');" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.48rem;padding:10px 16px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.04em;text-transform:uppercase;">+ New Album</button>
+            <button onclick="setDashSection('releases');openCreateReleaseModal('ep');" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.48rem;padding:10px 16px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.04em;text-transform:uppercase;">+ New EP</button>
+            <button onclick="setDashSection('releases');openCreateReleaseModal('single');" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.48rem;padding:10px 16px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.04em;text-transform:uppercase;">+ New Single</button>
             <button onclick="setDashSection('posts')" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.48rem;padding:10px 16px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.04em;text-transform:uppercase;">✎ Write a Post</button>
           </div>
         </div>
@@ -2993,7 +3010,11 @@ body.oled-mode {
         <div id="dashSectionReleases" class="dash-section" style="display:none;">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
             <div class="dash-section-label" style="margin-bottom:0;">Discography</div>
-            <button onclick="openCreateReleaseModal()" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.44rem;padding:6px 10px;border-radius:var(--radius);cursor:pointer;">+ New Release</button>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;">
+              <button onclick="openCreateReleaseModal('album')" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.4rem;padding:5px 9px;border-radius:var(--radius);cursor:pointer;">+ Album</button>
+              <button onclick="openCreateReleaseModal('ep')" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.4rem;padding:5px 9px;border-radius:var(--radius);cursor:pointer;">+ EP</button>
+              <button onclick="openCreateReleaseModal('single')" style="background:var(--accent);color:var(--bg);border:none;font-family:'Space Mono',monospace;font-size:0.4rem;padding:5px 9px;border-radius:var(--radius);cursor:pointer;">+ Single</button>
+            </div>
           </div>
           <div id="dashReleasesList" style="display:flex;flex-direction:column;gap:8px;"></div>
         </div>
@@ -3002,6 +3023,51 @@ body.oled-mode {
         <div id="dashSectionTracks" class="dash-section" style="display:none;">
           <div class="dash-section-label">Published Tracks</div>
           <div id="dashTracksList" style="display:flex;flex-direction:column;gap:8px;"></div>
+        </div>
+
+        <!-- Edit Track Modal (inline overlay inside dashboard) -->
+        <div id="editTrackOverlay" style="display:none;position:absolute;inset:0;background:var(--bg);z-index:10;padding:20px;overflow-y:auto;border-radius:var(--radius);">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+            <div style="font-family:'Unbounded',sans-serif;font-weight:900;font-size:0.7rem;color:var(--accent);letter-spacing:0.06em;">Edit Track</div>
+            <button onclick="closeEditTrackOverlay()" style="background:none;border:none;color:var(--text-muted);font-size:1.1rem;cursor:pointer;">✕</button>
+          </div>
+          <label style="display:block;font-size:0.42rem;color:var(--text-dim);letter-spacing:0.04em;text-transform:uppercase;margin-bottom:5px;">Title</label>
+          <input type="text" id="editTrackTitle" maxlength="255" style="width:100%;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-main);font-family:'Space Mono',monospace;font-size:0.55rem;padding:9px 11px;box-sizing:border-box;margin-bottom:12px;" />
+          <label style="display:block;font-size:0.42rem;color:var(--text-dim);letter-spacing:0.04em;text-transform:uppercase;margin-bottom:5px;">Description</label>
+          <textarea id="editTrackDesc" maxlength="2000" rows="3" style="width:100%;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-main);font-family:'Space Mono',monospace;font-size:0.5rem;padding:9px 11px;box-sizing:border-box;resize:vertical;margin-bottom:12px;"></textarea>
+          <label style="display:block;font-size:0.42rem;color:var(--text-dim);letter-spacing:0.04em;text-transform:uppercase;margin-bottom:5px;">Cover Art URL</label>
+          <input type="text" id="editTrackCoverUrl" maxlength="2000" placeholder="https://…" style="width:100%;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-main);font-family:'Space Mono',monospace;font-size:0.5rem;padding:9px 11px;box-sizing:border-box;margin-bottom:12px;" />
+          <label style="display:block;font-size:0.42rem;color:var(--text-dim);letter-spacing:0.04em;text-transform:uppercase;margin-bottom:5px;">Release Assignment</label>
+          <select id="editTrackReleaseSelect" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-main);font-family:'Space Mono',monospace;font-size:0.5rem;padding:9px 11px;box-sizing:border-box;margin-bottom:16px;">
+            <option value="">— No release (standalone) —</option>
+          </select>
+          <div id="editTrackStatus" style="font-size:0.42rem;color:var(--text-muted);min-height:1.2em;margin-bottom:12px;"></div>
+          <div style="display:flex;gap:8px;">
+            <button id="editTrackSaveBtn" onclick="submitEditTrack()" style="flex:1;background:var(--accent);color:var(--bg);border:none;font-family:'Unbounded',sans-serif;font-weight:700;font-size:0.5rem;padding:10px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.05em;text-transform:uppercase;">Save Changes</button>
+            <button onclick="closeEditTrackOverlay()" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.5rem;padding:10px 14px;border-radius:var(--radius);cursor:pointer;">Cancel</button>
+          </div>
+        </div>
+
+        <!-- Edit Release Modal (inline overlay inside dashboard) -->
+        <div id="editReleaseOverlay" style="display:none;position:absolute;inset:0;background:var(--bg);z-index:10;padding:20px;overflow-y:auto;border-radius:var(--radius);">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+            <div style="font-family:'Unbounded',sans-serif;font-weight:900;font-size:0.7rem;color:var(--accent);letter-spacing:0.06em;">Edit Release</div>
+            <button onclick="closeEditReleaseOverlay()" style="background:none;border:none;color:var(--text-muted);font-size:1.1rem;cursor:pointer;">✕</button>
+          </div>
+          <input type="hidden" id="editReleaseId" />
+          <label style="display:block;font-size:0.42rem;color:var(--text-dim);letter-spacing:0.04em;text-transform:uppercase;margin-bottom:5px;">Title</label>
+          <input type="text" id="editReleaseTitle" maxlength="200" style="width:100%;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-main);font-family:'Space Mono',monospace;font-size:0.55rem;padding:9px 11px;box-sizing:border-box;margin-bottom:12px;" />
+          <label style="display:block;font-size:0.42rem;color:var(--text-dim);letter-spacing:0.04em;text-transform:uppercase;margin-bottom:5px;">Description</label>
+          <textarea id="editReleaseDesc" maxlength="2000" rows="3" style="width:100%;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-main);font-family:'Space Mono',monospace;font-size:0.5rem;padding:9px 11px;box-sizing:border-box;resize:vertical;margin-bottom:12px;"></textarea>
+          <label style="display:block;font-size:0.42rem;color:var(--text-dim);letter-spacing:0.04em;text-transform:uppercase;margin-bottom:5px;">Release Date</label>
+          <input type="date" id="editReleaseDate" style="width:100%;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-main);font-family:'Space Mono',monospace;font-size:0.5rem;padding:9px 11px;box-sizing:border-box;margin-bottom:12px;" />
+          <label style="display:block;font-size:0.42rem;color:var(--text-dim);letter-spacing:0.04em;text-transform:uppercase;margin-bottom:5px;">Cover Art URL</label>
+          <input type="text" id="editReleaseCoverUrl" maxlength="2000" placeholder="https://…" style="width:100%;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-main);font-family:'Space Mono',monospace;font-size:0.5rem;padding:9px 11px;box-sizing:border-box;margin-bottom:16px;" />
+          <div id="editReleaseStatus" style="font-size:0.42rem;color:var(--text-muted);min-height:1.2em;margin-bottom:12px;"></div>
+          <div style="display:flex;gap:8px;">
+            <button id="editReleaseSaveBtn" onclick="submitEditRelease()" style="flex:1;background:var(--accent);color:var(--bg);border:none;font-family:'Unbounded',sans-serif;font-weight:700;font-size:0.5rem;padding:10px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.05em;text-transform:uppercase;">Save Changes</button>
+            <button onclick="closeEditReleaseOverlay()" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.5rem;padding:10px 14px;border-radius:var(--radius);cursor:pointer;">Cancel</button>
+          </div>
         </div>
 
         <!-- Posts: simple composer for artist-authored announcement posts,
@@ -5590,7 +5656,7 @@ async function loadDashReleases() {
     const data = await res.json();
     dashReleasesCache = (data.releases || []).map(r => ({
       id: r.id, title: r.title, releaseType: r.releaseType, coverUrl: r.coverUrl,
-      releaseDate: r.releaseDate, trackCount: r.trackCount,
+      releaseDate: r.releaseDate, trackCount: r.trackCount, description: r.description,
     }));
     if (!list) return; // called from publish modal too, where #dashReleasesList may not be the active pane
     if (!dashReleasesCache.length) {
@@ -5599,12 +5665,16 @@ async function loadDashReleases() {
     }
     list.innerHTML = dashReleasesCache.map(r => `
       <div style="display:flex;align-items:center;gap:8px;padding:8px;background:var(--surface2);border-radius:var(--radius);">
-        <div style="width:32px;height:32px;border-radius:4px;background:var(--surface3) center/cover;flex:0 0 auto;${r.coverUrl ? `background-image:url('${r.coverUrl}');` : ''}"></div>
+        <div style="width:36px;height:36px;border-radius:4px;background:var(--surface3) center/cover;flex:0 0 auto;${r.coverUrl ? `background-image:url('${r.coverUrl}');` : ''}"></div>
         <div style="flex:1;min-width:0;">
-          <div style="font-size:0.5rem;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(r.title)}</div>
-          <div style="font-size:0.4rem;color:var(--text-muted);text-transform:uppercase;">${r.releaseType} • ${r.trackCount} track${r.trackCount === 1 ? '' : 's'}</div>
+          <div style="font-size:0.5rem;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600;">${escapeHtml(r.title)}</div>
+          <div style="font-size:0.4rem;color:var(--text-muted);text-transform:uppercase;">${r.releaseType} · ${r.trackCount} track${r.trackCount === 1 ? '' : 's'}${r.releaseDate ? ' · ' + r.releaseDate.slice(0, 4) : ''}</div>
         </div>
-        <button onclick="openManageCollaboratorsModal('release', '${r.id}', ${JSON.stringify(r.title)})" style="flex:0 0 auto;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.4rem;padding:5px 7px;border-radius:var(--radius);cursor:pointer;">Credits</button>
+        <div style="display:flex;gap:4px;flex-shrink:0;">
+          <button onclick="openEditReleaseOverlay('${r.id}')" title="Edit release" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.38rem;padding:4px 7px;border-radius:var(--radius);cursor:pointer;">Edit</button>
+          <button onclick="openManageCollaboratorsModal('release', '${r.id}', ${JSON.stringify(r.title)})" title="Manage credits" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.38rem;padding:4px 7px;border-radius:var(--radius);cursor:pointer;">Credits</button>
+          <button onclick="deleteDashRelease('${r.id}', ${JSON.stringify(r.title)})" title="Delete release" style="background:none;border:1px solid var(--accent2);color:var(--accent2);font-family:'Space Mono',monospace;font-size:0.38rem;padding:4px 7px;border-radius:var(--radius);cursor:pointer;">Delete</button>
+        </div>
       </div>
     `).join('');
   } catch (err) {
@@ -5612,9 +5682,77 @@ async function loadDashReleases() {
   }
 }
 
-function openCreateReleaseModal() {
+async function deleteDashRelease(releaseId, releaseTitle) {
+  if (!confirm(`Delete release "${releaseTitle}"? Tracks in it will NOT be deleted — they'll become standalone published tracks.`)) return;
+  try {
+    const res = await fetch(`${ARTISTS_BASE}/${encodeURIComponent(viewedArtist.id)}/releases/${encodeURIComponent(releaseId)}`, {
+      method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: AUTH.token }),
+    });
+    const data = await res.json();
+    if (!res.ok) { if (res.status === 401) { handleTokenExpiry(); return; } throw new Error(data.error || 'Could not delete release.'); }
+    showToast('Release Deleted', `"${releaseTitle}" removed.`, 'success');
+    loadDashReleases();
+  } catch (err) {
+    showToast('Error', err.message || 'Could not delete release.', 'error');
+  }
+}
+
+// Edit Release Overlay
+function openEditReleaseOverlay(releaseId) {
+  const r = (dashReleasesCache || []).find(x => x.id === releaseId);
+  if (!r) return;
+  $('editReleaseId').value = r.id;
+  $('editReleaseTitle').value = r.title || '';
+  $('editReleaseDesc').value = r.description || '';
+  $('editReleaseDate').value = r.releaseDate || '';
+  $('editReleaseCoverUrl').value = r.coverUrl || '';
+  $('editReleaseStatus').textContent = '';
+  const overlay = $('editReleaseOverlay');
+  if (overlay) {
+    overlay.style.display = 'block';
+    // Make the dash-main position:relative so absolute overlay works
+    const dashMain = overlay.closest('.dash-main');
+    if (dashMain) dashMain.style.position = 'relative';
+  }
+}
+function closeEditReleaseOverlay() {
+  const overlay = $('editReleaseOverlay');
+  if (overlay) overlay.style.display = 'none';
+}
+async function submitEditRelease() {
+  const releaseId = $('editReleaseId').value;
+  if (!releaseId || !viewedArtist) return;
+  const title = $('editReleaseTitle').value.trim();
+  if (!title) { $('editReleaseStatus').textContent = 'Title is required.'; $('editReleaseStatus').style.color = 'var(--accent2)'; return; }
+  const btn = $('editReleaseSaveBtn');
+  btn.disabled = true; btn.textContent = 'Saving…';
+  try {
+    const res = await fetch(`${ARTISTS_BASE}/${encodeURIComponent(viewedArtist.id)}/releases/${encodeURIComponent(releaseId)}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        token: AUTH.token, title,
+        description: $('editReleaseDesc').value.trim() || null,
+        releaseDate: $('editReleaseDate').value || null,
+        coverUrl: $('editReleaseCoverUrl').value.trim() || null,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) { if (res.status === 401) { handleTokenExpiry(); return; } throw new Error(data.error || 'Could not update release.'); }
+    showToast('Release Updated', `"${data.title}" saved.`, 'success');
+    closeEditReleaseOverlay();
+    loadDashReleases();
+  } catch (err) {
+    $('editReleaseStatus').textContent = err.message || 'Could not update release.';
+    $('editReleaseStatus').style.color = 'var(--accent2)';
+  } finally {
+    btn.disabled = false; btn.textContent = 'Save Changes';
+  }
+}
+
+function openCreateReleaseModal(type) {
   $('createReleaseTitleInput').value = '';
-  $('createReleaseTypeSelect').value = 'single';
+  $('createReleaseTypeSelect').value = type || 'single';
   $('createReleaseDateInput').value = '';
   $('createReleaseStatus').textContent = '';
   $('createReleaseOverlay')?.classList.add('open');
@@ -5649,29 +5787,33 @@ $('createReleaseSubmitBtn')?.addEventListener('click', async () => {
   }
 });
 
-// ── Manage tab (edit/delete published tracks) ───────────────────────────
+// ── Tracks tab (edit/delete/credit already-published tracks) ───────────────
+let editingTrackId = null;
+
 async function loadDashTracks() {
   const list = $('dashTracksList');
   if (!list || !viewedArtist) return;
   list.innerHTML = '<div class="empty-panel" style="font-size:0.46rem;">Loading…</div>';
   try {
-    const res = await fetch(`${ARTISTS_BASE}/${encodeURIComponent(viewedArtist.id)}/tracks?limit=50`);
+    const res = await fetch(`${ARTISTS_BASE}/${encodeURIComponent(viewedArtist.id)}/tracks?limit=100`);
     const data = await res.json();
-    const tracks = (data.tracks || []).filter(t => t.isUpload); // only self-published uploads are editable/removable here
+    const tracks = (data.tracks || []).filter(t => t.isUpload); // only self-published uploads
     if (!tracks.length) {
       list.innerHTML = '<div class="empty-panel" style="font-size:0.46rem;">No published tracks yet.</div>';
       return;
     }
     list.innerHTML = tracks.map(t => `
       <div style="display:flex;align-items:center;gap:8px;padding:8px;background:var(--surface2);border-radius:var(--radius);">
-        <div style="width:32px;height:32px;border-radius:4px;background:var(--surface3) center/cover;flex:0 0 auto;${t.coverUrl ? `background-image:url('${t.coverUrl}');` : ''}"></div>
+        <div style="width:36px;height:36px;border-radius:4px;background:var(--surface3) center/cover;flex:0 0 auto;${t.coverUrl ? `background-image:url('${t.coverUrl}');` : ''}"></div>
         <div style="flex:1;min-width:0;">
-          <div style="font-size:0.5rem;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(t.title)}</div>
+          <div style="font-size:0.5rem;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600;">${escapeHtml(t.title)}</div>
           <div style="font-size:0.4rem;color:var(--text-muted);">${formatCompactCount(t.playCount)} plays</div>
         </div>
-        <button onclick="renameDashTrack('${t.id}', ${JSON.stringify(t.title)})" style="flex:0 0 auto;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.4rem;padding:5px 7px;border-radius:var(--radius);cursor:pointer;">Edit</button>
-        <button onclick="openManageCollaboratorsModal('track', '${t.id}', ${JSON.stringify(t.title)})" style="flex:0 0 auto;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.4rem;padding:5px 7px;border-radius:var(--radius);cursor:pointer;">Credits</button>
-        <button onclick="deleteDashTrack('${t.id}')" style="flex:0 0 auto;background:none;border:1px solid var(--accent2);color:var(--accent2);font-family:'Space Mono',monospace;font-size:0.4rem;padding:5px 7px;border-radius:var(--radius);cursor:pointer;">Remove</button>
+        <div style="display:flex;gap:4px;flex-shrink:0;">
+          <button onclick="openEditTrackOverlay('${t.id}', ${JSON.stringify(t.title)}, ${JSON.stringify(t.coverUrl || '')}, ${JSON.stringify(t.description || '')})" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.38rem;padding:4px 7px;border-radius:var(--radius);cursor:pointer;">Edit</button>
+          <button onclick="openManageCollaboratorsModal('track', '${t.id}', ${JSON.stringify(t.title)})" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.38rem;padding:4px 7px;border-radius:var(--radius);cursor:pointer;">Credits</button>
+          <button onclick="deleteDashTrack('${t.id}')" style="background:none;border:1px solid var(--accent2);color:var(--accent2);font-family:'Space Mono',monospace;font-size:0.38rem;padding:4px 7px;border-radius:var(--radius);cursor:pointer;">Delete</button>
+        </div>
       </div>
     `).join('');
   } catch (err) {
@@ -5679,9 +5821,76 @@ async function loadDashTracks() {
   }
 }
 
+async function openEditTrackOverlay(trackId, title, coverUrl, description) {
+  editingTrackId = trackId;
+  $('editTrackTitle').value = title || '';
+  $('editTrackCoverUrl').value = coverUrl || '';
+  $('editTrackDesc').value = description || '';
+  $('editTrackStatus').textContent = '';
+  // Populate release select
+  const sel = $('editTrackReleaseSelect');
+  if (sel) {
+    sel.innerHTML = '<option value="">— No release (standalone) —</option>';
+    if (!dashReleasesCache || !dashReleasesCache.length) await loadDashReleases();
+    (dashReleasesCache || []).forEach(r => {
+      const opt = document.createElement('option');
+      opt.value = r.id;
+      opt.textContent = `${r.title} (${r.releaseType})`;
+      sel.appendChild(opt);
+    });
+    // Try to detect current release from cache (best-effort)
+    sel.value = '';
+  }
+  const overlay = $('editTrackOverlay');
+  if (overlay) {
+    overlay.style.display = 'block';
+    const dashMain = overlay.closest('.dash-main');
+    if (dashMain) dashMain.style.position = 'relative';
+  }
+}
+function closeEditTrackOverlay() {
+  const overlay = $('editTrackOverlay');
+  if (overlay) overlay.style.display = 'none';
+  editingTrackId = null;
+}
+async function submitEditTrack() {
+  if (!editingTrackId) return;
+  const title = $('editTrackTitle').value.trim();
+  if (!title) { $('editTrackStatus').textContent = 'Title is required.'; $('editTrackStatus').style.color = 'var(--accent2)'; return; }
+  const btn = $('editTrackSaveBtn');
+  btn.disabled = true; btn.textContent = 'Saving…';
+  try {
+    const body = {
+      token: AUTH.token, title,
+      description: $('editTrackDesc').value.trim() || null,
+      coverUrl: $('editTrackCoverUrl').value.trim() || null,
+    };
+    // Include releaseId only if select exists and has a value (including empty = unlink)
+    const sel = $('editTrackReleaseSelect');
+    if (sel) body.releaseId = sel.value || null;
+
+    const res = await fetch(`/api/tracks/${encodeURIComponent(editingTrackId)}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok) { if (res.status === 401) { handleTokenExpiry(); return; } throw new Error(data.error || 'Could not update track.'); }
+    showToast('Track Updated', `"${data.title}" saved.`, 'success');
+    closeEditTrackOverlay();
+    loadDashTracks();
+    loadDashReleases();
+    loadArtistTopTracks(viewedArtist.id);
+  } catch (err) {
+    $('editTrackStatus').textContent = err.message || 'Could not update track.';
+    $('editTrackStatus').style.color = 'var(--accent2)';
+  } finally {
+    btn.disabled = false; btn.textContent = 'Save Changes';
+  }
+}
+
 async function renameDashTrack(trackId, currentTitle) {
   const next = prompt('Track title:', currentTitle || '');
-  if (next == null) return; // cancelled
+  if (next == null) return;
   const trimmed = next.trim();
   if (!trimmed || trimmed === currentTitle) return;
   try {
@@ -6554,27 +6763,49 @@ function postTimeAgo(iso) { return typeof activityTimeAgo === 'function' ? activ
 
 function renderPostCard(post) {
   const initial = escapeHtml((post.displayName || post.author || '?')[0].toUpperCase());
-  const avatar = post.avatarUrl
-    ? '<div class="post-avatar" style="background-image:url(\'' + escapeHtml(post.avatarUrl) + '\');"></div>'
-    : '<div class="post-avatar">' + initial + '</div>';
-  const ownerActions = post.isOwner
-    ? '<button onclick="editPost(\'' + post.id + '\')" title="Edit post">Edit</button><button onclick="deletePost(\'' + post.id + '\')" title="Delete post">Delete</button>'
+  const avatarStyle = post.avatarUrl ? `background-image:url('${escapeHtml(post.avatarUrl)}');` : '';
+  const authorKey = escapeHtml(post.author);
+  const avatarClick = `onclick="typeof openUserProfile==='function'&&openUserProfile('${authorKey}')"`;
+  const avatar = `<div class="post-avatar" style="${avatarStyle}" ${avatarClick}>${post.avatarUrl ? '' : initial}</div>`;
+
+  const typeLabel = (post.postType && post.postType !== 'text')
+    ? `<span class="dot">·</span><span class="post-type-badge">${escapeHtml(post.postType)}</span>`
     : '';
-  const ref = post.playlistId ? '<div class="post-ref" onclick="openPlaylistViewer(\'' + post.playlistId + '\')">Playlist</div>'
-    : post.artistId ? '<div class="post-ref" onclick="openArtistProfile(\'' + post.artistId + '\')">Artist</div>'
-    : post.trackId ? '<div class="post-ref">Track</div>'
-    : post.releaseId ? '<div class="post-ref">Release</div>' : '';
-  return '<div class="post-card" data-post-id="' + post.id + '">' +
-    '<div class="post-header">' + avatar + '<div style="flex:1;min-width:0;">' +
-    '<div class="post-name">' + escapeHtml(post.displayName || post.author) + '</div>' +
-    '<div class="post-meta">@' + escapeHtml(post.author) + ' � ' + postTimeAgo(post.createdAt) + ' � ' + escapeHtml(post.postType || 'text') + '</div>' +
-    '</div></div>' +
-    (post.body ? '<div class="post-body">' + escapeHtml(post.body) + '</div>' : '') + ref +
-    '<div class="post-actions">' +
-    '<button onclick="togglePostLike(\'' + post.id + '\',' + (post.likedByMe ? 'true' : 'false') + ')">' + (post.likedByMe ? '?' : '?') + ' <span>' + formatCompactCount(post.likeCount || 0) + '</span></button>' +
-    '<button onclick="openPostComments(\'' + post.id + '\')">Comment <span>' + formatCompactCount(post.commentCount || 0) + '</span></button>' +
-    '<button onclick="sharePost(\'' + post.id + '\')">Share <span>' + formatCompactCount(post.shareCount || 0) + '</span></button>' + ownerActions +
-    '</div></div>';
+
+  const ownerBtns = post.isOwner
+    ? `<div class="post-owner-actions"><button class="post-owner-btn" onclick="editPost('${post.id}')">Edit</button><button class="post-owner-btn danger" onclick="deletePost('${post.id}')">Delete</button></div>`
+    : '';
+
+  const ref = post.playlistId
+    ? `<div class="post-ref-card" onclick="openPlaylistViewer('${post.playlistId}')">&#127925; Playlist</div>`
+    : post.artistId
+    ? `<div class="post-ref-card" onclick="openArtistProfile('${post.artistId}')">&#127908; Artist Page</div>`
+    : post.trackId ? `<div class="post-ref-card">&#127926; Track</div>`
+    : post.releaseId ? `<div class="post-ref-card">&#128191; Release</div>` : '';
+
+  const likeClass = `post-action-btn${post.likedByMe ? ' liked' : ''}`;
+  const likeIcon = post.likedByMe ? '&#9829;' : '&#9825;';
+  const likeCount = post.likeCount > 0 ? ` ${formatCompactCount(post.likeCount)}` : '';
+  const cmtCount  = post.commentCount > 0 ? ` ${formatCompactCount(post.commentCount)}` : '';
+  const shrCount  = post.shareCount > 0 ? ` ${formatCompactCount(post.shareCount)}` : '';
+
+  return `<div class="post-card" data-post-id="${post.id}">
+  <div class="post-header">
+    ${avatar}
+    <div class="post-meta">
+      <div class="post-displayname" ${avatarClick}>${escapeHtml(post.displayName || post.author)}</div>
+      <div class="post-username-time"><span>@${authorKey}</span><span class="dot">·</span><span>${postTimeAgo(post.createdAt)}</span>${typeLabel}</div>
+    </div>
+  </div>
+  ${post.body ? `<div class="post-body">${escapeHtml(post.body)}</div>` : ''}
+  ${ref}
+  <div class="post-actions">
+    <button class="${likeClass}" onclick="togglePostLike('${post.id}',${post.likedByMe?'true':'false'})"><span class="post-action-icon">${likeIcon}</span>${likeCount}</button>
+    <button class="post-action-btn" onclick="openPostComments('${post.id}')"><span class="post-action-icon">&#128172;</span>${cmtCount}</button>
+    <button class="post-action-btn" onclick="sharePost('${post.id}')"><span class="post-action-icon">&#8599;</span>${shrCount}</button>
+    ${ownerBtns}
+  </div>
+</div>`;
 }
 
 function closePostsFeed() { $('postsFeedOverlay')?.classList.remove('open'); }
