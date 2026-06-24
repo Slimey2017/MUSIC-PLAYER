@@ -1365,6 +1365,102 @@ textarea.support-field { height:90px;resize:vertical; }
 }
 .artist-dash-btn:hover { opacity:0.85; }
 
+/* ─── Artist Dashboard — separate large modal, Spotify-for-Artists style ───
+   Distinct from .lyrics-overlay/.lyrics-panel (the small centered-card
+   modals used everywhere else) because this needs real width for a
+   sidebar + content layout, not a 420px-wide stacked panel. Layered on
+   top of artistProfileOverlay (same z-index family, just opened after it)
+   rather than replacing it — the profile stays mounted underneath. */
+.dash-overlay {
+  position:fixed;inset:0;z-index:9700;background:rgba(0,0,0,0.92);
+  display:none;align-items:center;justify-content:center;
+  backdrop-filter:blur(8px);
+}
+.dash-overlay.open { display:flex; }
+.dash-modal {
+  background:var(--surface2);border:1px solid var(--border);border-radius:10px;
+  width:min(1280px,96vw);height:min(720px,92vh);
+  display:flex;overflow:hidden;font-family:'Space Mono',monospace;
+}
+.dash-sidebar {
+  flex:0 0 200px;background:var(--surface);border-right:1px solid var(--border);
+  display:flex;flex-direction:column;padding:18px 0;overflow-y:auto;
+}
+.dash-sidebar-header {
+  padding:0 18px 16px;border-bottom:1px solid var(--border);margin-bottom:10px;
+}
+.dash-sidebar-artist-name {
+  font-family:'Unbounded',sans-serif;font-weight:900;font-size:0.62rem;color:var(--text-main);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.dash-sidebar-label {
+  font-size:0.4rem;color:var(--text-dim);letter-spacing:0.08em;text-transform:uppercase;margin-top:2px;
+}
+.dash-nav-btn {
+  display:flex;align-items:center;gap:9px;width:100%;background:none;border:none;
+  color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.5rem;
+  letter-spacing:0.04em;text-transform:uppercase;padding:10px 18px;cursor:pointer;
+  text-align:left;border-left:2px solid transparent;transition:color 0.15s,border-color 0.15s,background 0.15s;
+}
+.dash-nav-btn:hover { color:var(--text-main);background:rgba(255,255,255,0.03); }
+.dash-nav-btn.active {
+  color:var(--accent);border-left-color:var(--accent);background:rgba(255,255,255,0.04);
+}
+.dash-nav-icon { flex:0 0 auto;font-size:0.6rem;line-height:1; }
+.dash-main {
+  flex:1;display:flex;flex-direction:column;min-width:0;overflow:hidden;
+}
+.dash-main-header {
+  flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;
+  padding:18px 24px;border-bottom:1px solid var(--border);
+}
+.dash-main-title {
+  font-family:'Unbounded',sans-serif;font-weight:900;font-size:0.85rem;color:var(--text-main);
+}
+.dash-main-body {
+  flex:1;overflow-y:auto;padding:20px 24px;
+  scrollbar-width:thin;scrollbar-color:var(--border) transparent;
+}
+.dash-section-label {
+  font-size:0.46rem;color:var(--text-dim);letter-spacing:0.05em;text-transform:uppercase;margin-bottom:10px;
+}
+.dash-card {
+  background:var(--surface3);border:1px solid var(--border);border-radius:var(--radius);padding:14px;
+}
+.dash-stat-grid {
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;
+}
+.dash-stat-card {
+  background:var(--surface3);border:1px solid var(--border);border-radius:var(--radius);padding:14px;
+}
+.dash-stat-value {
+  font-size:1.1rem;color:var(--accent);font-family:'Unbounded',sans-serif;font-weight:700;
+}
+.dash-stat-label {
+  font-size:0.42rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em;margin-top:3px;
+}
+.dash-close-btn {
+  flex:0 0 auto;background:none;border:1px solid var(--border);color:var(--text-muted);
+  font-family:'Space Mono',monospace;font-size:0.6rem;width:28px;height:28px;border-radius:50%;
+  cursor:pointer;display:flex;align-items:center;justify-content:center;transition:border-color 0.15s,color 0.15s;
+}
+.dash-close-btn:hover { color:var(--accent2);border-color:var(--accent2); }
+
+@media (max-width: 860px) {
+  .dash-modal { width:100vw;height:100vh;border-radius:0;flex-direction:column; }
+  .dash-sidebar {
+    flex:0 0 auto;flex-direction:row;overflow-x:auto;overflow-y:hidden;
+    border-right:none;border-bottom:1px solid var(--border);padding:10px 0;
+  }
+  .dash-sidebar-header { display:none; }
+  .dash-nav-btn {
+    flex:0 0 auto;border-left:none;border-bottom:2px solid transparent;padding:8px 14px;white-space:nowrap;
+  }
+  .dash-nav-btn.active { border-left-color:transparent;border-bottom-color:var(--accent); }
+  .dash-main-header { padding:14px 16px; }
+  .dash-main-body { padding:14px 16px; }
+}
+
 /* ─── Equalizer Presets Gallery ─────────────────────────────────── */
 .eq-preset-gallery {
   display:grid;grid-template-columns:repeat(auto-fill,minmax(80px,1fr));gap:5px;
@@ -2690,9 +2786,11 @@ body.oled-mode {
         <span><strong id="artistProfileTotalPlays">0</strong>Plays</span>
         <span><strong id="artistProfileTotalLikes">0</strong>Likes</span>
       </div>
-      <div id="artistProfileBio" style="font-size:0.55rem;color:var(--text);line-height:1.8;white-space:pre-wrap;margin-bottom:8px;">—</div>
-      <div id="artistBioEditRow" style="display:none;margin-bottom:14px;">
-        <button id="artistBioEditBtn" onclick="openArtistBioEditModal()" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.42rem;padding:5px 10px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.04em;text-transform:uppercase;">✎ Edit Bio</button>
+      <div id="artistProfileBioWrap" style="margin-bottom:14px;">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;">
+          <div id="artistProfileBio" style="flex:1;min-width:0;font-size:0.55rem;color:var(--text);line-height:1.8;white-space:pre-wrap;word-wrap:break-word;">—</div>
+          <button id="artistEditBioBtn" onclick="openEditArtistBioModal()" style="display:none;flex:0 0 auto;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.4rem;padding:5px 8px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.04em;text-transform:uppercase;white-space:nowrap;">✎ Edit Bio</button>
+        </div>
       </div>
       <div class="profile-action-row">
         <button id="artistProfileFollowBtn" style="background:none;border:1px solid var(--accent3);color:var(--accent3);font-family:'Space Mono',monospace;font-size:0.5rem;padding:8px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.06em;text-transform:uppercase;">Follow</button>
@@ -2717,50 +2815,11 @@ body.oled-mode {
         <div id="artistProfileReleasesList"></div>
       </div>
 
-      <!-- ─── Owner-only Artist Dashboard — publishing, releases, stats. ───
-           Hidden entirely for visitors; isOwner is re-checked server-side
-           on every route this panel calls, this is just UI gating. Placed
-           below the public music content (rather than above, where it used
-           to sit) so an owner sees their page the same way a visitor does
-           first, with management tools below that, not interleaved with it. -->
-      <div id="artistDashboardPanel" style="display:none;margin-top:14px;border-top:1px solid var(--border);padding-top:12px;">
-        <div style="display:flex;gap:6px;margin-bottom:12px;">
-          <button class="dash-tab-btn active" data-tab="upload" onclick="setArtistDashboardTab('upload')" style="flex:1;background:none;border:1px solid var(--accent);color:var(--accent);font-family:'Space Mono',monospace;font-size:0.4rem;letter-spacing:0.05em;text-transform:uppercase;padding:6px 4px;border-radius:var(--radius);cursor:pointer;">Publish</button>
-          <button class="dash-tab-btn" data-tab="releases" onclick="setArtistDashboardTab('releases')" style="flex:1;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.4rem;letter-spacing:0.05em;text-transform:uppercase;padding:6px 4px;border-radius:var(--radius);cursor:pointer;">Releases</button>
-          <button class="dash-tab-btn" data-tab="tracks" onclick="setArtistDashboardTab('tracks')" style="flex:1;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.4rem;letter-spacing:0.05em;text-transform:uppercase;padding:6px 4px;border-radius:var(--radius);cursor:pointer;">Manage</button>
-          <button class="dash-tab-btn" data-tab="stats" onclick="setArtistDashboardTab('stats')" style="flex:1;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.4rem;letter-spacing:0.05em;text-transform:uppercase;padding:6px 4px;border-radius:var(--radius);cursor:pointer;">Stats</button>
-        </div>
-
-        <!-- Publish tab: pick an unpublished upload, optionally upload cover art,
-             optionally attach to a release, publish. -->
-        <div id="dashPaneUpload" class="dash-pane">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-            <div style="font-size:0.46rem;color:var(--text-dim);letter-spacing:0.05em;text-transform:uppercase;">Unpublished Uploads</div>
-            <button onclick="openCloudLibraryForUpload()" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.4rem;padding:5px 8px;border-radius:var(--radius);cursor:pointer;">↑ Upload Audio</button>
-          </div>
-          <div id="dashPublishableList" style="display:flex;flex-direction:column;gap:6px;max-height:260px;overflow-y:auto;"></div>
-        </div>
-
-        <!-- Releases tab -->
-        <div id="dashPaneReleases" class="dash-pane" style="display:none;">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-            <div style="font-size:0.46rem;color:var(--text-dim);letter-spacing:0.05em;text-transform:uppercase;">Discography</div>
-            <button onclick="openCreateReleaseModal()" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.4rem;padding:5px 8px;border-radius:var(--radius);cursor:pointer;">+ New Release</button>
-          </div>
-          <div id="dashReleasesList" style="display:flex;flex-direction:column;gap:6px;max-height:260px;overflow-y:auto;"></div>
-        </div>
-
-        <!-- Manage tab: edit/delete already-published tracks -->
-        <div id="dashPaneTracks" class="dash-pane" style="display:none;">
-          <div style="font-size:0.46rem;color:var(--text-dim);letter-spacing:0.05em;text-transform:uppercase;margin-bottom:8px;">Published Tracks</div>
-          <div id="dashTracksList" style="display:flex;flex-direction:column;gap:6px;max-height:260px;overflow-y:auto;"></div>
-        </div>
-
-        <!-- Stats tab -->
-        <div id="dashPaneStats" class="dash-pane" style="display:none;">
-          <div id="dashStatsList" style="display:flex;flex-direction:column;gap:8px;"></div>
-        </div>
-      </div>
+      <!-- Owner-only Artist Dashboard now opens as its own large modal
+           (#artistDashboardOverlay, defined later in the document) rather
+           than an inline panel here — see openArtistDashboardModal(). The
+           Profile itself stays focused on the public experience: Banner,
+           Avatar, Name, Bio, Stats, Tracks, Releases, Posts. -->
 
       <div id="artistProfilePostsWrap" style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px;display:none;">
         <div style="font-size:0.46rem;color:var(--text-dim);letter-spacing:0.05em;text-transform:uppercase;margin-bottom:8px;">Posts</div>
@@ -2810,19 +2869,6 @@ body.oled-mode {
   </div>
 </div>
 
-<!-- Artist Bio Edit modal -->
-<div class="lyrics-overlay" id="artistBioEditOverlay">
-  <div class="lyrics-panel" style="max-width:420px;">
-    <div class="lyrics-title" style="font-size:0.7rem;">Edit Bio</div>
-    <div style="font-size:0.46rem;color:var(--text-muted);margin-bottom:10px;">Tell the world about your music. Markdown not supported — plain text only.</div>
-    <textarea id="artistBioEditTextarea" maxlength="2000" rows="8" placeholder="Write your bio here… (max 2,000 characters)" style="width:100%;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-family:'Space Mono',monospace;font-size:0.5rem;padding:9px 11px;box-sizing:border-box;resize:vertical;line-height:1.7;margin-bottom:6px;"></textarea>
-    <div id="artistBioCharCount" style="font-size:0.4rem;color:var(--text-muted);text-align:right;margin-bottom:10px;">0 / 2,000</div>
-    <div id="artistBioEditStatus" style="font-size:0.42rem;color:var(--text-muted);margin-bottom:10px;min-height:1.2em;"></div>
-    <button id="artistBioSaveBtn" style="width:100%;background:var(--accent);color:var(--bg);border:none;font-family:'Unbounded',sans-serif;font-weight:700;font-size:0.52rem;padding:10px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.05em;text-transform:uppercase;margin-bottom:8px;">Save Bio</button>
-    <button class="support-close-btn" onclick="closeArtistBioEditModal()">Cancel</button>
-  </div>
-</div>
-
 <!-- Become an Artist modal -->
 <div class="lyrics-overlay" id="becomeArtistOverlay">
   <div class="lyrics-panel" style="max-width:340px;">
@@ -2836,6 +2882,178 @@ body.oled-mode {
     <button class="support-close-btn" onclick="closeBecomeArtistModal()">Cancel</button>
   </div>
 </div>
+
+<!-- Edit Artist Bio modal — owner-only, opened from the ✎ button next to
+     artistProfileBio. Backend (PATCH /api/artists/:id) already enforces the
+     2000-char limit and ownership check independently of anything here. -->
+<div class="lyrics-overlay" id="editArtistBioOverlay">
+  <div class="lyrics-panel" style="max-width:420px;">
+    <div class="lyrics-title" style="font-size:0.65rem;">Edit Bio</div>
+    <div style="font-size:0.5rem;color:var(--text-muted);line-height:1.7;margin-bottom:10px;">
+      Tell people about your music. Line breaks are preserved.
+    </div>
+    <textarea id="editArtistBioTextarea" maxlength="2000" rows="8" placeholder="Write something about yourself or your music…" style="width:100%;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-main);font-family:'Space Mono',monospace;font-size:0.55rem;line-height:1.7;padding:10px 11px;box-sizing:border-box;margin-bottom:6px;resize:vertical;min-height:140px;"></textarea>
+    <div style="display:flex;justify-content:flex-end;margin-bottom:10px;">
+      <span id="editArtistBioCounter" style="font-size:0.4rem;color:var(--text-dim);letter-spacing:0.04em;">0 / 2000</span>
+    </div>
+    <div id="editArtistBioStatus" style="font-size:0.42rem;color:var(--text-muted);margin-bottom:10px;min-height:1.2em;"></div>
+    <button id="editArtistBioSaveBtn" style="width:100%;background:var(--accent);color:var(--bg);border:none;font-family:'Unbounded',sans-serif;font-weight:700;font-size:0.52rem;padding:10px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.05em;text-transform:uppercase;margin-bottom:8px;">Save Bio</button>
+    <button class="support-close-btn" onclick="closeEditArtistBioModal()">Cancel</button>
+  </div>
+</div>
+
+<!-- Manage Collaborators modal — owner-only, opened from the "Credits"
+     button on a dashboard track or release row. Works for both kinds via a
+     shared targetType ('track'|'release') since the backend exposes
+     mirrored routes for each (see JS below). -->
+<div class="lyrics-overlay" id="manageCollaboratorsOverlay">
+  <div class="lyrics-panel" style="max-width:420px;">
+    <div class="lyrics-title" style="font-size:0.65rem;">Credits</div>
+    <div id="manageCollaboratorsSubtitle" style="font-size:0.46rem;color:var(--text-muted);margin-bottom:14px;"></div>
+
+    <div style="font-size:0.46rem;color:var(--text-dim);letter-spacing:0.05em;text-transform:uppercase;margin-bottom:8px;">Current Credits</div>
+    <div id="manageCollaboratorsList" style="display:flex;flex-direction:column;gap:6px;margin-bottom:16px;max-height:160px;overflow-y:auto;"></div>
+
+    <div style="font-size:0.46rem;color:var(--text-dim);letter-spacing:0.05em;text-transform:uppercase;margin-bottom:8px;">Add a Credit</div>
+    <input type="text" id="collabArtistSearchInput" placeholder="Search artists by name…" autocomplete="off" style="width:100%;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-main);font-family:'Space Mono',monospace;font-size:0.55rem;padding:9px 11px;box-sizing:border-box;margin-bottom:6px;" />
+    <div id="collabArtistSearchResults" style="display:flex;flex-direction:column;gap:4px;max-height:120px;overflow-y:auto;margin-bottom:10px;"></div>
+
+    <div id="collabSelectedArtistRow" style="display:none;align-items:center;gap:8px;background:var(--surface2);border-radius:var(--radius);padding:8px;margin-bottom:10px;">
+      <div style="flex:1;min-width:0;font-size:0.5rem;color:var(--text-main);" id="collabSelectedArtistName">—</div>
+      <select id="collabRoleSelect" style="background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-main);font-family:'Space Mono',monospace;font-size:0.46rem;padding:6px 8px;">
+        <option value="featured">Featured Artist</option>
+        <option value="collaborator">Collaborator</option>
+        <option value="producer">Producer</option>
+        <option value="contributor">Contributor</option>
+      </select>
+      <button id="collabAddBtn" style="flex:0 0 auto;background:var(--accent);color:var(--bg);border:none;font-family:'Unbounded',sans-serif;font-weight:700;font-size:0.44rem;padding:7px 10px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.04em;text-transform:uppercase;">Add</button>
+    </div>
+
+    <div id="manageCollaboratorsStatus" style="font-size:0.42rem;color:var(--text-muted);margin-bottom:10px;min-height:1.2em;"></div>
+    <button class="support-close-btn" onclick="closeManageCollaboratorsModal()">Close</button>
+  </div>
+</div>
+
+<!-- ─── Artist Dashboard — separate large modal ───────────────────────────
+     Opened from artistDashboardToggleBtn on the (public-facing) Artist
+     Profile. Layered on top of artistProfileOverlay rather than replacing
+     it — the profile stays mounted underneath, same viewedArtist state,
+     this is purely an owner-only management surface on top of it. Uses
+     .dash-overlay/.dash-modal (defined in <style>, see the large comment
+     there) instead of .lyrics-overlay/.lyrics-panel because this needs a
+     1280×720 sidebar+content layout, not a small centered card. -->
+<div class="dash-overlay" id="artistDashboardOverlay">
+  <div class="dash-modal">
+    <div class="dash-sidebar">
+      <div class="dash-sidebar-header">
+        <div class="dash-sidebar-artist-name" id="dashSidebarArtistName">—</div>
+        <div class="dash-sidebar-label">Artist Dashboard</div>
+      </div>
+      <button class="dash-nav-btn active" data-dash-section="overview" onclick="setDashSection('overview')"><span class="dash-nav-icon">◧</span> Overview</button>
+      <button class="dash-nav-btn" data-dash-section="publish" onclick="setDashSection('publish')"><span class="dash-nav-icon">↑</span> Publish</button>
+      <button class="dash-nav-btn" data-dash-section="releases" onclick="setDashSection('releases')"><span class="dash-nav-icon">◫</span> Releases</button>
+      <button class="dash-nav-btn" data-dash-section="tracks" onclick="setDashSection('tracks')"><span class="dash-nav-icon">♪</span> Tracks</button>
+      <button class="dash-nav-btn" data-dash-section="posts" onclick="setDashSection('posts')"><span class="dash-nav-icon">✎</span> Posts</button>
+      <button class="dash-nav-btn" data-dash-section="analytics" onclick="setDashSection('analytics')"><span class="dash-nav-icon">▴</span> Analytics</button>
+      <button class="dash-nav-btn" data-dash-section="settings" onclick="setDashSection('settings')"><span class="dash-nav-icon">⚙</span> Settings</button>
+    </div>
+    <div class="dash-main">
+      <div class="dash-main-header">
+        <div class="dash-main-title" id="dashMainTitle">Overview</div>
+        <button class="dash-close-btn" onclick="closeArtistDashboardModal()" title="Close">✕</button>
+      </div>
+      <div class="dash-main-body">
+
+        <!-- Overview: at-a-glance stats + quick actions. The numbers reuse
+             viewedArtist.stats (already fetched by openArtistProfile), same
+             "no second request needed" approach the old Stats tab used. -->
+        <div id="dashSectionOverview" class="dash-section">
+          <div class="dash-section-label">At a Glance</div>
+          <div class="dash-stat-grid" id="dashOverviewStatGrid" style="margin-bottom:20px;"></div>
+          <div class="dash-section-label">Quick Actions</div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;">
+            <button onclick="setDashSection('publish')" style="background:var(--accent);color:var(--bg);border:none;font-family:'Unbounded',sans-serif;font-weight:700;font-size:0.48rem;padding:10px 16px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.04em;text-transform:uppercase;">↑ Publish a Track</button>
+            <button onclick="setDashSection('releases');openCreateReleaseModal();" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.48rem;padding:10px 16px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.04em;text-transform:uppercase;">+ New Release</button>
+            <button onclick="setDashSection('posts')" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.48rem;padding:10px 16px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.04em;text-transform:uppercase;">✎ Write a Post</button>
+          </div>
+        </div>
+
+        <!-- Publish: pick an unpublished upload, optionally upload cover
+             art, optionally attach to a release, publish. Same logic as
+             the old dashPaneUpload pane, just re-mounted here. -->
+        <div id="dashSectionPublish" class="dash-section" style="display:none;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+            <div class="dash-section-label" style="margin-bottom:0;">Unpublished Uploads</div>
+            <button onclick="openCloudLibraryForUpload()" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.44rem;padding:6px 10px;border-radius:var(--radius);cursor:pointer;">↑ Upload Audio</button>
+          </div>
+          <div id="dashPublishableList" style="display:flex;flex-direction:column;gap:8px;"></div>
+        </div>
+
+        <!-- Releases -->
+        <div id="dashSectionReleases" class="dash-section" style="display:none;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+            <div class="dash-section-label" style="margin-bottom:0;">Discography</div>
+            <button onclick="openCreateReleaseModal()" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.44rem;padding:6px 10px;border-radius:var(--radius);cursor:pointer;">+ New Release</button>
+          </div>
+          <div id="dashReleasesList" style="display:flex;flex-direction:column;gap:8px;"></div>
+        </div>
+
+        <!-- Tracks: edit/delete/credit already-published tracks -->
+        <div id="dashSectionTracks" class="dash-section" style="display:none;">
+          <div class="dash-section-label">Published Tracks</div>
+          <div id="dashTracksList" style="display:flex;flex-direction:column;gap:8px;"></div>
+        </div>
+
+        <!-- Posts: simple composer for artist-authored announcement posts,
+             plus a list of posts already made from this artist page. -->
+        <div id="dashSectionPosts" class="dash-section" style="display:none;">
+          <div class="dash-section-label">New Post</div>
+          <div class="dash-card" style="margin-bottom:18px;">
+            <textarea id="dashPostBody" maxlength="1000" rows="3" placeholder="Share an update with your followers…" style="width:100%;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-main);font-family:'Space Mono',monospace;font-size:0.55rem;line-height:1.7;padding:9px 11px;box-sizing:border-box;margin-bottom:6px;resize:vertical;"></textarea>
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <span id="dashPostCharCount" style="font-size:0.4rem;color:var(--text-dim);">0 / 1000</span>
+              <button id="dashPostSubmitBtn" style="background:var(--accent);color:var(--bg);border:none;font-family:'Unbounded',sans-serif;font-weight:700;font-size:0.46rem;padding:8px 14px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.04em;text-transform:uppercase;">Post</button>
+            </div>
+            <div id="dashPostStatus" style="font-size:0.42rem;color:var(--text-muted);margin-top:6px;min-height:1.2em;"></div>
+          </div>
+          <div class="dash-section-label">Recent Posts</div>
+          <div id="dashPostsList" style="display:flex;flex-direction:column;gap:8px;"></div>
+        </div>
+
+        <!-- Analytics: the full stats breakdown, same numbers as Overview's
+             top cards but with the complete set (chart rank, likes, etc),
+             same data source as the old Stats tab. -->
+        <div id="dashSectionAnalytics" class="dash-section" style="display:none;">
+          <div class="dash-section-label">Performance</div>
+          <div id="dashStatsList" class="dash-stat-grid"></div>
+        </div>
+
+        <!-- Settings: genre + social links, backed by the same
+             PATCH /api/artists/:id route as bio/avatar/banner. -->
+        <div id="dashSectionSettings" class="dash-section" style="display:none;">
+          <div class="dash-section-label">Profile Details</div>
+          <div class="dash-card" style="margin-bottom:18px;">
+            <label style="display:block;font-size:0.42rem;color:var(--text-dim);letter-spacing:0.04em;text-transform:uppercase;margin-bottom:6px;">Genre</label>
+            <input type="text" id="dashSettingsGenreInput" maxlength="60" placeholder="e.g. Hip-Hop, Lo-fi, Synthwave…" style="width:100%;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-main);font-family:'Space Mono',monospace;font-size:0.55rem;padding:9px 11px;box-sizing:border-box;" />
+          </div>
+          <div class="dash-section-label">Links</div>
+          <div class="dash-card" style="margin-bottom:18px;display:flex;flex-direction:column;gap:8px;">
+            <input type="text" id="dashSettingsLinkWebsite"   placeholder="Website URL" style="width:100%;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-main);font-family:'Space Mono',monospace;font-size:0.5rem;padding:8px 10px;box-sizing:border-box;" />
+            <input type="text" id="dashSettingsLinkSpotify"   placeholder="Spotify URL" style="width:100%;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-main);font-family:'Space Mono',monospace;font-size:0.5rem;padding:8px 10px;box-sizing:border-box;" />
+            <input type="text" id="dashSettingsLinkSoundcloud" placeholder="SoundCloud URL" style="width:100%;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-main);font-family:'Space Mono',monospace;font-size:0.5rem;padding:8px 10px;box-sizing:border-box;" />
+            <input type="text" id="dashSettingsLinkInstagram" placeholder="Instagram URL" style="width:100%;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-main);font-family:'Space Mono',monospace;font-size:0.5rem;padding:8px 10px;box-sizing:border-box;" />
+            <input type="text" id="dashSettingsLinkTwitter"   placeholder="Twitter / X URL" style="width:100%;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-main);font-family:'Space Mono',monospace;font-size:0.5rem;padding:8px 10px;box-sizing:border-box;" />
+            <input type="text" id="dashSettingsLinkYoutube"   placeholder="YouTube URL" style="width:100%;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-main);font-family:'Space Mono',monospace;font-size:0.5rem;padding:8px 10px;box-sizing:border-box;" />
+          </div>
+          <button id="dashSettingsSaveBtn" style="background:var(--accent);color:var(--bg);border:none;font-family:'Unbounded',sans-serif;font-weight:700;font-size:0.5rem;padding:10px 18px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.04em;text-transform:uppercase;">Save Settings</button>
+          <div id="dashSettingsStatus" style="font-size:0.42rem;color:var(--text-muted);margin-top:8px;min-height:1.2em;"></div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</div>
+
 
 <!-- Public Playlist Viewer Overlay -->
 <div class="lyrics-overlay" id="playlistViewerOverlay">
@@ -4461,12 +4679,13 @@ function renderDiscoverTracks() {
   }
   list.innerHTML = discoverTracksData.map((t, i) => {
     const cfg = PLATFORM_CONFIG[t.platform] || { label: t.platform || '?', color: 'var(--text-muted)' };
+    const credits = formatCollaboratorCredits(t.collaborators);
     return `
       <div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--border);">
         <div style="width:22px;flex-shrink:0;text-align:right;font-size:0.5rem;color:var(--text-dim);font-weight:600;">${t.rank}</div>
         <div style="flex:1;min-width:0;cursor:pointer;" onclick="playFromDiscoverTracks(${i})">
           <div style="font-size:0.55rem;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(t.title)}</div>
-          <div style="font-size:0.42rem;color:var(--text-muted);"><span style="color:${cfg.color};">${escapeHtml(cfg.label)}</span> · ${t.playCount} play${t.playCount === 1 ? '' : 's'}${discoverTracksWindow === '7d' ? ' this week' : ''}</div>
+          <div style="font-size:0.42rem;color:var(--text-muted);"><span style="color:${cfg.color};">${escapeHtml(cfg.label)}</span> · ${t.playCount} play${t.playCount === 1 ? '' : 's'}${discoverTracksWindow === '7d' ? ' this week' : ''}${credits ? ' · ' + credits : ''}</div>
         </div>
         <button onclick="event.stopPropagation(); queueFromDiscoverTracks(${i})" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.4rem;padding:4px 8px;border-radius:var(--radius);cursor:pointer;flex-shrink:0;text-transform:uppercase;" title="Add to queue">+ Queue</button>
       </div>
@@ -4750,7 +4969,8 @@ async function openArtistProfile(idOrSlug) {
     $('artistProfileNameText').textContent = data.name;
     $('artistVerifiedBadge').style.display = data.isVerified ? 'inline' : 'none';
     $('artistProfileJoinDate').textContent = data.joinedAt ? `Joined ${formatJoinDate(data.joinedAt)}` : '';
-    $('artistProfileBio').textContent = data.bio || (data.isOwner ? 'Add a bio to tell people about your music.' : '(no bio set)');
+    renderArtistBio(data.bio, data.isOwner);
+    $('artistEditBioBtn').style.display = data.isOwner ? '' : 'none';
 
     const avatarEl = $('artistProfileAvatar');
     if (avatarEl) {
@@ -4802,6 +5022,87 @@ async function openArtistProfile(idOrSlug) {
   }
 }
 
+// Renders the bio block with three distinct states: real bio text (public
+// display, line breaks preserved via the wrapping element's white-space:
+// pre-wrap), an owner-only "add one" prompt when no bio is set yet, and a
+// clean, neutral empty state for visitors — visitors never see language
+// implying they could add a bio themselves, since they can't.
+function renderArtistBio(bio, isOwner) {
+  const el = $('artistProfileBio');
+  if (!el) return;
+  if (bio && bio.trim()) {
+    el.textContent = bio;
+    el.style.color = 'var(--text)';
+    el.style.fontStyle = 'normal';
+  } else if (isOwner) {
+    el.textContent = 'Add a bio to tell people about your music.';
+    el.style.color = 'var(--text-muted)';
+    el.style.fontStyle = 'italic';
+  } else {
+    el.textContent = '';
+    el.style.color = 'var(--text-muted)';
+    el.style.fontStyle = 'normal';
+  }
+}
+
+// ── Edit Bio modal ──────────────────────────────────────────────────────────
+// Owner-only — artistEditBioBtn is only ever shown when openArtistProfile's
+// data.isOwner was true, and PATCH /api/artists/:id re-checks ownership
+// server-side regardless, same pattern as avatar/banner uploads.
+function openEditArtistBioModal() {
+  if (!viewedArtist?.isOwner) return;
+  const textarea = $('editArtistBioTextarea');
+  textarea.value = viewedArtist.bio || '';
+  updateEditArtistBioCounter();
+  $('editArtistBioStatus').textContent = '';
+  $('editArtistBioOverlay')?.classList.add('open');
+  textarea.focus();
+}
+function closeEditArtistBioModal() {
+  $('editArtistBioOverlay')?.classList.remove('open');
+}
+function updateEditArtistBioCounter() {
+  const len = ($('editArtistBioTextarea')?.value || '').length;
+  const counter = $('editArtistBioCounter');
+  if (!counter) return;
+  counter.textContent = `${len} / 2000`;
+  counter.style.color = len >= 2000 ? 'var(--accent2)' : 'var(--text-dim)';
+}
+$('editArtistBioTextarea')?.addEventListener('input', updateEditArtistBioCounter);
+
+$('editArtistBioSaveBtn')?.addEventListener('click', async () => {
+  if (!viewedArtist) return;
+  const bio = $('editArtistBioTextarea').value;
+  if (bio.length > 2000) {
+    $('editArtistBioStatus').textContent = 'Bio must be 2000 characters or fewer.';
+    $('editArtistBioStatus').style.color = 'var(--accent2)';
+    return;
+  }
+  const btn = $('editArtistBioSaveBtn');
+  btn.disabled = true; btn.textContent = 'Saving…';
+  $('editArtistBioStatus').textContent = '';
+  try {
+    const res = await fetch(`${ARTISTS_BASE}/${encodeURIComponent(viewedArtist.id)}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: AUTH.token, bio }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      if (res.status === 401) { handleTokenExpiry(); return; }
+      throw new Error(data.error || 'Could not save bio.');
+    }
+    viewedArtist.bio = data.bio;
+    renderArtistBio(data.bio, true);
+    closeEditArtistBioModal();
+    showToast('Saved', 'Your bio has been updated.', 'success');
+  } catch (err) {
+    $('editArtistBioStatus').textContent = err.message || 'Could not save bio.';
+    $('editArtistBioStatus').style.color = 'var(--accent2)';
+  } finally {
+    btn.disabled = false; btn.textContent = 'Save Bio';
+  }
+});
+
 // Renders the artist page's Top Tracks list — published FREQ tracks only
 // (GET /api/artists/:id/tracks already filters to is_published=true server
 // side). Each row plays via playPublishedTrack, which streams through
@@ -4809,6 +5110,31 @@ async function openArtistProfile(idOrSlug) {
 // a visitor with no ownership of the underlying file can still listen.
 // Fire-and-forget from openArtistProfile: a failure here just leaves the
 // section hidden, it never blocks or breaks the rest of the artist page.
+// Formats a track/release's collaborators array into a small "ft. X, Y"-
+// style credit line. Featured Artists render as "ft. Name" (the
+// industry-standard convention); Collaborator/Producer/Contributor render
+// as "Role: Name" since there's no equally terse convention for those.
+// Multiple credits in the same role join with commas; multiple different
+// roles join with " · ". Returns '' (not a placeholder string) when there
+// are no collaborators, so callers can cleanly omit the line entirely.
+const COLLAB_ROLE_LABELS = { featured: 'ft.', collaborator: 'Collaborator', producer: 'Producer', contributor: 'Contributor' };
+function formatCollaboratorCredits(collaborators) {
+  if (!collaborators || !collaborators.length) return '';
+  const byRole = new Map();
+  for (const c of collaborators) {
+    if (!byRole.has(c.role)) byRole.set(c.role, []);
+    byRole.get(c.role).push(c.name);
+  }
+  const order = ['featured', 'collaborator', 'producer', 'contributor'];
+  return order
+    .filter(r => byRole.has(r))
+    .map(r => {
+      const names = byRole.get(r).map(escapeHtml).join(', ');
+      return r === 'featured' ? `${COLLAB_ROLE_LABELS[r]} ${names}` : `${COLLAB_ROLE_LABELS[r]}: ${names}`;
+    })
+    .join(' · ');
+}
+
 async function loadArtistTopTracks(artistId) {
   const wrap = $('artistProfileTracksWrap');
   const list = $('artistProfileTracksList');
@@ -4820,16 +5146,19 @@ async function loadArtistTopTracks(artistId) {
     const tracks = data.tracks || [];
     wrap.style.display = tracks.length ? '' : 'none';
     if (!tracks.length) { list.innerHTML = ''; return; }
-    list.innerHTML = tracks.map((t, i) => `
+    list.innerHTML = tracks.map((t, i) => {
+      const credits = formatCollaboratorCredits(t.collaborators);
+      return `
       <div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border);">
         <div style="width:16px;flex-shrink:0;text-align:right;font-size:0.46rem;color:var(--text-dim);">${i + 1}</div>
         <div style="flex:1;min-width:0;cursor:pointer;" onclick="playPublishedTrack('${t.id}')">
           <div style="font-size:0.55rem;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(t.title)}</div>
-          <div style="font-size:0.42rem;color:var(--text-muted);">${formatCompactCount(t.playCount || 0)} play${t.playCount === 1 ? '' : 's'}</div>
+          <div style="font-size:0.42rem;color:var(--text-muted);">${formatCompactCount(t.playCount || 0)} play${t.playCount === 1 ? '' : 's'}${credits ? ' · ' + credits : ''}</div>
         </div>
         <button onclick="event.stopPropagation(); queuePublishedTrack('${t.id}')" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.42rem;padding:4px 8px;border-radius:var(--radius);cursor:pointer;flex-shrink:0;letter-spacing:0.04em;text-transform:uppercase;" title="Add to queue">+ Queue</button>
       </div>
-    `).join('');
+    `;
+    }).join('');
   } catch (err) {
     wrap.style.display = 'none';
     console.error('[loadArtistTopTracks]', err);
@@ -4853,19 +5182,23 @@ async function loadArtistReleases(artistId) {
     const releases = data.releases || [];
     wrap.style.display = releases.length ? '' : 'none';
     if (!releases.length) { list.innerHTML = ''; return; }
-    list.innerHTML = releases.map(r => `
+    list.innerHTML = releases.map(r => {
+      const credits = formatCollaboratorCredits(r.collaborators);
+      return `
       <div class="artist-release-row" data-release-id="${r.id}">
         <div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border);cursor:pointer;" onclick="toggleReleaseExpand('${r.id}')">
           <div style="width:36px;height:36px;border-radius:4px;background:var(--surface3) center/cover;flex:0 0 auto;${r.coverUrl ? `background-image:url('${r.coverUrl}');` : ''}"></div>
           <div style="flex:1;min-width:0;">
             <div style="font-size:0.55rem;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(r.title)}</div>
             <div style="font-size:0.4rem;color:var(--text-muted);text-transform:uppercase;">${escapeHtml(r.releaseType)} • ${r.trackCount} track${r.trackCount === 1 ? '' : 's'}${r.releaseDate ? ' • ' + formatJoinDate(r.releaseDate) : ''}</div>
+            ${credits ? `<div style="font-size:0.4rem;color:var(--text-dim);margin-top:1px;">${credits}</div>` : ''}
           </div>
           <div style="font-size:0.5rem;color:var(--text-dim);flex-shrink:0;" id="releaseChevron-${r.id}">▾</div>
         </div>
         <div id="releaseTracks-${r.id}" style="display:none;padding:4px 0 4px 12px;"></div>
       </div>
-    `).join('');
+    `;
+    }).join('');
   } catch (err) {
     wrap.style.display = 'none';
     console.error('[loadArtistReleases]', err);
@@ -4896,12 +5229,18 @@ async function toggleReleaseExpand(releaseId) {
     if (!res.ok) throw new Error(data.error || 'Could not load tracks.');
     const tracks = data.tracks || [];
     tracksWrap.innerHTML = tracks.length
-      ? tracks.map((t, i) => `
+      ? tracks.map((t, i) => {
+          const credits = formatCollaboratorCredits(t.collaborators);
+          return `
           <div style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;" onclick="playPublishedTrack('${t.id}')">
             <div style="width:14px;flex-shrink:0;text-align:right;font-size:0.42rem;color:var(--text-dim);">${i + 1}</div>
-            <div style="flex:1;min-width:0;font-size:0.48rem;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(t.title)}</div>
+            <div style="flex:1;min-width:0;">
+              <div style="font-size:0.48rem;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(t.title)}</div>
+              ${credits ? `<div style="font-size:0.38rem;color:var(--text-dim);">${credits}</div>` : ''}
+            </div>
           </div>
-        `).join('')
+        `;
+        }).join('')
       : '<div style="font-size:0.42rem;color:var(--text-muted);padding:4px 0;">No tracks in this release yet.</div>';
     tracksWrap.dataset.loaded = '1';
   } catch (err) {
@@ -5046,40 +5385,78 @@ $('artistBannerFileInput')?.addEventListener('change', function() {
 });
 
 // ─── Artist Dashboard ───────────────────────────────────────────────────────
-// Owner-only publishing surface, gated by isOwner from openArtistProfile and
-// re-checked on every route server-side. Lives inside the existing
-// artistProfileOverlay rather than a new overlay — same modal stack, same
-// viewedArtist state, just an additional panel that only the artist who
-// claimed this page ever sees rendered.
+// A separate large modal (#artistDashboardOverlay), opened on top of
+// artistProfileOverlay rather than an inline panel inside it — see the
+// .dash-overlay/.dash-modal CSS comment for why. Owner-only, gated by
+// isOwner from openArtistProfile and re-checked on every route this modal
+// calls server-side; this click handler is just UI, not the real boundary.
 
 let dashReleasesCache = []; // [{id,title,...}] — populated by loadDashReleases, reused by the publish modal's release dropdown
+const DASH_SECTIONS = ['overview', 'publish', 'releases', 'tracks', 'posts', 'analytics', 'settings'];
+const DASH_SECTION_TITLES = {
+  overview: 'Overview', publish: 'Publish', releases: 'Releases', tracks: 'Tracks',
+  posts: 'Posts', analytics: 'Analytics', settings: 'Settings',
+};
 
-$('artistDashboardToggleBtn')?.addEventListener('click', () => {
-  const panel = $('artistDashboardPanel');
-  const opening = panel.style.display === 'none';
-  panel.style.display = opening ? 'block' : 'none';
-  if (opening) loadArtistDashboard();
-});
+$('artistDashboardToggleBtn')?.addEventListener('click', openArtistDashboardModal);
 
-function loadArtistDashboard() {
-  if (!viewedArtist) return;
-  loadDashPublishable();
-  loadDashReleases();
-  loadDashTracks();
-  loadDashStats();
+function openArtistDashboardModal() {
+  if (!viewedArtist?.isOwner) return;
+  $('dashSidebarArtistName').textContent = viewedArtist.name || '—';
+  $('artistDashboardOverlay')?.classList.add('open');
+  setDashSection('overview');
+}
+function closeArtistDashboardModal() {
+  $('artistDashboardOverlay')?.classList.remove('open');
+  dashSectionsLoaded.clear();
 }
 
-function setArtistDashboardTab(tab) {
-  document.querySelectorAll('.dash-tab-btn').forEach(btn => {
-    const active = btn.dataset.tab === tab;
-    btn.classList.toggle('active', active);
-    btn.style.borderColor = active ? 'var(--accent)' : 'var(--border)';
-    btn.style.color = active ? 'var(--accent)' : 'var(--text-muted)';
+// Lazy-loads each section's data on first visit per modal-open (not cached
+// across opens — an owner re-opening the dashboard later should see fresh
+// numbers, not a stale snapshot from several minutes ago), tracked via
+// dashSectionsLoaded so re-clicking the same nav item doesn't re-fetch.
+let dashSectionsLoaded = new Set();
+
+function setDashSection(section) {
+  if (!DASH_SECTIONS.includes(section)) section = 'overview';
+  document.querySelectorAll('.dash-nav-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.dashSection === section);
   });
-  ['upload', 'releases', 'tracks', 'stats'].forEach(t => {
-    const pane = $('dashPane' + t.charAt(0).toUpperCase() + t.slice(1));
-    if (pane) pane.style.display = (t === tab) ? 'block' : 'none';
+  DASH_SECTIONS.forEach(s => {
+    const pane = $('dashSection' + s.charAt(0).toUpperCase() + s.slice(1));
+    if (pane) pane.style.display = (s === section) ? 'block' : 'none';
   });
+  $('dashMainTitle').textContent = DASH_SECTION_TITLES[section] || section;
+
+  if (dashSectionsLoaded.has(section)) return;
+  dashSectionsLoaded.add(section);
+  if (section === 'overview')   loadDashOverview();
+  if (section === 'publish')    loadDashPublishable();
+  if (section === 'releases')   loadDashReleases();
+  if (section === 'tracks')     loadDashTracks();
+  if (section === 'posts')      loadDashPosts();
+  if (section === 'analytics')  loadDashStats();
+  if (section === 'settings')   loadDashSettings();
+}
+
+// Overview's stat grid reuses viewedArtist.stats/followerCount — already
+// fetched by openArtistProfile, same "no second request needed" approach
+// the old Stats tab used, just rendered as cards instead of a list.
+function loadDashOverview() {
+  const grid = $('dashOverviewStatGrid');
+  if (!grid || !viewedArtist) return;
+  const s = viewedArtist.stats || {};
+  grid.innerHTML = [
+    ['Total Plays', formatCompactCount(s.totalPlays ?? 0)],
+    ['Plays (7d)', formatCompactCount(s.totalPlays7d ?? 0)],
+    ['Followers', formatCompactCount(viewedArtist.followerCount ?? 0)],
+    ['Monthly Listeners', formatCompactCount(s.monthlyListeners ?? 0)],
+  ].map(([label, val]) => `
+    <div class="dash-stat-card">
+      <div class="dash-stat-value">${val}</div>
+      <div class="dash-stat-label">${label}</div>
+    </div>
+  `).join('');
 }
 
 // ── Publish tab ──────────────────────────────────────────────────────────
@@ -5227,6 +5604,7 @@ async function loadDashReleases() {
           <div style="font-size:0.5rem;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(r.title)}</div>
           <div style="font-size:0.4rem;color:var(--text-muted);text-transform:uppercase;">${r.releaseType} • ${r.trackCount} track${r.trackCount === 1 ? '' : 's'}</div>
         </div>
+        <button onclick="openManageCollaboratorsModal('release', '${r.id}', ${JSON.stringify(r.title)})" style="flex:0 0 auto;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.4rem;padding:5px 7px;border-radius:var(--radius);cursor:pointer;">Credits</button>
       </div>
     `).join('');
   } catch (err) {
@@ -5292,6 +5670,7 @@ async function loadDashTracks() {
           <div style="font-size:0.4rem;color:var(--text-muted);">${formatCompactCount(t.playCount)} plays</div>
         </div>
         <button onclick="renameDashTrack('${t.id}', ${JSON.stringify(t.title)})" style="flex:0 0 auto;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.4rem;padding:5px 7px;border-radius:var(--radius);cursor:pointer;">Edit</button>
+        <button onclick="openManageCollaboratorsModal('track', '${t.id}', ${JSON.stringify(t.title)})" style="flex:0 0 auto;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.4rem;padding:5px 7px;border-radius:var(--radius);cursor:pointer;">Credits</button>
         <button onclick="deleteDashTrack('${t.id}')" style="flex:0 0 auto;background:none;border:1px solid var(--accent2);color:var(--accent2);font-family:'Space Mono',monospace;font-size:0.4rem;padding:5px 7px;border-radius:var(--radius);cursor:pointer;">Remove</button>
       </div>
     `).join('');
@@ -5339,111 +5718,309 @@ async function deleteDashTrack(trackId) {
   }
 }
 
+// ── Manage Collaborators modal ──────────────────────────────────────────────
+// targetType is 'track' or 'release' — the two route shapes are mirrored
+// (POST/DELETE .../collaborators[/:id]) but live under different base
+// paths, so this small state object plus collabRouteBase() below is what
+// lets one modal and one set of handlers serve both without duplicating
+// the list/add/remove logic per type.
+let collabTarget = { type: null, id: null, title: null };
+let collabSearchResults = [];
+let collabSelectedArtist = null;
+let collabSearchDebounce = null;
+
+function collabRouteBase() {
+  if (!viewedArtist) return null;
+  return collabTarget.type === 'release'
+    ? `${ARTISTS_BASE}/${encodeURIComponent(viewedArtist.id)}/releases/${encodeURIComponent(collabTarget.id)}/collaborators`
+    : `/api/tracks/${encodeURIComponent(collabTarget.id)}/collaborators`;
+}
+
+function openManageCollaboratorsModal(targetType, targetId, targetTitle) {
+  if (!viewedArtist?.isOwner) return;
+  collabTarget = { type: targetType, id: targetId, title: targetTitle };
+  collabSelectedArtist = null;
+  $('manageCollaboratorsSubtitle').textContent = `${targetType === 'release' ? 'Release' : 'Track'}: ${targetTitle}`;
+  $('collabArtistSearchInput').value = '';
+  $('collabArtistSearchResults').innerHTML = '';
+  $('collabSelectedArtistRow').style.display = 'none';
+  $('manageCollaboratorsStatus').textContent = '';
+  $('manageCollaboratorsOverlay')?.classList.add('open');
+  loadManageCollaboratorsList();
+}
+function closeManageCollaboratorsModal() {
+  $('manageCollaboratorsOverlay')?.classList.remove('open');
+  collabTarget = { type: null, id: null, title: null };
+}
+
+async function loadManageCollaboratorsList() {
+  const list = $('manageCollaboratorsList');
+  const base = collabRouteBase();
+  if (!list || !base) return;
+  list.innerHTML = '<div class="empty-panel" style="font-size:0.44rem;">Loading…</div>';
+  try {
+    const res = await fetch(base);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not load credits.');
+    const collaborators = data.collaborators || [];
+    if (!collaborators.length) {
+      list.innerHTML = '<div class="empty-panel" style="font-size:0.44rem;">No collaborators credited yet.</div>';
+      return;
+    }
+    list.innerHTML = collaborators.map(c => `
+      <div style="display:flex;align-items:center;gap:8px;background:var(--surface2);border-radius:var(--radius);padding:7px 8px;">
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:0.48rem;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(c.name)}${c.isVerified ? ' ✓' : ''}</div>
+          <div style="font-size:0.38rem;color:var(--text-muted);text-transform:uppercase;">${escapeHtml(COLLAB_ROLE_LABELS[c.role] || c.role)}</div>
+        </div>
+        <button onclick="removeDashCollaborator('${c.id}')" style="flex:0 0 auto;background:none;border:1px solid var(--accent2);color:var(--accent2);font-family:'Space Mono',monospace;font-size:0.38rem;padding:4px 7px;border-radius:var(--radius);cursor:pointer;">Remove</button>
+      </div>
+    `).join('');
+  } catch (err) {
+    list.innerHTML = `<div class="empty-panel" style="font-size:0.44rem;">${escapeHtml(err.message || 'Could not load credits.')}</div>`;
+  }
+}
+
+// Reuses the existing artist-search endpoint (GET /api/discover/artists
+// ?mode=search) — the same backend that powers Discovery's Artists tab —
+// rather than introducing a second artist-lookup route just for this modal.
+$('collabArtistSearchInput')?.addEventListener('input', function() {
+  const q = this.value.trim();
+  clearTimeout(collabSearchDebounce);
+  if (!q) { $('collabArtistSearchResults').innerHTML = ''; collabSearchResults = []; return; }
+  collabSearchDebounce = setTimeout(async () => {
+    try {
+      const res = await fetch(`/api/discover/artists?mode=search&q=${encodeURIComponent(q)}&limit=8`);
+      const data = await res.json();
+      collabSearchResults = (data.artists || []).filter(a => a.id !== viewedArtist?.id);
+      renderCollabArtistSearchResults();
+    } catch (err) {
+      console.error('[collab artist search]', err);
+    }
+  }, 300);
+});
+
+function renderCollabArtistSearchResults() {
+  const wrap = $('collabArtistSearchResults');
+  if (!wrap) return;
+  if (!collabSearchResults.length) { wrap.innerHTML = ''; return; }
+  wrap.innerHTML = collabSearchResults.map(a => `
+    <div onclick='selectCollabArtist(${JSON.stringify(a.id)}, ${JSON.stringify(a.name)})' style="display:flex;align-items:center;gap:8px;padding:6px 8px;background:var(--surface2);border-radius:var(--radius);cursor:pointer;">
+      <div style="width:22px;height:22px;border-radius:50%;background:var(--surface3) center/cover;flex:0 0 auto;${a.avatarUrl ? `background-image:url('${a.avatarUrl}');` : ''}"></div>
+      <div style="font-size:0.48rem;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(a.name)}${a.isVerified ? ' ✓' : ''}</div>
+    </div>
+  `).join('');
+}
+
+function selectCollabArtist(artistId, artistName) {
+  collabSelectedArtist = { id: artistId, name: artistName };
+  $('collabSelectedArtistName').textContent = artistName;
+  $('collabSelectedArtistRow').style.display = 'flex';
+  $('collabArtistSearchInput').value = '';
+  $('collabArtistSearchResults').innerHTML = '';
+  collabSearchResults = [];
+}
+
+$('collabAddBtn')?.addEventListener('click', async () => {
+  const base = collabRouteBase();
+  if (!base || !collabSelectedArtist) return;
+  const btn = $('collabAddBtn');
+  btn.disabled = true; btn.textContent = 'Adding…';
+  $('manageCollaboratorsStatus').textContent = '';
+  try {
+    const res = await fetch(base, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        token: AUTH.token,
+        artistId: collabSelectedArtist.id,
+        role: $('collabRoleSelect').value,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      if (res.status === 401) { handleTokenExpiry(); return; }
+      throw new Error(data.error || 'Could not add collaborator.');
+    }
+    showToast('Credit Added', `${collabSelectedArtist.name} added.`, 'success');
+    collabSelectedArtist = null;
+    $('collabSelectedArtistRow').style.display = 'none';
+    loadManageCollaboratorsList();
+    refreshAfterCollabChange();
+  } catch (err) {
+    $('manageCollaboratorsStatus').textContent = err.message || 'Could not add collaborator.';
+    $('manageCollaboratorsStatus').style.color = 'var(--accent2)';
+  } finally {
+    btn.disabled = false; btn.textContent = 'Add';
+  }
+});
+
+async function removeDashCollaborator(collabId) {
+  const base = collabRouteBase();
+  if (!base) return;
+  try {
+    const res = await fetch(`${base}/${encodeURIComponent(collabId)}`, {
+      method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: AUTH.token }),
+    });
+    const data = await res.json();
+    if (!res.ok) { if (res.status === 401) { handleTokenExpiry(); return; } throw new Error(data.error || 'Could not remove collaborator.'); }
+    showToast('Credit Removed', '', 'success');
+    loadManageCollaboratorsList();
+    refreshAfterCollabChange();
+  } catch (err) {
+    showToast('Error', err.message || 'Could not remove collaborator.', 'error');
+  }
+}
+
+// Refreshes whichever public-facing lists could show this credit, so the
+// dashboard and the public page never visibly disagree after an edit.
+function refreshAfterCollabChange() {
+  if (!viewedArtist) return;
+  loadArtistTopTracks(viewedArtist.id);
+  loadArtistReleases(viewedArtist.id);
+}
+
 // ── Stats tab ─────────────────────────────────────────────────────────────
 function loadDashStats() {
   const wrap = $('dashStatsList');
   if (!wrap || !viewedArtist) return;
   // Reuses the same stats payload openArtistProfile already fetched —
   // no second request needed, this is the owner-facing breakdown of
-  // numbers already shown publicly at the top of the page.
+  // numbers already shown publicly at the top of the page. wrap itself
+  // already has class="dash-stat-grid" (see markup), so this only needs
+  // to fill in the cards, not redeclare the grid layout.
   const s = viewedArtist.stats || {};
-  wrap.innerHTML = `
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-      ${[
-        ['Total Plays', formatCompactCount(s.totalPlays ?? 0)],
-        ['Plays (7d)', formatCompactCount(s.totalPlays7d ?? 0)],
-        ['Monthly Listeners', formatCompactCount(s.monthlyListeners ?? 0)],
-        ['Followers', formatCompactCount(viewedArtist.followerCount ?? 0)],
-        ['Chart Rank', s.chartRank ? `#${s.chartRank}` : '—'],
-        ['Likes Received', formatCompactCount(s.totalLikesReceived ?? 0)],
-      ].map(([label, val]) => `
-        <div style="background:var(--surface2);border-radius:var(--radius);padding:10px;">
-          <div style="font-size:0.7rem;color:var(--accent);font-family:'Unbounded',sans-serif;font-weight:700;">${val}</div>
-          <div style="font-size:0.4rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em;margin-top:2px;">${label}</div>
-        </div>
-      `).join('')}
+  wrap.innerHTML = [
+    ['Total Plays', formatCompactCount(s.totalPlays ?? 0)],
+    ['Plays (7d)', formatCompactCount(s.totalPlays7d ?? 0)],
+    ['Monthly Listeners', formatCompactCount(s.monthlyListeners ?? 0)],
+    ['Followers', formatCompactCount(viewedArtist.followerCount ?? 0)],
+    ['Chart Rank', s.chartRank ? `#${s.chartRank}` : '—'],
+    ['Likes Received', formatCompactCount(s.totalLikesReceived ?? 0)],
+  ].map(([label, val]) => `
+    <div class="dash-stat-card">
+      <div class="dash-stat-value">${val}</div>
+      <div class="dash-stat-label">${label}</div>
     </div>
-  `;
+  `).join('');
 }
 
-// ─── Artist Bio Edit ────────────────────────────────────────────────────────
-// Owner-only. Bio is plain text, multi-line, up to 2,000 characters.
-// The PATCH /api/artists/:id route already handles bio updates with
-// server-side trimming and length enforcement — client-side limits here
-// are just UX convenience, not a security boundary.
-
-function openArtistBioEditModal() {
-  if (!viewedArtist) return;
-  const textarea = $('artistBioEditTextarea');
-  const charCount = $('artistBioCharCount');
-  if (textarea) {
-    const current = viewedArtist.bio || '';
-    textarea.value = current;
-    if (charCount) charCount.textContent = `${current.length.toLocaleString()} / 2,000`;
-  }
-  $('artistBioEditStatus').textContent = '';
-  $('artistBioEditOverlay')?.classList.add('open');
-  setTimeout(() => textarea?.focus(), 80);
-}
-
-function closeArtistBioEditModal() {
-  $('artistBioEditOverlay')?.classList.remove('open');
-}
-
-$('artistBioEditTextarea')?.addEventListener('input', function() {
-  const len = this.value.length;
-  const charCount = $('artistBioCharCount');
-  if (charCount) {
-    charCount.textContent = `${len.toLocaleString()} / 2,000`;
-    charCount.style.color = len > 1900 ? 'var(--accent2)' : 'var(--text-muted)';
-  }
+// ── Posts tab ────────────────────────────────────────────────────────────
+// Minimal composer for artist-authored announcement posts — reuses the same
+// POST /api/posts route as the main feed composer, just with artistId set
+// (now ownership-checked server-side, see [posts create] in server.js) and
+// postType:'announcement'. Listing reuses renderPostCard, the same card
+// markup the main Posts feed and profile posts already use, so an
+// announcement looks identical wherever it surfaces.
+$('dashPostBody')?.addEventListener('input', e => {
+  const counter = $('dashPostCharCount');
+  if (counter) counter.textContent = `${e.target.value.length} / 1000`;
 });
 
-$('artistBioSaveBtn')?.addEventListener('click', async () => {
+$('dashPostSubmitBtn')?.addEventListener('click', async () => {
   if (!viewedArtist) return;
-  const bio = $('artistBioEditTextarea').value;
-  if (bio.length > 2000) {
-    $('artistBioEditStatus').textContent = 'Bio exceeds 2,000 characters.';
-    $('artistBioEditStatus').style.color = 'var(--accent2)';
-    return;
-  }
-  const btn = $('artistBioSaveBtn');
-  btn.disabled = true; btn.textContent = 'Saving…';
-  $('artistBioEditStatus').textContent = '';
+  const body = $('dashPostBody').value.trim();
+  if (!body) { $('dashPostStatus').textContent = 'Write something first.'; $('dashPostStatus').style.color = 'var(--accent2)'; return; }
+  const btn = $('dashPostSubmitBtn');
+  btn.disabled = true; btn.textContent = 'Posting…';
+  $('dashPostStatus').textContent = '';
   try {
-    const res = await fetch(`${ARTISTS_BASE}/${encodeURIComponent(viewedArtist.id)}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token: AUTH.token, bio: bio.trim() }),
+    const res = await fetch(POSTS_BASE, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: AUTH.token, postType: 'announcement', body, artistId: viewedArtist.id }),
     });
     const data = await res.json();
     if (!res.ok) {
       if (res.status === 401) { handleTokenExpiry(); return; }
-      throw new Error(data.error || 'Could not save bio.');
+      throw new Error(data.error || 'Could not post.');
     }
-    // Update local state and the displayed bio immediately
-    viewedArtist.bio = data.bio;
-    const bioEl = $('artistProfileBio');
-    if (bioEl) {
-      if (data.bio) {
-        bioEl.textContent = data.bio;
-        bioEl.style.color = 'var(--text)';
-      } else {
-        bioEl.textContent = 'Add a bio to tell people about your music.';
-        bioEl.style.color = 'var(--text-muted)';
-      }
-    }
-    showToast('Bio saved', 'Your artist bio has been updated.', 'success');
-    closeArtistBioEditModal();
+    $('dashPostBody').value = '';
+    $('dashPostCharCount').textContent = '0 / 1000';
+    showToast('Posted', 'Your update is live.', 'success');
+    loadDashPosts();
+    loadArtistPosts(viewedArtist.slug || viewedArtist.id); // refresh the public-facing Posts section underneath too
   } catch (err) {
-    $('artistBioEditStatus').textContent = err.message || 'Could not save bio.';
-    $('artistBioEditStatus').style.color = 'var(--accent2)';
+    $('dashPostStatus').textContent = err.message || 'Could not post.';
+    $('dashPostStatus').style.color = 'var(--accent2)';
   } finally {
-    btn.disabled = false; btn.textContent = 'Save Bio';
+    btn.disabled = false; btn.textContent = 'Post';
   }
 });
 
+async function loadDashPosts() {
+  const list = $('dashPostsList');
+  if (!list || !viewedArtist) return;
+  list.innerHTML = '<div class="empty-panel" style="font-size:0.46rem;">Loading…</div>';
+  try {
+    const params = new URLSearchParams({ limit: 10 });
+    if (AUTH.token) params.set('token', AUTH.token);
+    const res = await fetch(`${POSTS_BASE}/artist/${encodeURIComponent(viewedArtist.slug || viewedArtist.id)}?${params}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not load posts.');
+    const posts = data.posts || [];
+    list.innerHTML = posts.length
+      ? posts.map(renderPostCard).join('')
+      : '<div class="empty-panel" style="font-size:0.46rem;">No posts yet — share an update above.</div>';
+  } catch (err) {
+    list.innerHTML = `<div class="empty-panel" style="font-size:0.46rem;">${escapeHtml(err.message || 'Could not load posts.')}</div>`;
+  }
+}
 
+// ── Settings tab ─────────────────────────────────────────────────────────
+// genre/links already exist on the artists table and PATCH /api/artists/:id
+// already accepts both (see server.js) — this is purely the UI for fields
+// the backend has supported since the collaboration-system work landed.
+function loadDashSettings() {
+  if (!viewedArtist) return;
+  $('dashSettingsGenreInput').value = viewedArtist.genre || '';
+  const links = viewedArtist.links || {};
+  $('dashSettingsLinkWebsite').value    = links.website    || '';
+  $('dashSettingsLinkSpotify').value    = links.spotify    || '';
+  $('dashSettingsLinkSoundcloud').value = links.soundcloud || '';
+  $('dashSettingsLinkInstagram').value  = links.instagram  || '';
+  $('dashSettingsLinkTwitter').value    = links.twitter    || '';
+  $('dashSettingsLinkYoutube').value    = links.youtube    || '';
+  $('dashSettingsStatus').textContent = '';
+}
+
+$('dashSettingsSaveBtn')?.addEventListener('click', async () => {
+  if (!viewedArtist) return;
+  const btn = $('dashSettingsSaveBtn');
+  btn.disabled = true; btn.textContent = 'Saving…';
+  $('dashSettingsStatus').textContent = '';
+  try {
+    const res = await fetch(`${ARTISTS_BASE}/${encodeURIComponent(viewedArtist.id)}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        token: AUTH.token,
+        genre: $('dashSettingsGenreInput').value.trim(),
+        links: {
+          website:    $('dashSettingsLinkWebsite').value.trim(),
+          spotify:    $('dashSettingsLinkSpotify').value.trim(),
+          soundcloud: $('dashSettingsLinkSoundcloud').value.trim(),
+          instagram:  $('dashSettingsLinkInstagram').value.trim(),
+          twitter:    $('dashSettingsLinkTwitter').value.trim(),
+          youtube:    $('dashSettingsLinkYoutube').value.trim(),
+        },
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      if (res.status === 401) { handleTokenExpiry(); return; }
+      throw new Error(data.error || 'Could not save settings.');
+    }
+    viewedArtist.genre = data.genre;
+    viewedArtist.links = data.links;
+    showToast('Saved', 'Settings updated.', 'success');
+  } catch (err) {
+    $('dashSettingsStatus').textContent = err.message || 'Could not save settings.';
+    $('dashSettingsStatus').style.color = 'var(--accent2)';
+  } finally {
+    btn.disabled = false; btn.textContent = 'Save Settings';
+  }
+});
+
+// ─── Become an Artist ───────────────────────────────────────────────────────
 function openBecomeArtistModal() {
   if (!AUTH.loggedIn) { showToast('Sign in required', 'Please sign in to become an artist.', 'error'); return; }
   $('becomeArtistOverlay')?.classList.add('open');
@@ -6662,8 +7239,8 @@ const FLEX_PLAYLIST = [
     platform: 'spotify',
     type: 'track',
     title: 'Redbone — Childish Gambino',
-    originalUrl: 'https://open.spotify.com/track/0tKcYR2II1VCQWT79i5NrW',
-    embedUrl: 'https://open.spotify.com/embed/track/0tKcYR2II1VCQWT79i5NrW?utm_source=generator&theme=0',
+    originalUrl: 'https://open.spotify.com/track/3vQ4T78TTMOjQXGfXVKQJo?si=736ff50ce42e4f1a',
+    embedUrl: 'https://open.spotify.com/embed/track/3vQ4T78TTMOjQXGfXVKQJo?si=736ff50ce42e4f1a?utm_source=generator&theme=0',
     id: '0tKcYR2II1VCQWT79i5NrW',
     note: 'Studio quality on Spotify',
   },
@@ -6689,8 +7266,8 @@ const FLEX_PLAYLIST = [
     platform: 'youtube',
     type: 'video',
     title: 'Daft Punk — Get Lucky ft. Pharrell Williams (Official Audio)',
-    originalUrl: 'https://www.youtube.com/watch?v=5NV6Rdv1a3I',
-    embedUrl: 'https://www.youtube.com/embed/5NV6Rdv1a3I?autoplay=1&controls=1&enablejsapi=1',
+    originalUrl: 'https://youtu.be/5NV6Rdv1a3I',
+    embedUrl: 'https://youtu.be/5NV6Rdv1a3I?autoplay=1&controls=1&enablejsapi=1',
     id: '5NV6Rdv1a3I',
     note: 'Official audio — YouTube',
   },
@@ -6698,36 +7275,36 @@ const FLEX_PLAYLIST = [
     platform: 'soundcloud',
     type: 'track',
     title: 'MF DOOM — All Caps',
-    originalUrl: 'https://soundcloud.com/mfdoom/all-caps',
-    embedUrl: 'https://w.soundcloud.com/player/?url=https%3A//soundcloud.com/mfdoom/all-caps&color=%23ff5500&auto_play=true&visual=true',
-    id: 'https://soundcloud.com/mfdoom/all-caps',
+    originalUrl: 'https://soundcloud.com/madvillain-official/all-caps',
+    embedUrl: 'https://w.soundcloud.com/player/?url=https%3A//soundcloud.com/madvillain-official/all-caps&color=%23ff5500&auto_play=true&visual=true',
+    id: 'https://soundcloud.com/madvillain-official/all-caps',
     note: 'Underground classic — SoundCloud',
   },
   {
     platform: 'spotify',
     type: 'track',
     title: 'Bad Guy — Billie Eilish',
-    originalUrl: 'https://open.spotify.com/track/2Fxmhks0live1BLVWe0T5o',
-    embedUrl: 'https://open.spotify.com/embed/track/2Fxmhks0live1BLVWe0T5o?utm_source=generator&theme=0',
-    id: '2Fxmhks0live1BLVWe0T5o',
+    originalUrl: 'https://open.spotify.com/track/2Cp3p7XpvsdCqYuQbmvaIT?si=3aa686a607ad4822',
+    embedUrl: 'https://open.spotify.com/embed/track/2Cp3p7XpvsdCqYuQbmvaIT?si=3aa686a607ad4822?utm_source=generator&theme=0',
+    id: '2Cp3p7XpvsdCqYuQbmvaIT?si=3aa686a607ad4822',
     note: 'Spotify — multi-Grammy winner',
   },
   {
     platform: 'youtube',
     type: 'video',
     title: 'Tyler, the Creator — EARFQUAKE (Official Video)',
-    originalUrl: 'https://www.youtube.com/watch?v=eIGh4Nc1fAM',
-    embedUrl: 'https://www.youtube.com/embed/eIGh4Nc1fAM?autoplay=1&controls=1&enablejsapi=1',
-    id: 'eIGh4Nc1fAM',
+    originalUrl: 'https://youtu.be/HmAsUQEFYGI?si=mnpslWSAAbNQ80xx',
+    embedUrl: 'https://youtu.be/HmAsUQEFYGI?si=mnpslWSAAbNQ80xx?autoplay=1&controls=1&enablejsapi=1',
+    id: 'HmAsUQEFYGI?si=mnpslWSAAbNQ80xx',
     note: 'Official video — YouTube',
   },
   {
     platform: 'soundcloud',
     type: 'track',
     title: 'Frank Ocean — Chanel',
-    originalUrl: 'https://soundcloud.com/frankocean/chanel',
-    embedUrl: 'https://w.soundcloud.com/player/?url=https%3A//soundcloud.com/frankocean/chanel&color=%23ff5500&auto_play=true&visual=true',
-    id: 'https://soundcloud.com/frankocean/chanel',
+    originalUrl: 'https://soundcloud.com/blonded/chanel',
+    embedUrl: 'https://soundcloud.com/blonded/chanel?utm_source=clipboard&utm_medium=text&utm_campaign=social_sharing',
+    id: 'https://soundcloud.com/blonded/chanel',
     note: 'SoundCloud exclusive upload',
   },
 ];
@@ -10655,7 +11232,7 @@ document.addEventListener('keydown', e => {
 })();
 
 // ─── Patch: Close new overlays via clicking outside ──────────────────────────
-['supportOverlay','aboutOverlay','settingsOverlay','lyricsOverlay','userProfileOverlay','artistProfileOverlay','becomeArtistOverlay'].forEach(id => {
+['supportOverlay','aboutOverlay','settingsOverlay','lyricsOverlay','userProfileOverlay','artistProfileOverlay','becomeArtistOverlay','editArtistBioOverlay','manageCollaboratorsOverlay'].forEach(id => {
   const el = $(id);
   if (!el) return;
   el.addEventListener('click', e => { if (e.target === el) el.classList.remove('open'); });
