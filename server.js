@@ -671,6 +671,19 @@ async function dbGetArtistStats(artistId) {
 }
 
 async function dbGetLiveArtistStats(artistId, cachedStats = null) {
+  // NOTE: intentionally NOT filtered by is_published. play_count/play_count_7d
+  // accrue on a track from the moment it's first played, which can happen
+  // before the artist ever runs it through the publish flow (e.g. it was
+  // played as a plain external-URL track, or as an unpublished upload via
+  // direct link). recomputeArtistStats (the cron that seeds artist_stats)
+  // sums ALL of an artist's tracks for exactly this reason. This function
+  // used to filter to is_published=true here, which silently undercounted
+  // — sometimes to zero — for any artist whose plays sat mostly on
+  // not-yet-published tracks, even though the real totals (visible in
+  // artist_stats / recomputeArtistStats) were correct all along. Matching
+  // that same "count everything" logic here is what actually fixes it,
+  // rather than just falling back to a cached number when this query
+  // happens to look low.
   const [followerResult, trackRowsResult, monthlyRowsResult] = await Promise.all([
     supabase.from('artist_followers')
       .select('*', { count: 'exact', head: true })
@@ -678,11 +691,6 @@ async function dbGetLiveArtistStats(artistId, cachedStats = null) {
     supabase.from('tracks')
       .select('play_count, play_count_7d')
       .eq('artist_id', artistId),
-      // NOTE: intentionally NOT filtering by is_published — play_count accumulates
-      // on every track row regardless of publish state (it's incremented by
-      // increment_track_play_count on every logged play, which runs before publish).
-      // Filtering to is_published=true was the root cause of the zero-stats bug:
-      // artists who hadn't published yet but had plays in the system saw 0 everywhere.
     supabase.from('track_plays')
       .select('username, tracks!inner(artist_id)')
       .eq('tracks.artist_id', artistId)
@@ -859,6 +867,109 @@ async function dbGetReleaseTracks(releaseId) {
   return (data || []).filter(r => r.tracks).map(r => ({ ...r.tracks, position: r.position }));
 }
 
+// ── Artist collaborations (Featured/Collaborator/Producer/Contributor) ─────
+// Single artist_collaborations table covers both tracks and releases via an
+// XOR check (exactly one of track_id/release_id is set per row) — see
+// migration create_artist_collaborations. collaborator_artist_id always
+// points at an artists row regardless of whether that artist page has been
+// claimed by an account, so an unclaimed/placeholder artist (e.g. a
+// producer who hasn't signed up yet) can still be credited.
+const COLLAB_ROLES = ['featured', 'collaborator', 'producer', 'contributor'];
+
+// Shared select shape for both track and release collaborator lookups — the
+// joined artists row gives the frontend everything it needs to render a
+// credit (name/slug/avatar) without a second round trip per collaborator.
+const COLLAB_SELECT = 'id, role, track_id, release_id, collaborator_artist_id, added_by, created_at, ' +
+  'artists:collaborator_artist_id(id, name, slug, avatar_url, is_verified)';
+
+async function dbGetTrackCollaborators(trackId) {
+  const { data, error } = await supabase
+    .from('artist_collaborations')
+    .select(COLLAB_SELECT)
+    .eq('track_id', trackId)
+    .order('role', { ascending: true })
+    .order('created_at', { ascending: true });
+  if (error) { console.error('[db] getTrackCollaborators:', error.message); return []; }
+  return data || [];
+}
+
+async function dbGetReleaseCollaborators(releaseId) {
+  const { data, error } = await supabase
+    .from('artist_collaborations')
+    .select(COLLAB_SELECT)
+    .eq('release_id', releaseId)
+    .order('role', { ascending: true })
+    .order('created_at', { ascending: true });
+  if (error) { console.error('[db] getReleaseCollaborators:', error.message); return []; }
+  return data || [];
+}
+
+// Batch lookup used by track-list endpoints (top tracks, search results) so
+// rendering N tracks with their collaborator credits costs one query, not N.
+// Returns a Map keyed by track_id -> array of collaborator rows.
+async function dbGetCollaboratorsForTracks(trackIds) {
+  if (!trackIds || !trackIds.length) return new Map();
+  const { data, error } = await supabase
+    .from('artist_collaborations')
+    .select(COLLAB_SELECT)
+    .in('track_id', trackIds)
+    .order('role', { ascending: true })
+    .order('created_at', { ascending: true });
+  if (error) { console.error('[db] getCollaboratorsForTracks:', error.message); return new Map(); }
+  const map = new Map();
+  for (const row of data || []) {
+    if (!map.has(row.track_id)) map.set(row.track_id, []);
+    map.get(row.track_id).push(row);
+  }
+  return map;
+}
+
+// addedByUsername is captured for audit purposes (artist_collaborations.added_by)
+// — it's always the session username of whoever called the route, which the
+// route handler has already verified owns the track/release being credited.
+async function dbAddCollaborator({ trackId = null, releaseId = null, collaboratorArtistId, role, addedByUsername }) {
+  const { data, error } = await supabase
+    .from('artist_collaborations')
+    .insert({
+      track_id: trackId, release_id: releaseId,
+      collaborator_artist_id: collaboratorArtistId, role,
+      added_by: addedByUsername || null,
+    })
+    .select(COLLAB_SELECT)
+    .single();
+  if (error) {
+    if (error.code === '23505') throw new Error('That artist already has this role on this item.');
+    throw new Error(error.message);
+  }
+  return data;
+}
+
+async function dbRemoveCollaborator(collaborationId) {
+  const { error } = await supabase.from('artist_collaborations').delete().eq('id', collaborationId);
+  if (error) throw new Error(error.message);
+}
+
+async function dbGetCollaboration(collaborationId) {
+  const { data, error } = await supabase
+    .from('artist_collaborations').select('*').eq('id', collaborationId).maybeSingle();
+  if (error) { console.error('[db] getCollaboration:', error.message); return null; }
+  return data;
+}
+
+// Shapes a raw artist_collaborations row (with its joined artists row) into
+// the flat credit object every API response below sends to the frontend.
+function shapeCollaborator(row) {
+  return {
+    id: row.id,
+    role: row.role,
+    artistId: row.collaborator_artist_id,
+    name: row.artists?.name || 'Unknown Artist',
+    slug: row.artists?.slug || null,
+    avatarUrl: row.artists?.avatar_url || null,
+    isVerified: !!row.artists?.is_verified,
+  };
+}
+
 // ── Periodic recompute: artist_stats + release rollups + artist chart rank ──
 // Same philosophy as recomputeWeeklyPlayCounts: aggregate queries that don't
 // need per-request freshness run on a timer instead of on every page view.
@@ -955,6 +1066,34 @@ async function recomputeArtistStats() {
         await supabase.from('profiles')
           .update({ total_plays: t.plays })
           .eq('username', artist.account_id);
+      }
+    }
+
+    // Release rollups — total_plays per release, summed from the tracks
+    // attached to it via artist_release_tracks. This column has existed on
+    // artist_releases since the releases schema shipped, and this function's
+    // own header comment already claimed to compute "release rollups", but
+    // nothing ever actually wrote it — every release sat at a hardcoded 0
+    // regardless of how many plays its tracks had. total_likes stays at its
+    // existing default for the same reason totalLikesReceived does above:
+    // there's no per-track likes table yet, so writing a real total_plays
+    // but a fabricated total_likes would be inconsistent with that honesty
+    // policy elsewhere in this function.
+    const { data: releaseTrackRows, error: relTracksErr } = await supabase
+      .from('artist_release_tracks')
+      .select('release_id, tracks!inner(play_count)');
+    if (relTracksErr) {
+      console.error('[artists] recompute fetch release tracks:', relTracksErr.message);
+    } else {
+      const releasePlays = new Map(); // release_id -> summed play_count
+      for (const row of releaseTrackRows || []) {
+        const cur = releasePlays.get(row.release_id) || 0;
+        releasePlays.set(row.release_id, cur + (row.tracks?.play_count || 0));
+      }
+      for (const [releaseId, plays] of releasePlays) {
+        await supabase.from('artist_releases')
+          .update({ total_plays: plays, updated_at: new Date().toISOString() })
+          .eq('id', releaseId);
       }
     }
   } catch (err) {
@@ -3240,6 +3379,7 @@ app.get('/api/charts/tracks', async (req, res) => {
   const limit  = Math.min(Math.max(Number(req.query.limit) || 50, 1), CHARTS_MAX_LIMIT);
   try {
     const rows = await dbGetTopTracks({ window, limit });
+    const collabsByTrack = await dbGetCollaboratorsForTracks(rows.map(t => t.id));
     return res.json({
       window,
       tracks: rows.map((t, i) => ({
@@ -3254,6 +3394,7 @@ app.get('/api/charts/tracks', async (req, res) => {
         coverUrl: t.cover_url || null,
         artistId: t.artist_id || null,
         artistName: t.artist_name || null,
+        collaborators: (collabsByTrack.get(t.id) || []).map(shapeCollaborator),
       })),
     });
   } catch (err) {
@@ -4341,6 +4482,18 @@ app.post('/api/posts', rateLimit, async (req, res) => {
   }
   if (body && body.length > 1000) return res.status(400).json({ error: 'Post body must be 1000 characters or fewer.' });
   try {
+    // artistId on a post means "this post is from/about this artist page" —
+    // when it's set, only the account that claimed that artist page may
+    // post as it. Without this check, any signed-in account could tag an
+    // arbitrary artistId on a post and have it show up as if that artist
+    // posted it, which matters now that the Dashboard's Posts tab lets an
+    // owner publish announcements this way.
+    if (artistId) {
+      const postingArtist = await dbGetArtistById(artistId);
+      if (!postingArtist || postingArtist.account_id !== sess.username) {
+        return res.status(403).json({ error: 'Only the artist who claimed this page can post as it.' });
+      }
+    }
     const post = await dbCreatePost(sess.username, { postType, body, playlistId, trackId, artistId, releaseId });
     // Write to activity feed
     dbWriteActivity('user_post', sess.username, null, { postId: post.id, preview: (body || '').slice(0, 80) });
@@ -4650,6 +4803,8 @@ app.get('/api/artists/:id', async (req, res) => {
       avatarUrl: artist.avatar_url,
       bannerUrl: artist.banner_url,
       bio: artist.bio,
+      genre: artist.genre,
+      links: artist.links || {},
       isVerified: artist.is_verified,
       isClaimed: !!artist.account_id,
       isOwner: !!(sess && artist.account_id === sess.username),
@@ -4681,6 +4836,7 @@ app.get('/api/artists/:id/tracks', async (req, res) => {
     const sort  = req.query.sort === 'trending' ? 'trending' : 'plays';
     const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 50);
     const tracks = await dbGetArtistTracks(artist.id, { sort, limit });
+    const collabsByTrack = await dbGetCollaboratorsForTracks(tracks.map(t => t.id));
     return res.json({
       tracks: tracks.map(t => ({
         id: t.id, originalUrl: t.original_url, platform: t.platform,
@@ -4692,6 +4848,7 @@ app.get('/api/artists/:id/tracks', async (req, res) => {
         cloudFileId: t.cloud_file_id || null,
         publishedAt: t.published_at || null,
         isUpload: !!t.cloud_file_id,
+        collaborators: (collabsByTrack.get(t.id) || []).map(shapeCollaborator),
       })),
     });
   } catch (err) {
@@ -4706,11 +4863,20 @@ app.get('/api/artists/:id/releases', async (req, res) => {
     if (!artist) return res.status(404).json({ error: 'Artist not found.' });
     const type = ['single', 'album', 'ep', 'mixtape'].includes(req.query.type) ? req.query.type : null;
     const releases = await dbGetArtistReleases(artist.id, { type });
+    // Releases list is typically short (an artist's discography), so N
+    // small per-release collaborator queries here is fine — same tradeoff
+    // already made elsewhere in this file for similarly small N (e.g.
+    // dbGetArtistReleases callers generally), rather than complicating this
+    // with a second batched-by-id helper for a list that's rarely long.
+    const releasesWithCollabs = await Promise.all(releases.map(async r => ({
+      r, collaborators: (await dbGetReleaseCollaborators(r.id)).map(shapeCollaborator),
+    })));
     return res.json({
-      releases: releases.map(r => ({
+      releases: releasesWithCollabs.map(({ r, collaborators }) => ({
         id: r.id, title: r.title, releaseType: r.release_type, coverUrl: r.cover_url,
         releaseDate: r.release_date, trackCount: r.track_count, totalPlays: r.total_plays,
         totalLikes: r.total_likes, description: r.description, externalUrl: r.external_url,
+        collaborators,
       })),
     });
   } catch (err) {
@@ -4722,10 +4888,12 @@ app.get('/api/artists/:id/releases', async (req, res) => {
 app.get('/api/artists/:id/releases/:releaseId/tracks', async (req, res) => {
   try {
     const tracks = await dbGetReleaseTracks(req.params.releaseId);
+    const collabsByTrack = await dbGetCollaboratorsForTracks(tracks.map(t => t.id));
     return res.json({
       tracks: tracks.map(t => ({
         id: t.id, originalUrl: t.original_url, platform: t.platform,
         title: t.title || t.original_url, playCount: t.play_count, position: t.position,
+        collaborators: (collabsByTrack.get(t.id) || []).map(shapeCollaborator),
       })),
     });
   } catch (err) {
@@ -4903,8 +5071,14 @@ app.post('/api/artists/claim', rateLimit, async (req, res) => {
   }
 });
 
+// Link keys an artist's Settings pane can set. Kept as a fixed allowlist
+// rather than accepting arbitrary keys — links is rendered directly back
+// out on the public artist page eventually, so this also bounds what ever
+// needs escaping/handling there to a known, small set of platforms.
+const ARTIST_LINK_KEYS = ['website', 'spotify', 'soundcloud', 'instagram', 'twitter', 'youtube'];
+
 app.patch('/api/artists/:id', rateLimit, async (req, res) => {
-  const { token, bio, avatarUrl, bannerUrl } = req.body || {};
+  const { token, bio, avatarUrl, bannerUrl, genre, links } = req.body || {};
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
   try {
@@ -4922,11 +5096,27 @@ app.patch('/api/artists/:id', rateLimit, async (req, res) => {
     }
     if (avatarUrl !== undefined) patch.avatar_url = (typeof avatarUrl === 'string' && avatarUrl.trim()) ? avatarUrl.trim().slice(0, 2000) : null;
     if (bannerUrl !== undefined) patch.banner_url = (typeof bannerUrl === 'string' && bannerUrl.trim()) ? bannerUrl.trim().slice(0, 2000) : null;
+    if (genre !== undefined) {
+      if (genre !== null && typeof genre !== 'string') return res.status(400).json({ error: '"genre" must be a string.' });
+      patch.genre = (genre || '').toString().trim().slice(0, 60) || null;
+    }
+    if (links !== undefined) {
+      if (typeof links !== 'object' || links === null || Array.isArray(links)) {
+        return res.status(400).json({ error: '"links" must be an object.' });
+      }
+      const cleanLinks = {};
+      for (const key of ARTIST_LINK_KEYS) {
+        const val = links[key];
+        if (typeof val === 'string' && val.trim()) cleanLinks[key] = val.trim().slice(0, 500);
+      }
+      patch.links = cleanLinks;
+    }
     if (!Object.keys(patch).length) return res.status(400).json({ error: 'No valid fields to update.' });
 
     const updated = await dbUpdateArtist(artist.id, patch);
     return res.json({
       id: updated.id, bio: updated.bio, avatarUrl: updated.avatar_url, bannerUrl: updated.banner_url,
+      genre: updated.genre, links: updated.links || {},
     });
   } catch (err) {
     console.error('[artist update]', err);
@@ -5043,6 +5233,81 @@ app.delete('/api/artists/:id/releases/:releaseId', rateLimit, async (req, res) =
   } catch (err) {
     console.error('[artist delete release]', err);
     return res.status(500).json({ error: 'Could not delete release.' });
+  }
+});
+
+// ── Release collaborators ───────────────────────────────────────────────────
+// Same ownership shape as DELETE /releases/:releaseId just above: resolve
+// the artist from the URL, confirm they're the session's account, then
+// confirm the release actually belongs to that artist before touching it.
+// Listing is public (GET has no auth requirement) — release collaborator
+// credits are meant to be visible on the public release/artist page.
+app.get('/api/artists/:id/releases/:releaseId/collaborators', rateLimit, async (req, res) => {
+  try {
+    const artist = await resolveArtistFromParam(req.params.id);
+    if (!artist) return res.status(404).json({ error: 'Artist not found.' });
+    const { data: release } = await supabase
+      .from('artist_releases').select('id').eq('id', req.params.releaseId).eq('artist_id', artist.id).maybeSingle();
+    if (!release) return res.status(404).json({ error: 'Release not found.' });
+    const collaborators = (await dbGetReleaseCollaborators(release.id)).map(shapeCollaborator);
+    return res.json({ collaborators });
+  } catch (err) {
+    console.error('[release collaborators list]', err);
+    return res.status(500).json({ error: 'Could not load collaborators.' });
+  }
+});
+
+app.post('/api/artists/:id/releases/:releaseId/collaborators', rateLimit, async (req, res) => {
+  const { token, artistId, role } = req.body || {};
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  if (typeof artistId !== 'string' || !artistId.trim()) return res.status(400).json({ error: '"artistId" is required.' });
+  if (!COLLAB_ROLES.includes(role)) return res.status(400).json({ error: `"role" must be one of: ${COLLAB_ROLES.join(', ')}.` });
+  try {
+    const artist = await resolveArtistFromParam(req.params.id);
+    if (!artist) return res.status(404).json({ error: 'Artist not found.' });
+    if (artist.account_id !== sess.username) {
+      return res.status(403).json({ error: 'Only the artist who claimed this page can manage release collaborators.' });
+    }
+    const { data: release } = await supabase
+      .from('artist_releases').select('id, artist_id').eq('id', req.params.releaseId).eq('artist_id', artist.id).maybeSingle();
+    if (!release) return res.status(404).json({ error: 'Release not found.' });
+    if (artistId === release.artist_id) {
+      return res.status(400).json({ error: 'This artist is already the primary artist on this release.' });
+    }
+    const collaboratorArtist = await dbGetArtistById(artistId);
+    if (!collaboratorArtist) return res.status(404).json({ error: 'Collaborator artist not found.' });
+    const row = await dbAddCollaborator({
+      releaseId: release.id, collaboratorArtistId: artistId, role, addedByUsername: sess.username,
+    });
+    return res.json({ collaborator: shapeCollaborator(row) });
+  } catch (err) {
+    console.error('[release collaborator add]', err);
+    return res.status(err.message?.includes('already has this role') ? 409 : 500)
+      .json({ error: err.message || 'Could not add collaborator.' });
+  }
+});
+
+app.delete('/api/artists/:id/releases/:releaseId/collaborators/:collabId', rateLimit, async (req, res) => {
+  const token = req.body?.token || req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  try {
+    const artist = await resolveArtistFromParam(req.params.id);
+    if (!artist) return res.status(404).json({ error: 'Artist not found.' });
+    if (artist.account_id !== sess.username) {
+      return res.status(403).json({ error: 'Only the artist who claimed this page can manage release collaborators.' });
+    }
+    const { data: release } = await supabase
+      .from('artist_releases').select('id').eq('id', req.params.releaseId).eq('artist_id', artist.id).maybeSingle();
+    if (!release) return res.status(404).json({ error: 'Release not found.' });
+    const collab = await dbGetCollaboration(req.params.collabId);
+    if (!collab || collab.release_id !== release.id) return res.status(404).json({ error: 'Collaborator credit not found.' });
+    await dbRemoveCollaborator(collab.id);
+    return res.json({ success: true });
+  } catch (err) {
+    console.error('[release collaborator remove]', err);
+    return res.status(500).json({ error: 'Could not remove collaborator.' });
   }
 });
 
@@ -5296,6 +5561,75 @@ app.delete('/api/tracks/:trackId', rateLimit, async (req, res) => {
   }
 });
 
+// ── Track collaborators ─────────────────────────────────────────────────────
+// Management (add/remove) is gated to the track's primary artist — the same
+// "only the artist who published this track" check as PATCH/DELETE above —
+// since crediting someone as a Featured Artist/Collaborator/Producer/
+// Contributor on a track is an edit to that track, not something the
+// credited artist grants themselves. Listing is public, same as the track
+// itself being publicly streamable once published.
+app.get('/api/tracks/:trackId/collaborators', rateLimit, async (req, res) => {
+  try {
+    const track = await dbGetTrackById(req.params.trackId);
+    if (!track) return res.status(404).json({ error: 'Track not found.' });
+    const collaborators = (await dbGetTrackCollaborators(track.id)).map(shapeCollaborator);
+    return res.json({ collaborators });
+  } catch (err) {
+    console.error('[track collaborators list]', err);
+    return res.status(500).json({ error: 'Could not load collaborators.' });
+  }
+});
+
+app.post('/api/tracks/:trackId/collaborators', rateLimit, async (req, res) => {
+  const { token, artistId, role } = req.body || {};
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  if (typeof artistId !== 'string' || !artistId.trim()) return res.status(400).json({ error: '"artistId" is required.' });
+  if (!COLLAB_ROLES.includes(role)) return res.status(400).json({ error: `"role" must be one of: ${COLLAB_ROLES.join(', ')}.` });
+  try {
+    const track = await dbGetTrackById(req.params.trackId);
+    if (!track || !track.cloud_file_id) return res.status(404).json({ error: 'Published track not found.' });
+    const artist = await dbGetArtistById(track.artist_id);
+    if (!artist || artist.account_id !== sess.username) {
+      return res.status(403).json({ error: 'Only the artist who published this track can manage its collaborators.' });
+    }
+    if (artistId === track.artist_id) {
+      return res.status(400).json({ error: 'This artist is already the primary artist on this track.' });
+    }
+    const collaboratorArtist = await dbGetArtistById(artistId);
+    if (!collaboratorArtist) return res.status(404).json({ error: 'Collaborator artist not found.' });
+    const row = await dbAddCollaborator({
+      trackId: track.id, collaboratorArtistId: artistId, role, addedByUsername: sess.username,
+    });
+    return res.json({ collaborator: shapeCollaborator(row) });
+  } catch (err) {
+    console.error('[track collaborator add]', err);
+    return res.status(err.message?.includes('already has this role') ? 409 : 500)
+      .json({ error: err.message || 'Could not add collaborator.' });
+  }
+});
+
+app.delete('/api/tracks/:trackId/collaborators/:collabId', rateLimit, async (req, res) => {
+  const token = req.body?.token || req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  try {
+    const track = await dbGetTrackById(req.params.trackId);
+    if (!track) return res.status(404).json({ error: 'Track not found.' });
+    const artist = await dbGetArtistById(track.artist_id);
+    if (!artist || artist.account_id !== sess.username) {
+      return res.status(403).json({ error: 'Only the artist who published this track can manage its collaborators.' });
+    }
+    const collab = await dbGetCollaboration(req.params.collabId);
+    if (!collab || collab.track_id !== track.id) return res.status(404).json({ error: 'Collaborator credit not found.' });
+    await dbRemoveCollaborator(collab.id);
+    return res.json({ success: true });
+  } catch (err) {
+    console.error('[track collaborator remove]', err);
+    return res.status(500).json({ error: 'Could not remove collaborator.' });
+  }
+});
+
 // GET /api/tracks/:trackId/stream  ?token=  (token optional — anyone can
 // stream a published track, same "browsable by a visitor who hasn't signed
 // in" philosophy as the artist routes above).
@@ -5328,11 +5662,14 @@ app.get('/api/tracks/:trackId/stream', rateLimit, async (req, res) => {
       .createSignedUrl(cloudFile.storage_path, SIGNED_URL_TTL_SECONDS);
     if (error) throw new Error(error.message);
 
+    const collaborators = (await dbGetTrackCollaborators(track.id)).map(shapeCollaborator);
+
     return res.json({
       id: track.id, title: track.title, coverUrl: track.cover_url,
       artistId: track.artist_id, artistName: track.artist_name,
       mimeType: cloudFile.mime_type, duration: cloudFile.duration,
       url: data.signedUrl, expiresIn: SIGNED_URL_TTL_SECONDS,
+      collaborators,
     });
   } catch (err) {
     console.error('[track stream]', err);
