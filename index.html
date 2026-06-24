@@ -2682,7 +2682,7 @@ body.oled-mode {
           <div class="avatar-upload-hint" id="artistAvatarUploadHint">Change</div>
         </div>
       </div>
-      <div class="lyrics-title" id="artistProfileName">—<span id="artistVerifiedBadge" style="display:none;color:var(--accent3);"> ✓</span></div>
+      <div class="lyrics-title" id="artistProfileName"><span id="artistProfileNameText">—</span><span id="artistVerifiedBadge" style="display:none;color:var(--accent3);"> ✓</span></div>
       <div class="lyrics-artist" id="artistProfileJoinDate"></div>
       <div class="profile-stats-grid" style="grid-template-columns:repeat(4,1fr);">
         <span><strong id="artistProfileFollowerCount">0</strong>Followers</span>
@@ -4731,7 +4731,7 @@ async function openArtistProfile(idOrSlug) {
 
     $('artistProfileLoading').style.display = 'none';
     $('artistProfileContent').style.display = 'block';
-    $('artistProfileName').textContent = data.name;
+    $('artistProfileNameText').textContent = data.name;
     $('artistVerifiedBadge').style.display = data.isVerified ? 'inline' : 'none';
     $('artistProfileJoinDate').textContent = data.joinedAt ? `Joined ${formatJoinDate(data.joinedAt)}` : '';
     $('artistProfileBio').textContent = data.bio || (data.isOwner ? 'Add a bio to tell people about your music.' : '(no bio set)');
@@ -9192,7 +9192,7 @@ async function keepAliveTokenRefresh() {
 
 async function keepAliveAutoSync() {
   if (!AUTH.loggedIn) return;
-  await syncPush();
+  await serverSync(true); // silent — this is a background tick, not a user-initiated sync
 }
 
 function updateKeepAliveStatus(msg) {
