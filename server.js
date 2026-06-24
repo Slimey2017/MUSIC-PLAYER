@@ -857,6 +857,39 @@ async function dbDeleteRelease(releaseId) {
   if (error) throw new Error(error.message);
 }
 
+// Partial update for release metadata — title, cover_url, release_date, and
+// description are the only mutable fields. release_type is intentionally NOT
+// patchable after creation (changing "Album" to "EP" post-hoc is confusing
+// and rarely correct; delete + recreate is the right escape hatch for that).
+async function dbUpdateRelease(releaseId, patch) {
+  const { data, error } = await supabase
+    .from('artist_releases')
+    .update({ ...patch, updated_at: new Date().toISOString() })
+    .eq('id', releaseId)
+    .select()
+    .single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+// Removes a single track from a release (junction row only — the track itself
+// is not deleted). Recounts track_count after removal.
+async function dbRemoveTrackFromRelease(releaseId, trackId) {
+  const { error } = await supabase
+    .from('artist_release_tracks')
+    .delete()
+    .eq('release_id', releaseId)
+    .eq('track_id', trackId);
+  if (error) throw new Error(error.message);
+  const { count } = await supabase
+    .from('artist_release_tracks')
+    .select('id', { count: 'exact', head: true })
+    .eq('release_id', releaseId);
+  await supabase.from('artist_releases')
+    .update({ track_count: count || 0, updated_at: new Date().toISOString() })
+    .eq('id', releaseId);
+}
+
 async function dbGetReleaseTracks(releaseId) {
   const { data, error } = await supabase
     .from('artist_release_tracks')
@@ -3357,10 +3390,23 @@ app.post('/api/plays', rateLimit, async (req, res) => {
   try {
     const sess = token ? await dbGetSession(token) : null;
     const listenerKey = sess ? sess.username : (req.ip || req.connection.remoteAddress || 'unknown');
+
+    // For cloud: URLs (published FREQ tracks), the artist name is already on
+    // the tracks row. If the caller didn't supply it (the frontend only
+    // sends item.artist which is the ID3 field, not always set on cloud items),
+    // we look it up from the existing tracks row so artist_id backfill never
+    // silently fails for published music.
+    let artistName = (typeof artist === 'string' && artist.trim()) ? artist.trim() : null;
+    if (!artistName && typeof originalUrl === 'string' && originalUrl.startsWith('cloud:')) {
+      const { data: existingTrack } = await supabase
+        .from('tracks').select('artist_name').eq('original_url', originalUrl).maybeSingle();
+      if (existingTrack?.artist_name) artistName = existingTrack.artist_name;
+    }
+
     const result = await dbLogPlay(originalUrl, {
       platform: platform || null,
       title: title || null,
-      artistName: (typeof artist === 'string' && artist.trim()) ? artist.trim() : null,
+      artistName,
       username: sess ? sess.username : null,
       listenerKey,
     });
@@ -5236,7 +5282,98 @@ app.delete('/api/artists/:id/releases/:releaseId', rateLimit, async (req, res) =
   }
 });
 
-// ── Release collaborators ───────────────────────────────────────────────────
+// PATCH /api/artists/:id/releases/:releaseId  { token, title?, coverUrl?, releaseDate?, description? }
+// Edit release metadata. release_type is immutable after creation by design.
+app.patch('/api/artists/:id/releases/:releaseId', rateLimit, async (req, res) => {
+  const { token, title, coverUrl, releaseDate, description } = req.body || {};
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  try {
+    const artist = await resolveArtistFromParam(req.params.id);
+    if (!artist) return res.status(404).json({ error: 'Artist not found.' });
+    if (artist.account_id !== sess.username) {
+      return res.status(403).json({ error: 'Only the artist who claimed this page can edit releases.' });
+    }
+    const { data: release } = await supabase
+      .from('artist_releases').select('id').eq('id', req.params.releaseId).eq('artist_id', artist.id).maybeSingle();
+    if (!release) return res.status(404).json({ error: 'Release not found.' });
+
+    const patch = {};
+    if (title !== undefined) {
+      if (typeof title !== 'string' || !title.trim()) return res.status(400).json({ error: '"title" must be a non-empty string.' });
+      patch.title = title.trim().slice(0, 200);
+    }
+    if (coverUrl !== undefined) {
+      patch.cover_url = (typeof coverUrl === 'string' && coverUrl.trim()) ? coverUrl.trim().slice(0, 2000) : null;
+    }
+    if (releaseDate !== undefined) {
+      patch.release_date = releaseDate || null;
+    }
+    if (description !== undefined) {
+      patch.description = (typeof description === 'string') ? description.trim().slice(0, 2000) || null : null;
+    }
+    if (!Object.keys(patch).length) return res.status(400).json({ error: 'No valid fields to update.' });
+    const updated = await dbUpdateRelease(release.id, patch);
+    return res.json({
+      id: updated.id, title: updated.title, releaseType: updated.release_type,
+      coverUrl: updated.cover_url, releaseDate: updated.release_date,
+      description: updated.description, trackCount: updated.track_count,
+    });
+  } catch (err) {
+    console.error('[artist update release]', err);
+    return res.status(500).json({ error: 'Could not update release.' });
+  }
+});
+
+// DELETE /api/artists/:id/releases/:releaseId/tracks/:trackId  { token }
+// Remove a single track from a release (unlinks it, does not delete the track).
+app.delete('/api/artists/:id/releases/:releaseId/tracks/:trackId', rateLimit, async (req, res) => {
+  const token = req.body?.token || req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  try {
+    const artist = await resolveArtistFromParam(req.params.id);
+    if (!artist) return res.status(404).json({ error: 'Artist not found.' });
+    if (artist.account_id !== sess.username) {
+      return res.status(403).json({ error: 'Only the artist who claimed this page can manage releases.' });
+    }
+    const { data: release } = await supabase
+      .from('artist_releases').select('id').eq('id', req.params.releaseId).eq('artist_id', artist.id).maybeSingle();
+    if (!release) return res.status(404).json({ error: 'Release not found.' });
+    await dbRemoveTrackFromRelease(release.id, req.params.trackId);
+    return res.json({ success: true });
+  } catch (err) {
+    console.error('[release remove track]', err);
+    return res.status(500).json({ error: 'Could not remove track from release.' });
+  }
+});
+
+// POST /api/artists/:id/releases/:releaseId/tracks  { token, trackId }
+// Add an existing published track to a release (e.g. after editing release assignment).
+app.post('/api/artists/:id/releases/:releaseId/tracks', rateLimit, async (req, res) => {
+  const { token, trackId } = req.body || {};
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  if (!trackId) return res.status(400).json({ error: '"trackId" is required.' });
+  try {
+    const artist = await resolveArtistFromParam(req.params.id);
+    if (!artist) return res.status(404).json({ error: 'Artist not found.' });
+    if (artist.account_id !== sess.username) {
+      return res.status(403).json({ error: 'Only the artist who claimed this page can manage releases.' });
+    }
+    const { data: release } = await supabase
+      .from('artist_releases').select('id').eq('id', req.params.releaseId).eq('artist_id', artist.id).maybeSingle();
+    if (!release) return res.status(404).json({ error: 'Release not found.' });
+    const track = await dbGetTrackById(trackId);
+    if (!track || track.artist_id !== artist.id) return res.status(404).json({ error: 'Track not found or does not belong to this artist.' });
+    await dbAddTrackToRelease(release.id, track.id);
+    return res.json({ success: true });
+  } catch (err) {
+    if (err.message?.includes('duplicate')) return res.status(409).json({ error: 'Track is already in this release.' });
+    console.error('[release add track]', err);
+    return res.status(500).json({ error: 'Could not add track to release.' });
+  }
+});
 // Same ownership shape as DELETE /releases/:releaseId just above: resolve
 // the artist from the URL, confirm they're the session's account, then
 // confirm the release actually belongs to that artist before touching it.
@@ -5406,8 +5543,14 @@ async function dbUnpublishTrack(trackId) {
   // upload could accidentally get "republished" against. artist_release_tracks
   // rows referencing this track cascade-delete via their FK, so the release
   // it belonged to has its track removed cleanly, not left dangling.
+  //
+  // After delete we immediately kick recomputeArtistStats so the dashboard
+  // play counts and release totals don't show stale numbers until the next
+  // 10-minute timer fires.
   const { error } = await supabase.from('tracks').delete().eq('id', trackId);
   if (error) throw new Error(error.message);
+  // Fire-and-forget recompute — don't await, deletion already succeeded
+  recomputeArtistStats().catch(err => console.error('[unpublish] recompute failed:', err));
 }
 
 app.get('/api/artists/:id/publishable', rateLimit, async (req, res) => {
@@ -5515,7 +5658,7 @@ app.post('/api/artists/:id/publish', rateLimit, async (req, res) => {
 });
 
 app.patch('/api/tracks/:trackId', rateLimit, async (req, res) => {
-  const { token, title, coverUrl } = req.body || {};
+  const { token, title, coverUrl, description, releaseId } = req.body || {};
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
   try {
@@ -5533,9 +5676,42 @@ app.patch('/api/tracks/:trackId', rateLimit, async (req, res) => {
     if (coverUrl !== undefined) {
       patch.cover_url = (typeof coverUrl === 'string' && coverUrl.trim()) ? coverUrl.trim().slice(0, 2000) : null;
     }
-    if (!Object.keys(patch).length) return res.status(400).json({ error: 'No valid fields to update.' });
-    const updated = await dbUpdatePublishedTrack(track.id, patch);
-    return res.json({ id: updated.id, title: updated.title, coverUrl: updated.cover_url });
+    if (description !== undefined) {
+      patch.description = (typeof description === 'string') ? description.trim().slice(0, 2000) || null : null;
+    }
+
+    // Release reassignment: remove from old release(s), add to new one if provided.
+    // releaseId === null explicitly unlinks from all releases; omitting releaseId
+    // entirely leaves release assignments untouched (standard PATCH semantics).
+    if (releaseId !== undefined) {
+      // Remove from any existing release(s) first
+      const { data: existingLinks } = await supabase
+        .from('artist_release_tracks')
+        .select('release_id')
+        .eq('track_id', track.id);
+      for (const link of existingLinks || []) {
+        await dbRemoveTrackFromRelease(link.release_id, track.id).catch(() => {});
+      }
+      // Attach to new release if a non-null releaseId was provided
+      if (releaseId) {
+        const { data: newRelease } = await supabase
+          .from('artist_releases').select('id').eq('id', releaseId).eq('artist_id', artist.id).maybeSingle();
+        if (!newRelease) return res.status(404).json({ error: 'Target release not found or does not belong to this artist.' });
+        await dbAddTrackToRelease(newRelease.id, track.id);
+      }
+    }
+
+    if (!Object.keys(patch).length && releaseId === undefined) {
+      return res.status(400).json({ error: 'No valid fields to update.' });
+    }
+    let updated = track;
+    if (Object.keys(patch).length) {
+      updated = await dbUpdatePublishedTrack(track.id, patch);
+    }
+    return res.json({
+      id: updated.id, title: updated.title, coverUrl: updated.cover_url,
+      description: updated.description || null,
+    });
   } catch (err) {
     console.error('[track update]', err);
     return res.status(500).json({ error: 'Could not update track.' });
