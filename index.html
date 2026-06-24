@@ -2690,7 +2690,10 @@ body.oled-mode {
         <span><strong id="artistProfileTotalPlays">0</strong>Plays</span>
         <span><strong id="artistProfileTotalLikes">0</strong>Likes</span>
       </div>
-      <div id="artistProfileBio" style="font-size:0.55rem;color:var(--text);line-height:1.8;white-space:pre-wrap;margin-bottom:14px;">—</div>
+      <div id="artistProfileBio" style="font-size:0.55rem;color:var(--text);line-height:1.8;white-space:pre-wrap;margin-bottom:8px;">—</div>
+      <div id="artistBioEditRow" style="display:none;margin-bottom:14px;">
+        <button id="artistBioEditBtn" onclick="openArtistBioEditModal()" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.42rem;padding:5px 10px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.04em;text-transform:uppercase;">✎ Edit Bio</button>
+      </div>
       <div class="profile-action-row">
         <button id="artistProfileFollowBtn" style="background:none;border:1px solid var(--accent3);color:var(--accent3);font-family:'Space Mono',monospace;font-size:0.5rem;padding:8px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.06em;text-transform:uppercase;">Follow</button>
         <button class="share-btn" id="artistProfileShareBtn" style="flex:0 0 auto;padding:8px 12px;">⇪ Share</button>
@@ -2804,6 +2807,19 @@ body.oled-mode {
     <div id="createReleaseStatus" style="font-size:0.42rem;color:var(--text-muted);margin-bottom:10px;min-height:1.2em;"></div>
     <button id="createReleaseSubmitBtn" style="width:100%;background:var(--accent);color:var(--bg);border:none;font-family:'Unbounded',sans-serif;font-weight:700;font-size:0.52rem;padding:10px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.05em;text-transform:uppercase;margin-bottom:8px;">Create Release</button>
     <button class="support-close-btn" onclick="closeCreateReleaseModal()">Cancel</button>
+  </div>
+</div>
+
+<!-- Artist Bio Edit modal -->
+<div class="lyrics-overlay" id="artistBioEditOverlay">
+  <div class="lyrics-panel" style="max-width:420px;">
+    <div class="lyrics-title" style="font-size:0.7rem;">Edit Bio</div>
+    <div style="font-size:0.46rem;color:var(--text-muted);margin-bottom:10px;">Tell the world about your music. Markdown not supported — plain text only.</div>
+    <textarea id="artistBioEditTextarea" maxlength="2000" rows="8" placeholder="Write your bio here… (max 2,000 characters)" style="width:100%;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-family:'Space Mono',monospace;font-size:0.5rem;padding:9px 11px;box-sizing:border-box;resize:vertical;line-height:1.7;margin-bottom:6px;"></textarea>
+    <div id="artistBioCharCount" style="font-size:0.4rem;color:var(--text-muted);text-align:right;margin-bottom:10px;">0 / 2,000</div>
+    <div id="artistBioEditStatus" style="font-size:0.42rem;color:var(--text-muted);margin-bottom:10px;min-height:1.2em;"></div>
+    <button id="artistBioSaveBtn" style="width:100%;background:var(--accent);color:var(--bg);border:none;font-family:'Unbounded',sans-serif;font-weight:700;font-size:0.52rem;padding:10px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.05em;text-transform:uppercase;margin-bottom:8px;">Save Bio</button>
+    <button class="support-close-btn" onclick="closeArtistBioEditModal()">Cancel</button>
   </div>
 </div>
 
@@ -5350,7 +5366,84 @@ function loadDashStats() {
   `;
 }
 
-// ─── Become an Artist ───────────────────────────────────────────────────────
+// ─── Artist Bio Edit ────────────────────────────────────────────────────────
+// Owner-only. Bio is plain text, multi-line, up to 2,000 characters.
+// The PATCH /api/artists/:id route already handles bio updates with
+// server-side trimming and length enforcement — client-side limits here
+// are just UX convenience, not a security boundary.
+
+function openArtistBioEditModal() {
+  if (!viewedArtist) return;
+  const textarea = $('artistBioEditTextarea');
+  const charCount = $('artistBioCharCount');
+  if (textarea) {
+    const current = viewedArtist.bio || '';
+    textarea.value = current;
+    if (charCount) charCount.textContent = `${current.length.toLocaleString()} / 2,000`;
+  }
+  $('artistBioEditStatus').textContent = '';
+  $('artistBioEditOverlay')?.classList.add('open');
+  setTimeout(() => textarea?.focus(), 80);
+}
+
+function closeArtistBioEditModal() {
+  $('artistBioEditOverlay')?.classList.remove('open');
+}
+
+$('artistBioEditTextarea')?.addEventListener('input', function() {
+  const len = this.value.length;
+  const charCount = $('artistBioCharCount');
+  if (charCount) {
+    charCount.textContent = `${len.toLocaleString()} / 2,000`;
+    charCount.style.color = len > 1900 ? 'var(--accent2)' : 'var(--text-muted)';
+  }
+});
+
+$('artistBioSaveBtn')?.addEventListener('click', async () => {
+  if (!viewedArtist) return;
+  const bio = $('artistBioEditTextarea').value;
+  if (bio.length > 2000) {
+    $('artistBioEditStatus').textContent = 'Bio exceeds 2,000 characters.';
+    $('artistBioEditStatus').style.color = 'var(--accent2)';
+    return;
+  }
+  const btn = $('artistBioSaveBtn');
+  btn.disabled = true; btn.textContent = 'Saving…';
+  $('artistBioEditStatus').textContent = '';
+  try {
+    const res = await fetch(`${ARTISTS_BASE}/${encodeURIComponent(viewedArtist.id)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: AUTH.token, bio: bio.trim() }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      if (res.status === 401) { handleTokenExpiry(); return; }
+      throw new Error(data.error || 'Could not save bio.');
+    }
+    // Update local state and the displayed bio immediately
+    viewedArtist.bio = data.bio;
+    const bioEl = $('artistProfileBio');
+    if (bioEl) {
+      if (data.bio) {
+        bioEl.textContent = data.bio;
+        bioEl.style.color = 'var(--text)';
+      } else {
+        bioEl.textContent = 'Add a bio to tell people about your music.';
+        bioEl.style.color = 'var(--text-muted)';
+      }
+    }
+    showToast('Bio saved', 'Your artist bio has been updated.', 'success');
+    closeArtistBioEditModal();
+  } catch (err) {
+    $('artistBioEditStatus').textContent = err.message || 'Could not save bio.';
+    $('artistBioEditStatus').style.color = 'var(--accent2)';
+  } finally {
+    btn.disabled = false; btn.textContent = 'Save Bio';
+  }
+});
+
+
 function openBecomeArtistModal() {
   if (!AUTH.loggedIn) { showToast('Sign in required', 'Please sign in to become an artist.', 'error'); return; }
   $('becomeArtistOverlay')?.classList.add('open');
