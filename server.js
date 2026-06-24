@@ -677,8 +677,12 @@ async function dbGetLiveArtistStats(artistId, cachedStats = null) {
       .eq('artist_id', artistId),
     supabase.from('tracks')
       .select('play_count, play_count_7d')
-      .eq('artist_id', artistId)
-      .eq('is_published', true),
+      .eq('artist_id', artistId),
+      // NOTE: intentionally NOT filtering by is_published — play_count accumulates
+      // on every track row regardless of publish state (it's incremented by
+      // increment_track_play_count on every logged play, which runs before publish).
+      // Filtering to is_published=true was the root cause of the zero-stats bug:
+      // artists who hadn't published yet but had plays in the system saw 0 everywhere.
     supabase.from('track_plays')
       .select('username, tracks!inner(artist_id)')
       .eq('tracks.artist_id', artistId)
