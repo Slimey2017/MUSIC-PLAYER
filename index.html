@@ -11171,34 +11171,52 @@ function sendTrackNotification(title, artist) {
 }
 
 // ─── 6. Lyrics Modal ─────────────────────────────────────────────────────────
-function openLyricsModal() {
+// Pulls from the real track_lyrics system (same GET /api/tracks/:id/lyrics
+// used by the artist-page Lyrics panel — see toggleTrackLyricsSection)
+// rather than the old Genius/AZLyrics search-link stub. Only queue items
+// resolved via resolvePublishedTrack (platform === 'freq') carry a real
+// tracks.id, since lyrics are keyed to that table — local files, YouTube,
+// Spotify, etc. have no matching row to look up.
+async function openLyricsModal() {
   const item = state.queue[state.activeIndex];
-  if (!item) { showToast('No Track', 'Play a track first to find lyrics.', 'info'); return; }
+  if (!item) {
+    $('lyricsTrackTitle').textContent  = '';
+    $('lyricsTrackArtist').textContent = '';
+    $('lyricsContent').className = 'lyrics-content';
+    $('lyricsContent').textContent = 'No track currently playing.';
+    $('lyricsOverlay').classList.add('open');
+    playSfx('click');
+    return;
+  }
   const displayName = item.customLabel || item.title || '';
   $('lyricsTrackTitle').textContent  = displayName || 'Unknown Track';
-  $('lyricsTrackArtist').textContent = item.platform ? `via ${PLATFORM_CONFIG[item.platform]?.label || item.platform}` : '';
-  $('lyricsContent').className = 'lyrics-content lyrics-loading';
-  $('lyricsContent').textContent = '♪ Searching for lyrics…';
+  $('lyricsTrackArtist').textContent = item.artist || (item.platform ? `via ${PLATFORM_CONFIG[item.platform]?.label || item.platform}` : '');
   $('lyricsOverlay').classList.add('open');
   playSfx('click');
-  // Since we can't call a lyrics API without a key, we build a search link
-  const query = encodeURIComponent(displayName + ' lyrics');
-  setTimeout(() => {
+
+  if (item.platform !== 'freq' || !item.id) {
     $('lyricsContent').className = 'lyrics-content';
-    $('lyricsContent').innerHTML = `<div style="text-align:center;padding:12px 0;font-size:0.55rem;color:var(--text-muted);line-height:2;">
-      Lyrics integration requires a licensed API.<br/>
-      Search for lyrics online:
-      <div style="display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin-top:10px;">
-        <a href="https://genius.com/search?q=${query}" target="_blank" style="color:var(--accent);text-decoration:none;border:1px solid var(--accent);padding:4px 10px;border-radius:var(--radius);font-size:0.48rem;letter-spacing:0.06em;">Genius</a>
-        <a href="https://www.azlyrics.com/search/?q=${query}" target="_blank" style="color:var(--accent3);text-decoration:none;border:1px solid var(--accent3);padding:4px 10px;border-radius:var(--radius);font-size:0.48rem;letter-spacing:0.06em;">AZLyrics</a>
-        <a href="https://www.musixmatch.com/search/${query}" target="_blank" style="color:var(--accent2);text-decoration:none;border:1px solid var(--accent2);padding:4px 10px;border-radius:var(--radius);font-size:0.48rem;letter-spacing:0.06em;">Musixmatch</a>
-      </div>
-      <div style="margin-top:14px;font-size:0.46rem;color:var(--text-muted);">
-        Tip: Paste lyrics here manually using the field below.
-      </div>
-      <textarea placeholder="Paste lyrics here…" style="width:100%;margin-top:8px;background:var(--surface3);border:1px solid var(--border);color:var(--text);font-family:'Space Mono',monospace;font-size:0.58rem;padding:10px;border-radius:var(--radius);resize:vertical;outline:none;height:180px;" oninput="this.closest('.lyrics-panel').querySelector('.lyrics-content').textContent=this.value||''" style="display:none;"></textarea>
-    </div>`;
-  }, 600);
+    $('lyricsContent').textContent = 'No lyrics available.';
+    return;
+  }
+
+  $('lyricsContent').className = 'lyrics-content lyrics-loading';
+  $('lyricsContent').textContent = '♪ Loading lyrics…';
+  try {
+    const res = await fetch(`${TRACKS_BASE}/${encodeURIComponent(item.id)}/lyrics`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not load lyrics.');
+    // Guard against a stale response landing after the user skipped to a
+    // different track (or closed/reopened the modal) while this was in flight.
+    if (state.queue[state.activeIndex] !== item) return;
+    $('lyricsContent').className = 'lyrics-content';
+    $('lyricsContent').textContent = (data.lyrics && data.lyrics.trim()) ? data.lyrics : 'No lyrics available.';
+  } catch (err) {
+    if (state.queue[state.activeIndex] !== item) return;
+    $('lyricsContent').className = 'lyrics-content';
+    $('lyricsContent').textContent = 'No lyrics available.';
+    console.error('[openLyricsModal]', err);
+  }
 }
 function closeLyricsModal() { $('lyricsOverlay').classList.remove('open'); }
 if ($('lyricsBtn')) $('lyricsBtn').addEventListener('click', openLyricsModal);
