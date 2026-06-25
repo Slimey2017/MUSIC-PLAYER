@@ -4477,31 +4477,52 @@ async function dbCreatePost(username, { postType, body, playlistId, trackId, art
 
 async function dbGetPost(postId) {
   const { data, error } = await supabase.from('posts')
-    .select('*, profiles:author!inner(username, display_name, avatar_url)')
+    .select('*, profiles:author!inner(username, display_name, avatar_url), artists:artist_id(id, name, slug, avatar_url, is_verified)')
     .eq('id', postId).maybeSingle();
   if (error) { console.error('[db] getPost:', error.message); return null; }
   return data;
 }
 
-async function dbGetPostsFeed({ before = null, limit = 20, username = null, artistId = null } = {}) {
+async function dbGetPostsFeed({ before = null, limit = 20, username = null, artistId = null, artistVoiceOnly = false } = {}) {
   let q = supabase.from('posts')
-    .select('*, profiles:author!inner(username, display_name, avatar_url)')
+    .select('*, profiles:author!inner(username, display_name, avatar_url), artists:artist_id(id, name, slug, avatar_url, is_verified)')
     .order('created_at', { ascending: false })
     .limit(Math.min(limit, 50));
   if (username) q = q.eq('author', username);
-  if (artistId) q = q.eq('artist_id', artistId);
+  if (artistId) {
+    q = q.eq('artist_id', artistId);
+    // artist_id means two different things depending on post_type: "this
+    // artist is speaking" (release_announcement/artist_update) vs "this
+    // artist is the subject of someone else's Artist Share post". The
+    // artist's own page/dashboard "posts by this artist" list wants only
+    // the former — otherwise a stranger's Artist Share recommending this
+    // artist would show up looking like the artist posted it themselves.
+    if (artistVoiceOnly) q = q.in('post_type', ['release_announcement', 'artist_update']);
+  }
   if (before) q = q.lt('created_at', before);
   const { data, error } = await q;
   if (error) { console.error('[db] getPostsFeed:', error.message); return []; }
   return data || [];
 }
 
+// Artist-only post types (release_announcement, artist_update) are
+// presented as coming from the artist page, not the underlying account —
+// a fan following "DJ Nova" the artist shouldn't see the post attributed
+// to whatever username claimed that page. Every other post type (including
+// a regular post that merely references an artist via artist Share) still
+// shows the human author, since artist_id there is "the recommendation" not
+// "the speaker".
+const ARTIST_VOICE_POST_TYPES = ['release_announcement', 'artist_update'];
 function formatPost(p, myUsername = null) {
+  const postingAsArtist = ARTIST_VOICE_POST_TYPES.includes(p.post_type) && p.artists;
   return {
     id: p.id,
     author: p.author,
-    displayName: p.profiles?.display_name || p.author,
-    avatarUrl: p.profiles?.avatar_url || null,
+    displayName: postingAsArtist ? p.artists.name : (p.profiles?.display_name || p.author),
+    avatarUrl: postingAsArtist ? p.artists.avatar_url : (p.profiles?.avatar_url || null),
+    postedAsArtist: !!postingAsArtist,
+    artistSlug: p.artists?.slug || null,
+    artistIsVerified: p.artists?.is_verified || false,
     postType: p.post_type,
     body: p.body,
     playlistId: p.playlist_id,
@@ -4527,6 +4548,24 @@ app.post('/api/posts', rateLimit, async (req, res) => {
     return res.status(400).json({ error: 'Post must have body text or reference content.' });
   }
   if (body && body.length > 1000) return res.status(400).json({ error: 'Post body must be 1000 characters or fewer.' });
+
+  // Every account can post. 'release_announcement' and 'artist_update' are
+  // the two artist-only types — they require posting *as* a claimed artist
+  // page, enforced below and mirrored by a DB CHECK (posts_artist_post_types_
+  // require_artist_id) so this can't drift out of sync with the schema.
+  const POST_TYPES = ['text', 'track', 'playlist', 'artist', 'release_announcement', 'artist_update'];
+  const ARTIST_ONLY_TYPES = ['release_announcement', 'artist_update'];
+  const resolvedType = postType || 'text';
+  if (!POST_TYPES.includes(resolvedType)) {
+    return res.status(400).json({ error: `Invalid post type. Must be one of: ${POST_TYPES.join(', ')}.` });
+  }
+  if (ARTIST_ONLY_TYPES.includes(resolvedType) && !artistId) {
+    return res.status(400).json({ error: 'Release announcements and artist updates must be posted from an artist page.' });
+  }
+  if (resolvedType === 'release_announcement' && !releaseId) {
+    return res.status(400).json({ error: 'A release announcement must reference a release.' });
+  }
+
   try {
     // artistId on a post means "this post is from/about this artist page" —
     // when it's set, only the account that claimed that artist page may
@@ -4534,15 +4573,52 @@ app.post('/api/posts', rateLimit, async (req, res) => {
     // arbitrary artistId on a post and have it show up as if that artist
     // posted it, which matters now that the Dashboard's Posts tab lets an
     // owner publish announcements this way.
+    let postingArtist = null;
     if (artistId) {
-      const postingArtist = await dbGetArtistById(artistId);
+      postingArtist = await dbGetArtistById(artistId);
       if (!postingArtist || postingArtist.account_id !== sess.username) {
         return res.status(403).json({ error: 'Only the artist who claimed this page can post as it.' });
       }
     }
-    const post = await dbCreatePost(sess.username, { postType, body, playlistId, trackId, artistId, releaseId });
+    // releaseId on a release_announcement must belong to that same artist —
+    // same "don't let the client tag arbitrary foreign-key ids" concern as
+    // the artistId check above, just one level deeper.
+    if (resolvedType === 'release_announcement') {
+      const { data: rel } = await supabase
+        .from('artist_releases').select('id').eq('id', releaseId).eq('artist_id', artistId).maybeSingle();
+      if (!rel) return res.status(403).json({ error: 'That release does not belong to this artist.' });
+    }
+    // A shared playlist must be public, or owned by the person sharing it —
+    // otherwise any account could post an arbitrary playlists_v2 id and the
+    // resulting post-ref-card would point at a private playlist that isn't
+    // theirs to surface. (The viewer itself separately enforces access on
+    // open, but the post shouldn't be creatable pointing at it at all.)
+    if (playlistId) {
+      const { data: pl } = await supabase
+        .from('playlists_v2').select('owner, is_public').eq('id', playlistId).maybeSingle();
+      if (!pl || (!pl.is_public && pl.owner !== sess.username)) {
+        return res.status(403).json({ error: 'You can only share your own or public playlists.' });
+      }
+    }
+    // A shared track must actually be a published FREQ track — unpublished
+    // (draft) tracks have no public stream and shouldn't be shareable.
+    if (trackId) {
+      const { data: tr } = await supabase
+        .from('tracks').select('id, is_published').eq('id', trackId).maybeSingle();
+      if (!tr || !tr.is_published) {
+        return res.status(403).json({ error: 'That track is not available to share.' });
+      }
+    }
+    const post = await dbCreatePost(sess.username, { postType: resolvedType, body, playlistId, trackId, artistId, releaseId });
     // Write to activity feed
-    dbWriteActivity('user_post', sess.username, null, { postId: post.id, preview: (body || '').slice(0, 80) });
+    const activityType = ARTIST_ONLY_TYPES.includes(resolvedType) ? resolvedType : 'user_post';
+    dbWriteActivity(activityType, sess.username, null, {
+      postId: post.id,
+      preview: (body || '').slice(0, 80),
+      artistId: artistId || null,
+      artistName: postingArtist?.name || null,
+      releaseId: releaseId || null,
+    });
     return res.status(201).json({ post: formatPost(post, sess.username) });
   } catch (err) {
     console.error('[posts create]', err);
@@ -4608,7 +4684,7 @@ app.get('/api/posts/artist/:id', async (req, res) => {
   try {
     const artist = await resolveArtistFromParam(req.params.id);
     if (!artist) return res.status(404).json({ error: 'Artist not found.' });
-    const posts = await dbGetPostsFeed({ before, limit, artistId: artist.id });
+    const posts = await dbGetPostsFeed({ before, limit, artistId: artist.id, artistVoiceOnly: true });
     let likedIds = new Set();
     if (sess && posts.length) {
       const ids = posts.map(p => p.id);
