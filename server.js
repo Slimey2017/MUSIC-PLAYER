@@ -813,18 +813,23 @@ async function dbIsFollowingArtist(followerUsername, artistId) {
 }
 
 // ── Artist releases (discography) ───────────────────────────────────────────
-async function dbGetArtistReleases(artistId, { type = null } = {}) {
+async function dbGetArtistReleases(artistId, { type = null, includeNonPublic = false } = {}) {
   let q = supabase.from('artist_releases').select('*').eq('artist_id', artistId);
   if (type) q = q.eq('release_type', type);
+  // Visitors only see public releases; owner dashboard passes includeNonPublic:true
+  if (!includeNonPublic) q = q.eq('visibility', 'public');
   const { data, error } = await q.order('release_date', { ascending: false, nullsFirst: false });
   if (error) { console.error('[db] getArtistReleases:', error.message); return []; }
   return data || [];
 }
 
-async function dbCreateRelease(artistId, { title, releaseType, coverUrl, releaseDate }) {
+async function dbCreateRelease(artistId, { title, releaseType, coverUrl, releaseDate, visibility = 'public' }) {
+  const safeVisibility = ['public', 'private', 'unlisted'].includes(visibility) ? visibility : 'public';
+  const safeType = ['single', 'ep', 'album', 'mixtape', 'compilation'].includes(releaseType) ? releaseType : 'single';
   const { data, error } = await supabase.from('artist_releases').insert({
-    artist_id: artistId, title, release_type: releaseType,
+    artist_id: artistId, title, release_type: safeType,
     cover_url: coverUrl || null, release_date: releaseDate || null,
+    visibility: safeVisibility,
   }).select().single();
   if (error) throw new Error(error.message);
   return data;
@@ -862,6 +867,11 @@ async function dbDeleteRelease(releaseId) {
 // patchable after creation (changing "Album" to "EP" post-hoc is confusing
 // and rarely correct; delete + recreate is the right escape hatch for that).
 async function dbUpdateRelease(releaseId, patch) {
+  // Guard visibility against invalid values
+  if (patch.visibility !== undefined) {
+    patch.visibility = ['public', 'private', 'unlisted'].includes(patch.visibility)
+      ? patch.visibility : 'public';
+  }
   const { data, error } = await supabase
     .from('artist_releases')
     .update({ ...patch, updated_at: new Date().toISOString() })
@@ -893,15 +903,36 @@ async function dbRemoveTrackFromRelease(releaseId, trackId) {
 async function dbGetReleaseTracks(releaseId) {
   const { data, error } = await supabase
     .from('artist_release_tracks')
-    .select('position, tracks(id, original_url, platform, title, play_count)')
+    .select('position, tracks(id, original_url, platform, title, play_count, cover_url, cloud_file_id, artist_id, artist_name)')
     .eq('release_id', releaseId)
     .order('position', { ascending: true });
   if (error) { console.error('[db] getReleaseTracks:', error.message); return []; }
   return (data || []).filter(r => r.tracks).map(r => ({ ...r.tracks, position: r.position }));
 }
 
+// ── Track Lyrics ────────────────────────────────────────────────────────────
+async function dbGetTrackLyrics(trackId) {
+  const { data, error } = await supabase
+    .from('track_lyrics').select('*').eq('track_id', trackId).maybeSingle();
+  if (error) { console.error('[db] getTrackLyrics:', error.message); return null; }
+  return data;
+}
+
+async function dbUpsertTrackLyrics(trackId, lyrics) {
+  const { data, error } = await supabase
+    .from('track_lyrics')
+    .upsert({ track_id: trackId, lyrics, updated_at: new Date().toISOString() }, { onConflict: 'track_id' })
+    .select().single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+async function dbDeleteTrackLyrics(trackId) {
+  const { error } = await supabase.from('track_lyrics').delete().eq('track_id', trackId);
+  if (error) throw new Error(error.message);
+}
+
 // ── Artist collaborations (Featured/Collaborator/Producer/Contributor) ─────
-// Single artist_collaborations table covers both tracks and releases via an
 // XOR check (exactly one of track_id/release_id is set per row) — see
 // migration create_artist_collaborations. collaborator_artist_id always
 // points at an artists row regardless of whether that artist page has been
@@ -4983,13 +5014,15 @@ app.get('/api/artists/:id/releases', async (req, res) => {
   try {
     const artist = await resolveArtistFromParam(req.params.id);
     if (!artist) return res.status(404).json({ error: 'Artist not found.' });
-    const type = ['single', 'album', 'ep', 'mixtape'].includes(req.query.type) ? req.query.type : null;
-    const releases = await dbGetArtistReleases(artist.id, { type });
-    // Releases list is typically short (an artist's discography), so N
-    // small per-release collaborator queries here is fine — same tradeoff
-    // already made elsewhere in this file for similarly small N (e.g.
-    // dbGetArtistReleases callers generally), rather than complicating this
-    // with a second batched-by-id helper for a list that's rarely long.
+    // Owner can see private/unlisted releases; visitors only see public.
+    const token = (req.headers.authorization || '').replace('Bearer ', '') || req.query.token;
+    let isOwner = false;
+    if (token) {
+      const sess = await dbGetSession(token);
+      isOwner = !!(sess && artist.account_id === sess.username);
+    }
+    const type = ['single', 'album', 'ep', 'mixtape', 'compilation'].includes(req.query.type) ? req.query.type : null;
+    const releases = await dbGetArtistReleases(artist.id, { type, includeNonPublic: isOwner });
     const releasesWithCollabs = await Promise.all(releases.map(async r => ({
       r, collaborators: (await dbGetReleaseCollaborators(r.id)).map(shapeCollaborator),
     })));
@@ -4998,6 +5031,7 @@ app.get('/api/artists/:id/releases', async (req, res) => {
         id: r.id, title: r.title, releaseType: r.release_type, coverUrl: r.cover_url,
         releaseDate: r.release_date, trackCount: r.track_count, totalPlays: r.total_plays,
         totalLikes: r.total_likes, description: r.description, externalUrl: r.external_url,
+        visibility: r.visibility || 'public',
         collaborators,
       })),
     });
@@ -5009,12 +5043,34 @@ app.get('/api/artists/:id/releases', async (req, res) => {
 
 app.get('/api/artists/:id/releases/:releaseId/tracks', async (req, res) => {
   try {
+    // Visibility gate: private releases require ownership
+    const { data: release, error: relErr } = await supabase
+      .from('artist_releases')
+      .select('id, visibility, artist_id')
+      .eq('id', req.params.releaseId)
+      .maybeSingle();
+    if (relErr || !release) return res.status(404).json({ error: 'Release not found.' });
+
+    if (release.visibility === 'private') {
+      const token = (req.headers.authorization || '').replace('Bearer ', '') || req.query.token;
+      const sess = token ? await dbGetSession(token) : null;
+      const artist = sess ? await dbGetArtistById(release.artist_id) : null;
+      if (!artist || artist.account_id !== sess?.username) {
+        return res.status(403).json({ error: 'This release is private.' });
+      }
+    }
+
     const tracks = await dbGetReleaseTracks(req.params.releaseId);
     const collabsByTrack = await dbGetCollaboratorsForTracks(tracks.map(t => t.id));
     return res.json({
       tracks: tracks.map(t => ({
         id: t.id, originalUrl: t.original_url, platform: t.platform,
         title: t.title || t.original_url, playCount: t.play_count, position: t.position,
+        coverUrl: t.cover_url || null,
+        cloudFileId: t.cloud_file_id || null,
+        artistId: t.artist_id || null,
+        artistName: t.artist_name || null,
+        isUpload: !!t.cloud_file_id,
         collaborators: (collabsByTrack.get(t.id) || []).map(shapeCollaborator),
       })),
     });
@@ -5290,7 +5346,7 @@ app.post('/api/artists/:id/banner', rateLimit, imageUpload.single('file'), async
 });
 
 app.post('/api/artists/:id/releases', rateLimit, async (req, res) => {
-  const { token, title, releaseType, coverUrl, releaseDate, trackIds } = req.body || {};
+  const { token, title, releaseType, coverUrl, releaseDate, trackIds, visibility } = req.body || {};
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
   try {
@@ -5302,17 +5358,14 @@ app.post('/api/artists/:id/releases', rateLimit, async (req, res) => {
     if (!title || typeof title !== 'string' || !title.trim()) {
       return res.status(400).json({ error: '"title" is required.' });
     }
-    if (!['single', 'album', 'ep', 'mixtape'].includes(releaseType)) {
-      return res.status(400).json({ error: '"releaseType" must be one of single, album, ep, mixtape.' });
+    if (!['single', 'album', 'ep', 'mixtape', 'compilation'].includes(releaseType)) {
+      return res.status(400).json({ error: '"releaseType" must be one of single, album, ep, mixtape, compilation.' });
     }
     const release = await dbCreateRelease(artist.id, {
       title: title.trim().slice(0, 200), releaseType,
       coverUrl: coverUrl || null, releaseDate: releaseDate || null,
+      visibility: visibility || 'public',
     });
-    // trackIds is optional — a release can be created first and have
-    // tracks attached later via the same flow that plays them, but if the
-    // caller already knows which tracks.id rows belong to it, wire them up
-    // now so the release isn't empty on first view.
     if (Array.isArray(trackIds) && trackIds.length) {
       for (const trackId of trackIds.slice(0, 100)) {
         try { await dbAddTrackToRelease(release.id, trackId); } catch (e) { console.error('[release add track]', e.message); }
@@ -5324,6 +5377,7 @@ app.post('/api/artists/:id/releases', rateLimit, async (req, res) => {
     return res.status(201).json({
       id: release.id, title: release.title, releaseType: release.release_type,
       coverUrl: release.cover_url, releaseDate: release.release_date, trackCount: release.track_count,
+      visibility: release.visibility || 'public',
     });
   } catch (err) {
     console.error('[artist create release]', err);
@@ -5358,10 +5412,10 @@ app.delete('/api/artists/:id/releases/:releaseId', rateLimit, async (req, res) =
   }
 });
 
-// PATCH /api/artists/:id/releases/:releaseId  { token, title?, coverUrl?, releaseDate?, description? }
+// PATCH /api/artists/:id/releases/:releaseId  { token, title?, coverUrl?, releaseDate?, description?, visibility? }
 // Edit release metadata. release_type is immutable after creation by design.
 app.patch('/api/artists/:id/releases/:releaseId', rateLimit, async (req, res) => {
-  const { token, title, coverUrl, releaseDate, description } = req.body || {};
+  const { token, title, coverUrl, releaseDate, description, visibility } = req.body || {};
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
   try {
@@ -5388,12 +5442,16 @@ app.patch('/api/artists/:id/releases/:releaseId', rateLimit, async (req, res) =>
     if (description !== undefined) {
       patch.description = (typeof description === 'string') ? description.trim().slice(0, 2000) || null : null;
     }
+    if (visibility !== undefined) {
+      patch.visibility = ['public', 'private', 'unlisted'].includes(visibility) ? visibility : 'public';
+    }
     if (!Object.keys(patch).length) return res.status(400).json({ error: 'No valid fields to update.' });
     const updated = await dbUpdateRelease(release.id, patch);
     return res.json({
       id: updated.id, title: updated.title, releaseType: updated.release_type,
       coverUrl: updated.cover_url, releaseDate: updated.release_date,
       description: updated.description, trackCount: updated.track_count,
+      visibility: updated.visibility || 'public',
     });
   } catch (err) {
     console.error('[artist update release]', err);
@@ -5879,6 +5937,65 @@ app.delete('/api/tracks/:trackId/collaborators/:collabId', rateLimit, async (req
   } catch (err) {
     console.error('[track collaborator remove]', err);
     return res.status(500).json({ error: 'Could not remove collaborator.' });
+  }
+});
+
+// GET /api/tracks/:trackId/lyrics  — public for published tracks
+app.get('/api/tracks/:trackId/lyrics', async (req, res) => {
+  try {
+    const track = await dbGetTrackById(req.params.trackId);
+    if (!track || !track.is_published) return res.status(404).json({ error: 'Track not found.' });
+    const row = await dbGetTrackLyrics(track.id);
+    return res.json({
+      trackId: track.id,
+      lyrics: row?.lyrics ?? null,
+      synced: row?.synced ?? false,
+      updatedAt: row?.updated_at ?? null,
+    });
+  } catch (err) {
+    console.error('[track lyrics GET]', err);
+    return res.status(500).json({ error: 'Could not load lyrics.' });
+  }
+});
+
+// PUT /api/tracks/:trackId/lyrics  — owner only
+app.put('/api/tracks/:trackId/lyrics', rateLimit, async (req, res) => {
+  const { token, lyrics } = req.body || {};
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  try {
+    const track = await dbGetTrackById(req.params.trackId);
+    if (!track) return res.status(404).json({ error: 'Track not found.' });
+    const artist = await dbGetArtistById(track.artist_id);
+    if (!artist || artist.account_id !== sess.username) {
+      return res.status(403).json({ error: 'Only the track owner can edit lyrics.' });
+    }
+    if (typeof lyrics !== 'string') return res.status(400).json({ error: 'lyrics must be a string.' });
+    const row = await dbUpsertTrackLyrics(track.id, lyrics.slice(0, 20000));
+    return res.json({ trackId: track.id, lyrics: row.lyrics, updatedAt: row.updated_at });
+  } catch (err) {
+    console.error('[track lyrics PUT]', err);
+    return res.status(500).json({ error: 'Could not save lyrics.' });
+  }
+});
+
+// DELETE /api/tracks/:trackId/lyrics  — owner only
+app.delete('/api/tracks/:trackId/lyrics', rateLimit, async (req, res) => {
+  const token = req.body?.token || (req.headers.authorization || '').replace('Bearer ', '');
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  try {
+    const track = await dbGetTrackById(req.params.trackId);
+    if (!track) return res.status(404).json({ error: 'Track not found.' });
+    const artist = await dbGetArtistById(track.artist_id);
+    if (!artist || artist.account_id !== sess.username) {
+      return res.status(403).json({ error: 'Only the track owner can delete lyrics.' });
+    }
+    await dbDeleteTrackLyrics(track.id);
+    return res.json({ success: true });
+  } catch (err) {
+    console.error('[track lyrics DELETE]', err);
+    return res.status(500).json({ error: 'Could not delete lyrics.' });
   }
 });
 
