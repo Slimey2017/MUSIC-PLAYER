@@ -2903,6 +2903,15 @@ body.oled-mode {
   </div>
 </div>
 
+<!-- Ambient artist background (v4.6) — a body-level singleton, NOT nested inside
+     artistProfileOverlay. It needs to live outside the modal's own
+     position:fixed/z-index:9600/opaque-backdrop stacking context so its
+     opacity fade (see .artist-profile-bg-ambient in <style>) isn't just
+     clipped to the modal's display:none lifecycle. setAmbientBanner/
+     clearAmbientBanner (in the Artist Pages JS section below) toggle the
+     .active class on this element directly. -->
+<div class="artist-profile-bg-ambient" id="artistAmbientBg"></div>
+
 <!-- Artist Profile Overlay -->
 <div class="lyrics-overlay" id="artistProfileOverlay">
   <div class="lyrics-panel" style="max-width:420px;">
@@ -5191,11 +5200,37 @@ async function loadProfilePublicPlaylists(username) {
 const ARTISTS_BASE = '/api/artists';
 const TRACKS_BASE = '/api/tracks';
 let viewedArtist = null; // full artist object currently shown in artistProfileOverlay — null when closed
+let _artistTopTracksCache = []; // last-loaded tracks for the open artist — lets row click handlers
+                                 // look up title/etc. by id instead of interpolating user content
+                                 // (track titles) into inline onclick HTML attributes
+
+function setAmbientBanner(bannerUrl) {
+  const bg = $('artistAmbientBg');
+  if (!bg) return;
+  if (!bannerUrl) { clearAmbientBanner(); return; }
+  bg.style.backgroundImage = `url("${bannerUrl}")`;
+  // Force the new background in before triggering the opacity transition,
+  // otherwise a rapid profile-switch can fade from the old image straight
+  // to the new one with no crossfade gap.
+  requestAnimationFrame(() => bg.classList.add('active'));
+}
+
+function clearAmbientBanner() {
+  const bg = $('artistAmbientBg');
+  if (!bg) return;
+  bg.classList.remove('active');
+  // Wait out the CSS opacity transition (1.5s, see .artist-profile-bg-ambient)
+  // before dropping the image — clearing backgroundImage immediately would
+  // cut the fade-out short with a hard pop to blank.
+  setTimeout(() => { if (!bg.classList.contains('active')) bg.style.backgroundImage = ''; }, 1500);
+}
 
 function closeArtistProfileModal() {
   $('artistProfileOverlay')?.classList.remove('open');
   viewedArtist = null;
   clearAmbientBanner();
+  $('trackLyricsSection') && ($('trackLyricsSection').style.display = 'none');
+  _lyricsTrackId = null;
 }
 
 // Opens the artist page modal. `idOrSlug` can be a slug, an artists.id, or
@@ -5208,6 +5243,8 @@ async function openArtistProfile(idOrSlug) {
   $('artistProfileLoading').style.display = 'block';
   $('artistProfileContent').style.display = 'none';
   $('artistProfileError').style.display   = 'none';
+  $('trackLyricsSection') && ($('trackLyricsSection').style.display = 'none');
+  _lyricsTrackId = null;
 
   try {
     const params = new URLSearchParams(AUTH.token ? { token: AUTH.token } : {});
@@ -5402,6 +5439,7 @@ async function loadArtistTopTracks(artistId) {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Could not load tracks.');
     const tracks = data.tracks || [];
+    _artistTopTracksCache = tracks;
     wrap.style.display = tracks.length ? '' : 'none';
     if (!tracks.length) { list.innerHTML = ''; return; }
     list.innerHTML = tracks.map((t, i) => {
@@ -5413,6 +5451,7 @@ async function loadArtistTopTracks(artistId) {
           <div style="font-size:0.55rem;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(t.title)}</div>
           <div style="font-size:0.42rem;color:var(--text-muted);">${formatCompactCount(t.playCount || 0)} play${t.playCount === 1 ? '' : 's'}${credits ? ' · ' + credits : ''}</div>
         </div>
+        <button onclick="event.stopPropagation(); toggleTrackLyricsSection('${t.id}')" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.42rem;padding:4px 8px;border-radius:var(--radius);cursor:pointer;flex-shrink:0;letter-spacing:0.04em;text-transform:uppercase;" title="Lyrics">Lyrics</button>
         <button onclick="event.stopPropagation(); queuePublishedTrack('${t.id}')" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.42rem;padding:4px 8px;border-radius:var(--radius);cursor:pointer;flex-shrink:0;letter-spacing:0.04em;text-transform:uppercase;" title="Add to queue">+ Queue</button>
       </div>
     `;
@@ -5420,6 +5459,148 @@ async function loadArtistTopTracks(artistId) {
   } catch (err) {
     wrap.style.display = 'none';
     console.error('[loadArtistTopTracks]', err);
+  }
+}
+
+// ── Track Lyrics Panel ───────────────────────────────────────────────────────
+// Surfaced from the "Lyrics" button on each row in loadArtistTopTracks above.
+// GET /api/tracks/:id/lyrics is public for published tracks, so any visitor
+// can view lyrics; PUT/DELETE are owner-only and re-checked server-side
+// regardless of what viewedArtist.isOwner says client-side (same pattern as
+// the bio/avatar/banner editors). _lyricsTrackId tracks which track the
+// currently-open section/modal belongs to, since multiple track rows share
+// the single #trackLyricsSection.
+let _lyricsTrackId = null;
+let _lyricsTrackTitle = '';
+
+async function toggleTrackLyricsSection(trackId) {
+  const section = $('trackLyricsSection');
+  if (!section) return;
+  // Clicking "Lyrics" again on the track that's already open closes it.
+  if (_lyricsTrackId === trackId && section.style.display !== 'none') {
+    section.style.display = 'none';
+    _lyricsTrackId = null;
+    return;
+  }
+  _lyricsTrackId = trackId;
+  _lyricsTrackTitle = _artistTopTracksCache.find(t => t.id === trackId)?.title || '';
+  section.style.display = '';
+  section.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  await loadTrackLyrics(trackId);
+}
+
+async function loadTrackLyrics(trackId) {
+  const body = $('trackLyricsBody');
+  const editBtn = $('lyricsEditBtn');
+  const deleteBtn = $('lyricsDeleteBtn');
+  if (!body) return;
+  const isOwner = !!viewedArtist?.isOwner;
+  if (editBtn) editBtn.style.display = isOwner ? '' : 'none';
+  if (deleteBtn) deleteBtn.style.display = 'none'; // shown below only if lyrics actually exist
+  body.innerHTML = `<div class="lyrics-empty-state">Loading…</div>`;
+  try {
+    const res = await fetch(`${TRACKS_BASE}/${encodeURIComponent(trackId)}/lyrics`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not load lyrics.');
+    // Re-check this is still the track the user has open — a fast click
+    // between two tracks' Lyrics buttons could otherwise land a stale
+    // response on top of whichever section opened last.
+    if (_lyricsTrackId !== trackId) return;
+    if (data.lyrics && data.lyrics.trim()) {
+      const content = document.createElement('div');
+      content.className = 'lyrics-content';
+      content.style.fontSize = '0.55rem';
+      content.textContent = data.lyrics;
+      body.innerHTML = '';
+      body.appendChild(content);
+      if (deleteBtn) deleteBtn.style.display = isOwner ? '' : 'none';
+    } else {
+      body.innerHTML = `<div class="lyrics-empty-state">${isOwner ? 'No lyrics yet — click Edit to add some.' : 'No lyrics added yet.'}</div>`;
+    }
+  } catch (err) {
+    if (_lyricsTrackId !== trackId) return;
+    body.innerHTML = `<div class="lyrics-empty-state">Could not load lyrics.</div>`;
+    console.error('[loadTrackLyrics]', err);
+  }
+}
+
+function openLyricsEditModal() {
+  if (!viewedArtist?.isOwner || !_lyricsTrackId) return;
+  const body = $('trackLyricsBody');
+  const textarea = $('lyricsEditTextarea');
+  // Pull current text straight from the rendered panel rather than a second
+  // fetch — loadTrackLyrics already has it, and this avoids a race if the
+  // owner clicks Edit while a load is still in flight.
+  const current = body?.querySelector('.lyrics-content')?.textContent || '';
+  textarea.value = current;
+  updateLyricsEditCounter();
+  $('lyricsEditStatus').textContent = '';
+  $('lyricsEditOverlay')?.classList.add('open');
+  textarea.focus();
+}
+
+function closeLyricsEditModal() {
+  $('lyricsEditOverlay')?.classList.remove('open');
+}
+
+function updateLyricsEditCounter() {
+  const len = ($('lyricsEditTextarea')?.value || '').length;
+  const counter = $('lyricsEditCounter');
+  if (!counter) return;
+  counter.textContent = `${len} / 20000`;
+  counter.style.color = len >= 20000 ? 'var(--accent2)' : 'var(--text-dim)';
+}
+$('lyricsEditTextarea')?.addEventListener('input', updateLyricsEditCounter);
+
+$('lyricsEditSaveBtn')?.addEventListener('click', async () => {
+  if (!viewedArtist?.isOwner || !_lyricsTrackId) return;
+  const lyrics = $('lyricsEditTextarea').value;
+  if (lyrics.length > 20000) {
+    $('lyricsEditStatus').textContent = 'Lyrics must be 20,000 characters or fewer.';
+    $('lyricsEditStatus').style.color = 'var(--accent2)';
+    return;
+  }
+  const btn = $('lyricsEditSaveBtn');
+  btn.disabled = true; btn.textContent = 'Saving…';
+  $('lyricsEditStatus').textContent = '';
+  try {
+    const res = await fetch(`${TRACKS_BASE}/${encodeURIComponent(_lyricsTrackId)}/lyrics`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: AUTH.token, lyrics }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      if (res.status === 401) { handleTokenExpiry(); return; }
+      throw new Error(data.error || 'Could not save lyrics.');
+    }
+    closeLyricsEditModal();
+    await loadTrackLyrics(_lyricsTrackId);
+    showToast('Saved', 'Lyrics updated.', 'success');
+  } catch (err) {
+    $('lyricsEditStatus').textContent = err.message || 'Could not save lyrics.';
+    $('lyricsEditStatus').style.color = 'var(--accent2)';
+  } finally {
+    btn.disabled = false; btn.textContent = 'Save Lyrics';
+  }
+});
+
+async function deleteTrackLyrics() {
+  if (!viewedArtist?.isOwner || !_lyricsTrackId) return;
+  if (!confirm('Delete lyrics for this track?')) return;
+  try {
+    const res = await fetch(`${TRACKS_BASE}/${encodeURIComponent(_lyricsTrackId)}/lyrics`, {
+      method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: AUTH.token }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      if (res.status === 401) { handleTokenExpiry(); return; }
+      throw new Error(data.error || 'Could not delete lyrics.');
+    }
+    await loadTrackLyrics(_lyricsTrackId);
+    showToast('Deleted', 'Lyrics removed.', 'success');
+  } catch (err) {
+    showToast('Error', err.message || 'Could not delete lyrics.', 'error');
   }
 }
 
