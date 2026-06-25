@@ -1824,6 +1824,138 @@ body.oled-mode {
 
 /* ─── Embed block banner visible state ──────────────────────────── */
 #embedBlockBanner.visible { display:flex !important; }
+
+/* ─── v4.6: Release album-style grid cards ──────────────────── */
+.release-grid {
+  display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(130px,1fr));
+  gap:12px;
+  margin-top:4px;
+}
+@media (max-width:480px) { .release-grid { grid-template-columns:repeat(2,1fr);gap:8px; } }
+
+.release-card {
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:6px;overflow:hidden;cursor:pointer;
+  transition:border-color 0.15s,transform 0.15s;position:relative;
+}
+.release-card:hover { border-color:var(--accent);transform:translateY(-2px); }
+.release-card-art {
+  width:100%;aspect-ratio:1/1;
+  background:var(--surface3) center/cover no-repeat;
+  position:relative;overflow:hidden;
+}
+.release-card-art-placeholder {
+  position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  font-size:2.2rem;color:var(--text-muted);opacity:0.35;pointer-events:none;
+}
+.release-card-play-btn {
+  position:absolute;bottom:7px;right:7px;width:28px;height:28px;
+  border-radius:50%;background:var(--accent);color:var(--bg);
+  border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;
+  font-size:0.62rem;opacity:0;transform:translateY(4px);
+  transition:opacity 0.15s,transform 0.15s;z-index:2;
+}
+.release-card:hover .release-card-play-btn { opacity:1;transform:translateY(0); }
+.release-card-meta { padding:7px 8px 9px; }
+.release-card-title {
+  font-family:'Unbounded',sans-serif;font-size:0.45rem;font-weight:700;
+  color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:2px;
+}
+.release-card-sub {
+  font-size:0.36rem;color:var(--text-muted);text-transform:uppercase;
+  letter-spacing:0.04em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.release-type-badge {
+  display:inline-block;font-size:0.31rem;font-family:'Space Mono',monospace;
+  text-transform:uppercase;letter-spacing:0.06em;padding:1px 4px;border-radius:2px;
+  border:1px solid var(--border);color:var(--text-muted);margin-bottom:3px;line-height:1.3;
+}
+.release-type-badge.album   { border-color:var(--accent);color:var(--accent); }
+.release-type-badge.ep      { border-color:var(--accent3);color:var(--accent3); }
+.release-type-badge.single  { border-color:var(--text-dim);color:var(--text-dim); }
+.release-type-badge.mixtape,.release-type-badge.compilation { border-color:var(--accent2);color:var(--accent2); }
+.release-visibility-badge {
+  display:inline-block;font-size:0.28rem;font-family:'Space Mono',monospace;
+  text-transform:uppercase;letter-spacing:0.05em;padding:1px 3px;border-radius:2px;
+  margin-left:3px;line-height:1.4;
+}
+.release-visibility-badge.private  { background:rgba(255,71,87,0.15);color:var(--accent2); }
+.release-visibility-badge.unlisted { background:rgba(0,212,255,0.1);color:var(--accent3); }
+
+/* Release expanded track panel */
+.release-tracks-panel {
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:6px;padding:10px 12px;margin-top:10px;
+}
+.release-track-row {
+  display:flex;align-items:center;gap:9px;padding:5px 4px;
+  cursor:pointer;border-radius:4px;
+}
+.release-track-row:hover { background:rgba(255,255,255,0.03); }
+.release-track-num {
+  width:16px;flex-shrink:0;text-align:right;font-size:0.38rem;
+  color:var(--text-dim);font-family:'Space Mono',monospace;
+}
+.release-track-art {
+  width:28px;height:28px;border-radius:3px;
+  background:var(--surface3) center/cover no-repeat;flex-shrink:0;
+}
+.release-track-info { flex:1;min-width:0; }
+.release-track-title {
+  font-size:0.45rem;color:var(--text);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.release-track-credits {
+  font-size:0.36rem;color:var(--text-dim);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+
+/* Release filter chips */
+.release-filter-chip {
+  background:none;border:1px solid var(--border);color:var(--text-muted);
+  font-family:'Space Mono',monospace;font-size:0.34rem;padding:3px 7px;
+  border-radius:20px;cursor:pointer;letter-spacing:0.04em;text-transform:uppercase;
+  transition:border-color 0.12s,color 0.12s;
+}
+.release-filter-chip.active,.release-filter-chip:hover { border-color:var(--accent);color:var(--accent); }
+
+/* ─── v4.6: Lyrics section on track/artist view ─────────────── */
+.lyrics-section-header {
+  display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;
+}
+.lyrics-section-title {
+  font-size:0.46rem;color:var(--text-dim);letter-spacing:0.05em;text-transform:uppercase;
+}
+.lyrics-body {
+  font-family:'Space Mono',monospace;font-size:0.5rem;line-height:2;
+  color:var(--text);white-space:pre-wrap;word-wrap:break-word;
+  max-height:300px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--border) transparent;
+}
+.lyrics-empty-state {
+  font-size:0.47rem;color:var(--text-muted);font-style:italic;
+}
+.lyrics-edit-action-btn {
+  background:none;border:1px solid var(--border);color:var(--text-muted);
+  font-family:'Space Mono',monospace;font-size:0.36rem;padding:3px 7px;
+  border-radius:var(--radius);cursor:pointer;letter-spacing:0.04em;text-transform:uppercase;
+}
+
+/* ─── v4.6: Ambient artist background during playback ───────── */
+.artist-profile-bg-ambient {
+  position:fixed;inset:0;z-index:-1;pointer-events:none;
+  opacity:0;transition:opacity 1.5s ease;
+  background-size:cover;background-position:center;
+  filter:blur(60px) brightness(0.25) saturate(1.6);
+}
+.artist-profile-bg-ambient.active { opacity:1; }
+#artistProfileBanner.animating {
+  animation:bannerPulse 9s ease-in-out infinite alternate;
+}
+@keyframes bannerPulse {
+  0%   { filter:brightness(0.85) saturate(1.1); }
+  100% { filter:brightness(1.1) saturate(1.4); }
+}
 </style>
 </head>
 <body>
@@ -2826,8 +2958,18 @@ body.oled-mode {
       </div>
 
       <div id="artistProfileReleasesWrap" style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px;display:none;">
-        <div style="font-size:0.46rem;color:var(--text-dim);letter-spacing:0.05em;text-transform:uppercase;margin-bottom:8px;">Releases</div>
-        <div id="artistProfileReleasesList"></div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:6px;">
+          <div style="font-size:0.46rem;color:var(--text-dim);letter-spacing:0.05em;text-transform:uppercase;">Discography</div>
+          <div style="display:flex;gap:4px;flex-wrap:wrap;" id="artistReleasesFilterWrap">
+            <button class="release-filter-chip active" data-filter="">All</button>
+            <button class="release-filter-chip" data-filter="album">Albums</button>
+            <button class="release-filter-chip" data-filter="ep">EPs</button>
+            <button class="release-filter-chip" data-filter="single">Singles</button>
+            <button class="release-filter-chip" data-filter="mixtape">Mixtapes</button>
+          </div>
+        </div>
+        <div id="artistProfileReleasesList" class="release-grid"></div>
+        <div id="artistReleaseExpandedPanel" style="display:none;"></div>
       </div>
 
       <!-- Owner-only Artist Dashboard now opens as its own large modal
@@ -2839,6 +2981,18 @@ body.oled-mode {
       <div id="artistProfilePostsWrap" style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px;display:none;">
         <div style="font-size:0.46rem;color:var(--text-dim);letter-spacing:0.05em;text-transform:uppercase;margin-bottom:8px;">Posts</div>
         <div id="artistProfilePostsList"></div>
+      </div>
+
+      <!-- Track Lyrics section — shown when a specific track is focused -->
+      <div id="trackLyricsSection" style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px;display:none;">
+        <div class="lyrics-section-header">
+          <span class="lyrics-section-title">Lyrics</span>
+          <div style="display:flex;gap:5px;">
+            <button class="lyrics-edit-action-btn" id="lyricsEditBtn" style="display:none;" onclick="openLyricsEditModal()">Edit</button>
+            <button class="lyrics-edit-action-btn" id="lyricsDeleteBtn" style="display:none;color:var(--accent2);border-color:var(--accent2);" onclick="deleteTrackLyrics()">Delete</button>
+          </div>
+        </div>
+        <div id="trackLyricsBody"></div>
       </div>
     </div>
     <div id="artistProfileError" style="display:none;text-align:center;padding:24px;color:var(--text-muted);font-size:0.55rem;"></div>
@@ -2876,6 +3030,12 @@ body.oled-mode {
       <option value="ep">EP</option>
       <option value="album">Album</option>
       <option value="mixtape">Mixtape</option>
+      <option value="compilation">Compilation</option>
+    </select>
+    <select id="createReleaseVisibilitySelect" style="width:100%;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-main);font-family:'Space Mono',monospace;font-size:0.5rem;padding:9px 11px;box-sizing:border-box;margin-bottom:10px;">
+      <option value="public">Public — shown on artist page &amp; discovery</option>
+      <option value="unlisted">Unlisted — accessible by direct link only</option>
+      <option value="private">Private — owner only</option>
     </select>
     <input type="date" id="createReleaseDateInput" style="width:100%;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-main);font-family:'Space Mono',monospace;font-size:0.5rem;padding:9px 11px;box-sizing:border-box;margin-bottom:10px;" />
     <div id="createReleaseStatus" style="font-size:0.42rem;color:var(--text-muted);margin-bottom:10px;min-height:1.2em;"></div>
@@ -2917,8 +3077,24 @@ body.oled-mode {
   </div>
 </div>
 
+<!-- Lyrics Edit modal — owner-only -->
+<div class="lyrics-overlay" id="lyricsEditOverlay">
+  <div class="lyrics-panel" style="max-width:440px;">
+    <div class="lyrics-title" style="font-size:0.65rem;">Edit Lyrics</div>
+    <div style="font-size:0.46rem;color:var(--text-muted);line-height:1.7;margin-bottom:10px;">Paste or type lyrics. Line breaks are preserved.</div>
+    <textarea id="lyricsEditTextarea" rows="13" maxlength="20000"
+      placeholder="Verse 1&#10;..."
+      style="width:100%;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-main);font-family:'Space Mono',monospace;font-size:0.5rem;line-height:1.8;padding:10px 11px;box-sizing:border-box;resize:vertical;min-height:180px;margin-bottom:6px;"></textarea>
+    <div style="display:flex;justify-content:flex-end;margin-bottom:10px;">
+      <span id="lyricsEditCounter" style="font-size:0.4rem;color:var(--text-dim);">0 / 20000</span>
+    </div>
+    <div id="lyricsEditStatus" style="font-size:0.42rem;color:var(--text-muted);margin-bottom:10px;min-height:1.2em;"></div>
+    <button id="lyricsEditSaveBtn" style="width:100%;background:var(--accent);color:var(--bg);border:none;font-family:'Unbounded',sans-serif;font-weight:700;font-size:0.52rem;padding:10px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.05em;text-transform:uppercase;margin-bottom:8px;">Save Lyrics</button>
+    <button class="support-close-btn" onclick="closeLyricsEditModal()">Cancel</button>
+  </div>
+</div>
+
 <!-- Manage Collaborators modal — owner-only, opened from the "Credits"
-     button on a dashboard track or release row. Works for both kinds via a
      shared targetType ('track'|'release') since the backend exposes
      mirrored routes for each (see JS below). -->
 <div class="lyrics-overlay" id="manageCollaboratorsOverlay">
@@ -3062,7 +3238,13 @@ body.oled-mode {
           <label style="display:block;font-size:0.42rem;color:var(--text-dim);letter-spacing:0.04em;text-transform:uppercase;margin-bottom:5px;">Release Date</label>
           <input type="date" id="editReleaseDate" style="width:100%;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-main);font-family:'Space Mono',monospace;font-size:0.5rem;padding:9px 11px;box-sizing:border-box;margin-bottom:12px;" />
           <label style="display:block;font-size:0.42rem;color:var(--text-dim);letter-spacing:0.04em;text-transform:uppercase;margin-bottom:5px;">Cover Art URL</label>
-          <input type="text" id="editReleaseCoverUrl" maxlength="2000" placeholder="https://…" style="width:100%;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-main);font-family:'Space Mono',monospace;font-size:0.5rem;padding:9px 11px;box-sizing:border-box;margin-bottom:16px;" />
+          <input type="text" id="editReleaseCoverUrl" maxlength="2000" placeholder="https://…" style="width:100%;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-main);font-family:'Space Mono',monospace;font-size:0.5rem;padding:9px 11px;box-sizing:border-box;margin-bottom:12px;" />
+          <label style="display:block;font-size:0.42rem;color:var(--text-dim);letter-spacing:0.04em;text-transform:uppercase;margin-bottom:5px;">Visibility</label>
+          <select id="editReleaseVisibilitySelect" style="width:100%;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-main);font-family:'Space Mono',monospace;font-size:0.5rem;padding:9px 11px;box-sizing:border-box;margin-bottom:16px;">
+            <option value="public">Public</option>
+            <option value="unlisted">Unlisted</option>
+            <option value="private">Private</option>
+          </select>
           <div id="editReleaseStatus" style="font-size:0.42rem;color:var(--text-muted);min-height:1.2em;margin-bottom:12px;"></div>
           <div style="display:flex;gap:8px;">
             <button id="editReleaseSaveBtn" onclick="submitEditRelease()" style="flex:1;background:var(--accent);color:var(--bg);border:none;font-family:'Unbounded',sans-serif;font-weight:700;font-size:0.5rem;padding:10px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.05em;text-transform:uppercase;">Save Changes</button>
@@ -5013,6 +5195,7 @@ let viewedArtist = null; // full artist object currently shown in artistProfileO
 function closeArtistProfileModal() {
   $('artistProfileOverlay')?.classList.remove('open');
   viewedArtist = null;
+  clearAmbientBanner();
 }
 
 // Opens the artist page modal. `idOrSlug` can be a slug, an artists.id, or
@@ -5048,6 +5231,7 @@ async function openArtistProfile(idOrSlug) {
     }
     const bannerEl = $('artistProfileBanner');
     if (bannerEl) bannerEl.style.backgroundImage = data.bannerUrl ? `url("${data.bannerUrl}")` : 'none';
+    setAmbientBanner(data.bannerUrl || null);
 
     $('artistProfileFollowerCount').textContent     = formatCompactCount(data.followerCount ?? 0);
     $('artistProfileMonthlyListeners').textContent  = formatCompactCount(data.stats?.monthlyListeners ?? 0);
@@ -5113,9 +5297,9 @@ function renderArtistBio(bio, isOwner) {
     el.style.color = 'var(--text-muted)';
     el.style.fontStyle = 'italic';
   } else {
-    el.textContent = '';
+    el.textContent = 'This artist has not added a bio yet.';
     el.style.color = 'var(--text-muted)';
-    el.style.fontStyle = 'normal';
+    el.style.fontStyle = 'italic';
   }
 }
 
@@ -5239,86 +5423,146 @@ async function loadArtistTopTracks(artistId) {
   }
 }
 
-// Public discography section — Albums/EPs/Singles/Mixtapes, click to expand
-// a release and reveal its tracks inline. Distinct from loadDashReleases
-// (the owner-only Dashboard's Releases tab, which manages releases);
-// this one is read-only and visible to every visitor, same way Bandcamp/
-// Spotify show a discography on the artist page itself rather than gating
-// it behind a login.
+// Public discography section — replaced with album-style grid cards (v4.6).
+// Fire-and-forget from openArtistProfile. Filter chips above the grid let
+// visitors narrow by type without a re-fetch. Expanded track list renders
+// inline below the grid when a card is clicked.
+let _releaseGridCache = [];
+let _releaseGridFilter = '';
+let _releaseGridExpandedId = null;
+
 async function loadArtistReleases(artistId) {
   const wrap = $('artistProfileReleasesWrap');
   const list = $('artistProfileReleasesList');
+  const panel = $('artistReleaseExpandedPanel');
   if (!wrap || !list) return;
   try {
-    const res = await fetch(`${ARTISTS_BASE}/${encodeURIComponent(artistId)}/releases`);
+    const params = new URLSearchParams(AUTH.token ? { token: AUTH.token } : {});
+    const res = await fetch(`${ARTISTS_BASE}/${encodeURIComponent(artistId)}/releases?${params}`);
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Could not load releases.');
-    const releases = data.releases || [];
-    wrap.style.display = releases.length ? '' : 'none';
-    if (!releases.length) { list.innerHTML = ''; return; }
-    list.innerHTML = releases.map(r => {
-      const credits = formatCollaboratorCredits(r.collaborators);
-      return `
-      <div class="artist-release-row" data-release-id="${r.id}">
-        <div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border);cursor:pointer;" onclick="toggleReleaseExpand('${r.id}')">
-          <div style="width:36px;height:36px;border-radius:4px;background:var(--surface3) center/cover;flex:0 0 auto;${r.coverUrl ? `background-image:url('${r.coverUrl}');` : ''}"></div>
-          <div style="flex:1;min-width:0;">
-            <div style="font-size:0.55rem;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(r.title)}</div>
-            <div style="font-size:0.4rem;color:var(--text-muted);text-transform:uppercase;">${escapeHtml(r.releaseType)} • ${r.trackCount} track${r.trackCount === 1 ? '' : 's'}${r.releaseDate ? ' • ' + formatJoinDate(r.releaseDate) : ''}</div>
-            ${credits ? `<div style="font-size:0.4rem;color:var(--text-dim);margin-top:1px;">${credits}</div>` : ''}
-          </div>
-          <div style="font-size:0.5rem;color:var(--text-dim);flex-shrink:0;" id="releaseChevron-${r.id}">▾</div>
-        </div>
-        <div id="releaseTracks-${r.id}" style="display:none;padding:4px 0 4px 12px;"></div>
-      </div>
-    `;
-    }).join('');
+    _releaseGridCache = data.releases || [];
+    _releaseGridFilter = '';
+    _releaseGridExpandedId = null;
+    wrap.style.display = _releaseGridCache.length ? '' : 'none';
+    if (!_releaseGridCache.length) { list.innerHTML = ''; return; }
+    // Reset filter chips
+    document.querySelectorAll('.release-filter-chip').forEach(c => c.classList.toggle('active', c.dataset.filter === ''));
+    renderReleaseGrid();
+    if (panel) panel.style.display = 'none';
   } catch (err) {
     wrap.style.display = 'none';
     console.error('[loadArtistReleases]', err);
   }
 }
 
-// Expands a release row in place to show its tracks, lazy-loaded on first
-// open and cached in the DOM thereafter (re-clicking just toggles display,
-// doesn't re-fetch) — same lazy-then-cache approach as the Discovery tabs.
-async function toggleReleaseExpand(releaseId) {
-  const tracksWrap = $('releaseTracks-' + releaseId);
-  const chevron    = $('releaseChevron-' + releaseId);
-  if (!tracksWrap) return;
-  const isOpen = tracksWrap.style.display !== 'none';
-  if (isOpen) {
-    tracksWrap.style.display = 'none';
-    if (chevron) chevron.textContent = '▾';
+function renderReleaseGrid() {
+  const list = $('artistProfileReleasesList');
+  if (!list) return;
+  const filtered = _releaseGridFilter
+    ? _releaseGridCache.filter(r => r.releaseType === _releaseGridFilter)
+    : _releaseGridCache;
+  if (!filtered.length) {
+    list.innerHTML = `<div style="font-size:0.44rem;color:var(--text-muted);grid-column:1/-1;padding:6px 0;">No ${_releaseGridFilter ? _releaseGridFilter + 's' : 'releases'} yet.</div>`;
     return;
   }
-  tracksWrap.style.display = 'block';
-  if (chevron) chevron.textContent = '▴';
-  if (tracksWrap.dataset.loaded === '1') return; // already fetched once
+  list.innerHTML = filtered.map(r => {
+    const typeLabel = (r.releaseType || 'single').toUpperCase();
+    const year = r.releaseDate ? r.releaseDate.slice(0, 4) : '';
+    const artStyle = r.coverUrl ? `background-image:url('${escapeHtml(r.coverUrl)}')` : '';
+    const visiBadge = (r.visibility && r.visibility !== 'public')
+      ? `<span class="release-visibility-badge ${escapeHtml(r.visibility)}">${escapeHtml(r.visibility)}</span>` : '';
+    const isExpanded = _releaseGridExpandedId === r.id;
+    return `
+    <div class="release-card${isExpanded ? '" style="border-color:var(--accent)' : ''}" data-release-id="${escapeHtml(r.id)}" onclick="toggleReleaseCard('${escapeHtml(r.id)}')">
+      <div class="release-card-art" style="${artStyle}">
+        ${!r.coverUrl ? '<div class="release-card-art-placeholder">◫</div>' : ''}
+        <button class="release-card-play-btn" onclick="event.stopPropagation();playEntireRelease('${escapeHtml(r.id)}')" title="Play release">▶</button>
+      </div>
+      <div class="release-card-meta">
+        <span class="release-type-badge ${escapeHtml(r.releaseType)}">${typeLabel}</span>${visiBadge}
+        <div class="release-card-title">${escapeHtml(r.title)}</div>
+        <div class="release-card-sub">${year}${year && r.trackCount ? ' · ' : ''}${r.trackCount || 0} track${r.trackCount === 1 ? '' : 's'}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
 
-  tracksWrap.innerHTML = '<div style="font-size:0.42rem;color:var(--text-muted);padding:4px 0;">Loading…</div>';
+// Toggles the inline expanded track panel below the release grid.
+// Clicking the same card again collapses it.
+async function toggleReleaseCard(releaseId) {
+  const panel = $('artistReleaseExpandedPanel');
+  if (!panel) return;
+
+  if (_releaseGridExpandedId === releaseId) {
+    // Collapse
+    _releaseGridExpandedId = null;
+    panel.style.display = 'none';
+    renderReleaseGrid(); // re-render to remove active border
+    return;
+  }
+
+  _releaseGridExpandedId = releaseId;
+  renderReleaseGrid(); // re-render to apply active border on the selected card
+  panel.style.display = 'block';
+  panel.innerHTML = '<div class="release-tracks-panel"><div style="font-size:0.44rem;color:var(--text-muted);padding:4px 0;">Loading tracks…</div></div>';
+
   try {
-    const res = await fetch(`${ARTISTS_BASE}/${encodeURIComponent(viewedArtist?.id || '')}/releases/${encodeURIComponent(releaseId)}/tracks`);
+    const params = new URLSearchParams(AUTH.token ? { token: AUTH.token } : {});
+    const artistId = viewedArtist?.id || '';
+    const res = await fetch(`${ARTISTS_BASE}/${encodeURIComponent(artistId)}/releases/${encodeURIComponent(releaseId)}/tracks?${params}`);
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Could not load tracks.');
     const tracks = data.tracks || [];
-    tracksWrap.innerHTML = tracks.length
+    const release = _releaseGridCache.find(r => r.id === releaseId) || {};
+
+    const trackRows = tracks.length
       ? tracks.map((t, i) => {
           const credits = formatCollaboratorCredits(t.collaborators);
+          const artStyle = t.coverUrl ? `background-image:url('${escapeHtml(t.coverUrl)}')` : '';
           return `
-          <div style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;" onclick="playPublishedTrack('${t.id}')">
-            <div style="width:14px;flex-shrink:0;text-align:right;font-size:0.42rem;color:var(--text-dim);">${i + 1}</div>
-            <div style="flex:1;min-width:0;">
-              <div style="font-size:0.48rem;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(t.title)}</div>
-              ${credits ? `<div style="font-size:0.38rem;color:var(--text-dim);">${credits}</div>` : ''}
+          <div class="release-track-row" onclick="playPublishedTrack('${escapeHtml(t.id)}')">
+            <div class="release-track-num">${i + 1}</div>
+            <div class="release-track-art" style="${artStyle}"></div>
+            <div class="release-track-info">
+              <div class="release-track-title">${escapeHtml(t.title || t.originalUrl || '')}</div>
+              ${credits ? `<div class="release-track-credits">${credits}</div>` : ''}
             </div>
-          </div>
-        `;
+          </div>`;
         }).join('')
-      : '<div style="font-size:0.42rem;color:var(--text-muted);padding:4px 0;">No tracks in this release yet.</div>';
-    tracksWrap.dataset.loaded = '1';
+      : `<div style="font-size:0.44rem;color:var(--text-muted);padding:6px 0;">No tracks in this release yet.</div>`;
+
+    panel.innerHTML = `
+      <div class="release-tracks-panel">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+          <div>
+            <div style="font-family:'Unbounded',sans-serif;font-size:0.52rem;font-weight:700;color:var(--text);">${escapeHtml(release.title || '')}</div>
+            <div style="font-size:0.36rem;color:var(--text-muted);text-transform:uppercase;margin-top:2px;">${(release.releaseType || '').toUpperCase()}${release.releaseDate ? ' · ' + release.releaseDate.slice(0,4) : ''}</div>
+          </div>
+          ${tracks.length ? `<button onclick="playEntireRelease('${escapeHtml(releaseId)}')" style="background:var(--accent);color:var(--bg);border:none;font-family:'Unbounded',sans-serif;font-size:0.4rem;font-weight:700;padding:5px 11px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.04em;">▶ Play All</button>` : ''}
+        </div>
+        ${trackRows}
+      </div>`;
   } catch (err) {
-    tracksWrap.innerHTML = `<div style="font-size:0.42rem;color:var(--text-muted);padding:4px 0;">${escapeHtml(err.message || 'Could not load tracks.')}</div>`;
+    panel.innerHTML = `<div class="release-tracks-panel"><div style="font-size:0.44rem;color:var(--accent2);">${escapeHtml(err.message || 'Could not load tracks.')}</div></div>`;
+  }
+}
+
+// Queues and plays all uploaded tracks in a release in order.
+async function playEntireRelease(releaseId) {
+  try {
+    const params = new URLSearchParams(AUTH.token ? { token: AUTH.token } : {});
+    const artistId = viewedArtist?.id || '';
+    const res = await fetch(`${ARTISTS_BASE}/${encodeURIComponent(artistId)}/releases/${encodeURIComponent(releaseId)}/tracks?${params}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not load tracks.');
+    const tracks = (data.tracks || []).filter(t => t.isUpload);
+    if (!tracks.length) { showToast('No playable tracks', 'This release has no uploaded tracks yet.', 'info'); return; }
+    for (let i = 0; i < tracks.length; i++) {
+      await playPublishedTrack(tracks[i].id, i === 0 ? 'play' : 'queue');
+    }
+  } catch (err) {
+    showToast('Error', err.message || 'Could not play release.', 'error');
   }
 }
 
