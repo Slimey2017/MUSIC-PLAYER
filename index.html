@@ -3178,13 +3178,12 @@ body.oled-mode {
         <div style="flex:1;font-size:0.46rem;color:var(--text-muted);">What's on your mind?</div>
       </div>
       <textarea id="postComposeBody" class="post-compose-input" maxlength="1000" placeholder="Write something… or share a track, playlist, or release."></textarea>
+      <!-- Options are populated by populatePostComposeTypes() rather than hardcoded
+           here, since the artist-only types (Release Announcement, Artist Update)
+           must only appear for accounts with a claimed artist page — see that
+           function for the gating logic. -->
       <div class="post-compose-footer">
-        <select id="postComposeType" onchange="updatePostComposeType()">
-          <option value="text">📝 Text Post</option>
-          <option value="track">🎵 Track Share</option>
-          <option value="playlist">📂 Playlist Share</option>
-          <option value="announcement">🎙 Release Announcement</option>
-        </select>
+        <select id="postComposeType" onchange="updatePostComposeType()"></select>
         <div style="display:flex;align-items:center;gap:8px;">
           <span id="postComposeCharCount" style="font-size:0.4rem;color:var(--text-muted);">0/1000</span>
           <button id="postComposeSubmitBtn" onclick="submitPost()" style="background:var(--accent);color:var(--bg);border:none;font-family:'Unbounded',sans-serif;font-weight:700;font-size:0.44rem;padding:7px 14px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.05em;text-transform:uppercase;">Post</button>
@@ -4124,6 +4123,10 @@ async function loadOwnProfile() {
     if ($('profileFollowingCount')) $('profileFollowingCount').textContent = data.followingCount ?? 0;
     renderMyAvatarCoverPreview(data);
     renderMyArtistCta(data);
+    // If the posts composer is already open, refresh its type options now
+    // that we know whether this account has a claimed artist page — covers
+    // the case where the user opened Posts before this request resolved.
+    if ($('postsFeedOverlay')?.classList.contains('open')) populatePostComposeTypes();
   } catch (err) {
     // Non-fatal — profile editor just stays at its defaults; the rest of
     // the Account overlay (playlists, sync) still works fine without this.
@@ -5062,7 +5065,12 @@ async function openArtistProfile(idOrSlug) {
     $('artistBannerUploadWrap').style.cursor = data.isOwner ? 'pointer' : 'default';
 
     $('artistDashboardToggleBtn').style.display = data.isOwner ? '' : 'none';
-    if (!data.isOwner) { $('artistDashboardPanel').style.display = 'none'; }
+    // Note: the old inline dashboard panel (#artistDashboardPanel) was removed
+    // during the dashboard redesign in favor of the #artistDashboardOverlay
+    // modal (see openArtistDashboardModal()). That overlay has no .open class
+    // by default and can only be opened via the toggle button above (already
+    // hidden for non-owners) plus a redundant isOwner check inside
+    // openArtistDashboardModal() itself — so there's nothing left to hide here.
 
     const followBtn = $('artistProfileFollowBtn');
     if (data.isOwner) {
@@ -6115,12 +6123,14 @@ function loadDashStats() {
 }
 
 // ── Posts tab ────────────────────────────────────────────────────────────
-// Minimal composer for artist-authored announcement posts — reuses the same
+// Minimal composer for artist-authored update posts — reuses the same
 // POST /api/posts route as the main feed composer, just with artistId set
-// (now ownership-checked server-side, see [posts create] in server.js) and
-// postType:'announcement'. Listing reuses renderPostCard, the same card
-// markup the main Posts feed and profile posts already use, so an
-// announcement looks identical wherever it surfaces.
+// (ownership-checked server-side, see [posts create] in server.js) and
+// postType:'artist_update'. This box has no release/track picker, so it's
+// always a general update, never a release_announcement (which requires a
+// releaseId — see the Releases tab for that flow). Listing reuses
+// renderPostCard, the same card markup the main Posts feed and profile
+// posts already use, so an update looks identical wherever it surfaces.
 $('dashPostBody')?.addEventListener('input', e => {
   const counter = $('dashPostCharCount');
   if (counter) counter.textContent = `${e.target.value.length} / 1000`;
@@ -6136,7 +6146,7 @@ $('dashPostSubmitBtn')?.addEventListener('click', async () => {
   try {
     const res = await fetch(POSTS_BASE, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token: AUTH.token, postType: 'announcement', body, artistId: viewedArtist.id }),
+      body: JSON.stringify({ token: AUTH.token, postType: 'artist_update', body, artistId: viewedArtist.id }),
     });
     const data = await res.json();
     if (!res.ok) {
@@ -6269,6 +6279,10 @@ $('becomeArtistSubmitBtn')?.addEventListener('click', async () => {
       data.merged ? 'We found existing plays under this name and linked them to your new page.' : `${data.name} is live.`,
       'success'
     );
+    // Keep ownProfile in sync — it's the source of truth populatePostComposeTypes()
+    // (and renderMyArtistCta) reads from, and without this it would stay
+    // stale (isArtist:false) for the rest of the session.
+    if (ownProfile) { ownProfile.isArtist = true; ownProfile.artistSlug = data.slug; ownProfile.artistId = data.id; }
     renderMyArtistCta({ isArtist: true, artistSlug: data.slug });
     openArtistProfile(data.slug);
   } catch (err) {
@@ -6761,27 +6775,41 @@ let profilePostsUser = null;
 
 function postTimeAgo(iso) { return typeof activityTimeAgo === 'function' ? activityTimeAgo(iso) : formatJoinDate(iso); }
 
+const POST_TYPE_BADGE_LABELS = {
+  track: 'Track Share', playlist: 'Playlist Share', artist: 'Artist Share',
+  release_announcement: 'Release Announcement', artist_update: 'Artist Update',
+};
 function renderPostCard(post) {
   const initial = escapeHtml((post.displayName || post.author || '?')[0].toUpperCase());
   const avatarStyle = post.avatarUrl ? `background-image:url('${escapeHtml(post.avatarUrl)}');` : '';
   const authorKey = escapeHtml(post.author);
-  const avatarClick = `onclick="typeof openUserProfile==='function'&&openUserProfile('${authorKey}')"`;
+  // Artist-voice posts (release_announcement, artist_update) open the
+  // artist page on click instead of the underlying account's profile —
+  // see postedAsArtist in formatPost server-side.
+  const avatarClick = post.postedAsArtist && post.artistSlug
+    ? `onclick="openArtistProfile('${escapeHtml(post.artistSlug)}')"`
+    : `onclick="typeof openUserProfile==='function'&&openUserProfile('${authorKey}')"`;
   const avatar = `<div class="post-avatar" style="${avatarStyle}" ${avatarClick}>${post.avatarUrl ? '' : initial}</div>`;
 
   const typeLabel = (post.postType && post.postType !== 'text')
-    ? `<span class="dot">·</span><span class="post-type-badge">${escapeHtml(post.postType)}</span>`
+    ? `<span class="dot">·</span><span class="post-type-badge">${escapeHtml(POST_TYPE_BADGE_LABELS[post.postType] || post.postType)}</span>`
     : '';
 
   const ownerBtns = post.isOwner
     ? `<div class="post-owner-actions"><button class="post-owner-btn" onclick="editPost('${post.id}')">Edit</button><button class="post-owner-btn danger" onclick="deletePost('${post.id}')">Delete</button></div>`
     : '';
 
+  // Order matters: a release_announcement carries BOTH artistId and
+  // releaseId (enforced server-side), and should link to the release, not
+  // just the artist page — so releaseId is checked ahead of artistId here.
   const ref = post.playlistId
     ? `<div class="post-ref-card" onclick="openPlaylistViewer('${post.playlistId}')">&#127925; Playlist</div>`
+    : post.releaseId
+    ? `<div class="post-ref-card" onclick="openArtistProfile('${post.artistSlug || post.artistId}')">&#128191; New Release</div>`
     : post.artistId
-    ? `<div class="post-ref-card" onclick="openArtistProfile('${post.artistId}')">&#127908; Artist Page</div>`
+    ? `<div class="post-ref-card" onclick="openArtistProfile('${post.artistSlug || post.artistId}')">&#127908; Artist Page</div>`
     : post.trackId ? `<div class="post-ref-card">&#127926; Track</div>`
-    : post.releaseId ? `<div class="post-ref-card">&#128191; Release</div>` : '';
+    : '';
 
   const likeClass = `post-action-btn${post.likedByMe ? ' liked' : ''}`;
   const likeIcon = post.likedByMe ? '&#9829;' : '&#9825;';
@@ -6793,8 +6821,8 @@ function renderPostCard(post) {
   <div class="post-header">
     ${avatar}
     <div class="post-meta">
-      <div class="post-displayname" ${avatarClick}>${escapeHtml(post.displayName || post.author)}</div>
-      <div class="post-username-time"><span>@${authorKey}</span><span class="dot">·</span><span>${postTimeAgo(post.createdAt)}</span>${typeLabel}</div>
+      <div class="post-displayname" ${avatarClick}>${escapeHtml(post.displayName || post.author)}${post.postedAsArtist && post.artistIsVerified ? ' <span title="Verified Artist">✓</span>' : ''}</div>
+      <div class="post-username-time">${post.postedAsArtist ? '' : `<span>@${authorKey}</span><span class="dot">·</span>`}<span>${postTimeAgo(post.createdAt)}</span>${typeLabel}</div>
     </div>
   </div>
   ${post.body ? `<div class="post-body">${escapeHtml(post.body)}</div>` : ''}
@@ -6814,6 +6842,7 @@ async function openPostsFeed() {
   $('postsFeedOverlay')?.classList.add('open');
   const compose = $('postComposeBox');
   if (compose) compose.style.display = AUTH.loggedIn ? '' : 'none';
+  if (AUTH.loggedIn) populatePostComposeTypes();
   await loadPosts(false);
 }
 async function loadPosts(append = false) {
@@ -6839,16 +6868,171 @@ async function loadPosts(append = false) {
   }
 }
 function loadMorePosts() { return loadPosts(true); }
-function updatePostComposeType() {}
+
+// Post types always available to any signed-in account, plus the two
+// artist-only types appended only when ownProfile shows a claimed artist
+// page. ownProfile is populated by loadOwnProfile() on login (see
+// updateAuthUI) — if it hasn't loaded yet by the time someone opens the
+// composer, this falls back to non-artist options; the server enforces the
+// real gate regardless (see ARTIST_ONLY_TYPES in [posts create]), so this
+// is UX convenience, not the security boundary.
+const POST_COMPOSE_BASE_TYPES = [
+  { value: 'text',     label: '📝 Text Post' },
+  { value: 'track',    label: '🎵 Track Share' },
+  { value: 'playlist', label: '📂 Playlist Share' },
+  { value: 'artist',   label: '🎤 Artist Share' },
+];
+const POST_COMPOSE_ARTIST_TYPES = [
+  { value: 'release_announcement', label: '🎙 Release Announcement' },
+  { value: 'artist_update',        label: '📣 Artist Update' },
+];
+function populatePostComposeTypes() {
+  const select = $('postComposeType');
+  if (!select) return;
+  const prevValue = select.value;
+  const options = ownProfile?.isArtist
+    ? [...POST_COMPOSE_BASE_TYPES, ...POST_COMPOSE_ARTIST_TYPES]
+    : POST_COMPOSE_BASE_TYPES;
+  select.innerHTML = options.map(o => `<option value="${o.value}">${o.label}</option>`).join('');
+  // Preserve the previous selection across re-population if still valid
+  // (e.g. ownProfile finishes loading after the composer is already open),
+  // otherwise default back to Text Post.
+  select.value = options.some(o => o.value === prevValue) ? prevValue : 'text';
+  updatePostComposeType();
+}
+
+// Renders the reference picker for whichever post type is selected. Each
+// type's picker writes its chosen id into a data attribute on the row
+// itself (data-ref-id) so submitPost() can read it back without needing
+// separate state variables per picker.
+function updatePostComposeType() {
+  const type = $('postComposeType')?.value || 'text';
+  const row = $('postComposeRefRow');
+  if (!row) return;
+  row.dataset.refId = '';
+  row.dataset.refType = type;
+
+  if (type === 'text') {
+    row.style.display = 'none';
+    row.innerHTML = '';
+    return;
+  }
+  row.style.display = '';
+
+  if (type === 'track') {
+    // Tracks have no search index in FREQ yet — sharing the track currently
+    // playing/queued is the one reliable source of a real tracks.id without
+    // building a new search endpoint. Only platform:'freq' queue items
+    // carry a real tracks.id (see resolvePublishedTrack); anything else
+    // (local file, YouTube, Spotify, etc.) isn't a FREQ track and can't be
+    // shared this way.
+    const item = state.activeIndex >= 0 ? state.queue[state.activeIndex] : null;
+    if (item && item.platform === 'freq' && item.id) {
+      row.dataset.refId = item.id;
+      row.innerHTML = `<div class="post-ref-card">&#127926; ${escapeHtml(item.customLabel || item.title || 'Track')}</div>`;
+    } else {
+      row.innerHTML = `<div class="empty-panel" style="font-size:0.42rem;padding:8px;">Play a FREQ track first, then reopen this menu to share it.</div>`;
+    }
+    return;
+  }
+
+  if (type === 'playlist') {
+    // Only public playlists are offered — sharing a private one would leak
+    // it (also re-checked server-side, see [posts create]).
+    const shareable = (myPlaylists || []).filter(p => p.isPublic);
+    if (!shareable.length) {
+      row.innerHTML = `<div class="empty-panel" style="font-size:0.42rem;padding:8px;">Make a playlist public first to share it.</div>`;
+      return;
+    }
+    row.innerHTML = `<select id="postComposePlaylistSelect" onchange="$('postComposeRefRow').dataset.refId=this.value">
+      ${shareable.map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('')}
+    </select>`;
+    row.dataset.refId = shareable[0].id;
+    return;
+  }
+
+  if (type === 'artist') {
+    row.innerHTML = `
+      <input type="text" id="postComposeArtistSearch" placeholder="Search artists…" oninput="searchPostComposeArtists(this.value)" style="width:100%;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-main);font-family:'Space Mono',monospace;font-size:0.5rem;padding:7px 9px;box-sizing:border-box;margin-bottom:4px;" />
+      <div id="postComposeArtistResults"></div>`;
+    return;
+  }
+
+  if (type === 'release_announcement') {
+    if (!ownProfile?.artistId) { row.innerHTML = ''; row.style.display = 'none'; return; }
+    row.innerHTML = `<div class="empty-panel" style="font-size:0.42rem;padding:8px;">Loading your releases…</div>`;
+    fetch(`/api/artists/${encodeURIComponent(ownProfile.artistId)}/releases`).then(r => r.json()).then(data => {
+      const releases = data.releases || [];
+      if (!releases.length) {
+        row.innerHTML = `<div class="empty-panel" style="font-size:0.42rem;padding:8px;">Create a release in your Artist Dashboard first.</div>`;
+        return;
+      }
+      row.innerHTML = `<select id="postComposeReleaseSelect" onchange="$('postComposeRefRow').dataset.refId=this.value">
+        ${releases.map(r => `<option value="${r.id}">${escapeHtml(r.title)}</option>`).join('')}
+      </select>`;
+      row.dataset.refId = releases[0].id;
+    }).catch(() => { row.innerHTML = `<div class="empty-panel" style="font-size:0.42rem;padding:8px;">Could not load releases.</div>`; });
+    return;
+  }
+
+  if (type === 'artist_update') {
+    row.style.display = 'none';
+    row.innerHTML = '';
+  }
+}
+
+let postComposeArtistSearchTimer = null;
+function searchPostComposeArtists(q) {
+  clearTimeout(postComposeArtistSearchTimer);
+  const results = $('postComposeArtistResults');
+  const row = $('postComposeRefRow');
+  if (!results || !row) return;
+  if (!q || !q.trim()) { results.innerHTML = ''; row.dataset.refId = ''; return; }
+  postComposeArtistSearchTimer = setTimeout(async () => {
+    try {
+      const res = await fetch(`/api/discover/artists?mode=search&q=${encodeURIComponent(q.trim())}&limit=6`);
+      const data = await res.json();
+      const artists = data.artists || [];
+      results.innerHTML = artists.length
+        ? artists.map(a => `<div class="post-ref-card" style="cursor:pointer;" onclick="selectPostComposeArtist('${a.id}','${escapeHtml(a.name).replace(/'/g, "\\'")}')">&#127908; ${escapeHtml(a.name)}</div>`).join('')
+        : `<div class="empty-panel" style="font-size:0.42rem;padding:6px;">No artists found.</div>`;
+    } catch (_) { /* non-fatal — just leave previous results showing */ }
+  }, 300);
+}
+function selectPostComposeArtist(id, name) {
+  const row = $('postComposeRefRow');
+  if (!row) return;
+  row.dataset.refId = id;
+  $('postComposeArtistSearch').value = name;
+  $('postComposeArtistResults').innerHTML = `<div class="post-ref-card">&#127908; ${escapeHtml(name)}</div>`;
+}
+
 async function submitPost() {
   if (!AUTH.loggedIn) { showToast('Sign in required', 'Please sign in to post.', 'error'); return; }
   const body = ($('postComposeBody')?.value || '').trim();
-  const postType = $('postComposeType')?.value || 'text';
+  const type = $('postComposeType')?.value || 'text';
+  const refRow = $('postComposeRefRow');
+  const refId = refRow?.dataset.refId || '';
+
+  if (type !== 'text' && type !== 'artist_update' && !refId) {
+    showToast('Pick something to share', 'Select a track, playlist, artist, or release first.', 'error');
+    return;
+  }
+
+  const payload = { token: AUTH.token, postType: type, body };
+  if (type === 'track') payload.trackId = refId;
+  if (type === 'playlist') payload.playlistId = refId;
+  if (type === 'artist') payload.artistId = refId;
+  if (type === 'release_announcement') { payload.artistId = ownProfile?.artistId; payload.releaseId = refId; }
+  if (type === 'artist_update') payload.artistId = ownProfile?.artistId;
+
   try {
-    const res = await fetch(POSTS_BASE, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ token: AUTH.token, postType, body }) });
+    const res = await fetch(POSTS_BASE, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Could not create post.');
     if ($('postComposeBody')) $('postComposeBody').value = '';
+    $('postComposeType').value = 'text';
+    updatePostComposeType();
     await loadPosts(false);
     showToast('Posted', 'Your post is live.', 'success');
   } catch (err) { showToast('Post failed', err.message, 'error'); }
@@ -6963,12 +7147,16 @@ let activityUnreadCount = 0;
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 const ACTIVITY_ICONS = {
-  follow:           '👤',
-  collab_joined:    '🤝',
-  track_added:      '🎵',
-  playlist_created: '⊞',
-  playlist_updated: '✎',
-  playlist_liked:   '♥',
+  follow:               '👤',
+  collab_joined:        '🤝',
+  track_added:          '🎵',
+  playlist_created:     '⊞',
+  playlist_updated:     '✎',
+  playlist_liked:       '♥',
+  user_post:            '📝',
+  post_shared:          '⇪',
+  release_announcement: '🎙',
+  artist_update:        '📣',
 };
 
 function activityLabel(event) {
@@ -6987,6 +7175,14 @@ function activityLabel(event) {
       return `<strong>@${a}</strong> updated <span style="color:var(--accent3);cursor:pointer;" onclick="openPlaylistViewer('${p.playlistId}')">${escapeHtml(p.playlistName || 'a playlist')}</span>`;
     case 'playlist_liked':
       return `<strong>@${a}</strong> liked <span style="color:var(--accent3);cursor:pointer;" onclick="openPlaylistViewer('${p.playlistId}')">${escapeHtml(p.playlistName || 'a playlist')}</span>`;
+    case 'user_post':
+      return `<strong>@${a}</strong> posted${p.preview ? `: <span style="color:var(--text-muted);">"${escapeHtml(p.preview)}${p.preview.length >= 80 ? '…' : ''}"</span>` : ''}`;
+    case 'post_shared':
+      return `<strong>@${a}</strong> shared a post${p.preview ? `: <span style="color:var(--text-muted);">"${escapeHtml(p.preview)}${p.preview.length >= 80 ? '…' : ''}"</span>` : ''}`;
+    case 'release_announcement':
+      return `<strong>${escapeHtml(p.artistName || a)}</strong> announced a new release${p.preview ? `: <span style="color:var(--text-muted);">"${escapeHtml(p.preview)}${p.preview.length >= 80 ? '…' : ''}"</span>` : ''}`;
+    case 'artist_update':
+      return `<strong>${escapeHtml(p.artistName || a)}</strong> posted an update${p.preview ? `: <span style="color:var(--text-muted);">"${escapeHtml(p.preview)}${p.preview.length >= 80 ? '…' : ''}"</span>` : ''}`;
     default:
       return `<strong>@${a}</strong> did something`;
   }
