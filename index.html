@@ -1883,6 +1883,142 @@ body.oled-mode {
 .release-visibility-badge.private  { background:rgba(255,71,87,0.15);color:var(--accent2); }
 .release-visibility-badge.unlisted { background:rgba(0,212,255,0.1);color:var(--accent3); }
 
+/* Explicit content badge */
+.explicit-badge {
+  display:inline-flex;align-items:center;justify-content:center;
+  background:#111;color:#fff;font-family:'Space Mono',monospace;
+  font-size:0.3rem;font-weight:700;padding:1px 4px;border-radius:2px;
+  letter-spacing:0.06em;line-height:1.5;vertical-align:middle;margin-left:4px;
+  flex-shrink:0;
+}
+
+/* Report modal */
+.report-overlay {
+  position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:9200;
+  display:none;align-items:center;justify-content:center;
+}
+.report-overlay.open { display:flex; }
+.report-panel {
+  background:var(--surface);border:1px solid var(--border);border-radius:8px;
+  padding:20px;width:min(95vw,400px);max-height:90vh;overflow-y:auto;
+  font-family:'Space Mono',monospace;
+}
+.report-panel-title {
+  font-family:'Unbounded',sans-serif;font-size:0.65rem;font-weight:700;
+  color:var(--text);margin-bottom:4px;
+}
+.report-panel-subtitle {
+  font-size:0.42rem;color:var(--text-muted);margin-bottom:14px;
+}
+.report-reason-list {
+  display:flex;flex-direction:column;gap:4px;margin-bottom:12px;
+}
+.report-reason-option {
+  display:flex;align-items:center;gap:8px;padding:7px 9px;
+  border:1px solid var(--border);border-radius:var(--radius);cursor:pointer;
+  font-size:0.46rem;color:var(--text-dim);transition:border-color 0.12s,color 0.12s,background 0.12s;
+}
+.report-reason-option:hover { border-color:var(--accent3);color:var(--text); }
+.report-reason-option input[type=radio] { accent-color:var(--accent3); }
+.report-reason-option.selected { border-color:var(--accent3);color:var(--text);background:rgba(0,212,255,0.06); }
+.report-details-input {
+  width:100%;background:rgba(255,255,255,0.03);border:1px solid var(--border);
+  border-radius:var(--radius);color:var(--text-main);font-family:'Space Mono',monospace;
+  font-size:0.46rem;padding:9px 11px;box-sizing:border-box;resize:vertical;
+  min-height:60px;margin-bottom:12px;
+}
+.report-founder-warning {
+  background:rgba(255,180,0,0.08);border:1px solid rgba(255,180,0,0.3);
+  border-radius:var(--radius);padding:10px 12px;margin-bottom:12px;
+  font-size:0.44rem;color:rgba(255,180,0,0.9);
+}
+.report-founder-warning strong { color:rgba(255,200,0,1); }
+.report-founder-warning ul { margin:6px 0 0 0;padding-left:14px; }
+.report-founder-warning li { margin-bottom:2px; }
+.report-actions { display:flex;gap:8px; }
+.report-submit-btn {
+  flex:1;background:var(--accent2);color:#fff;border:none;
+  font-family:'Unbounded',sans-serif;font-weight:700;font-size:0.5rem;
+  padding:9px;border-radius:var(--radius);cursor:pointer;
+  letter-spacing:0.04em;text-transform:uppercase;
+}
+.report-submit-btn:disabled { opacity:0.5;cursor:not-allowed; }
+.report-cancel-btn {
+  background:none;border:1px solid var(--border);color:var(--text-muted);
+  font-family:'Space Mono',monospace;font-size:0.46rem;padding:9px 14px;
+  border-radius:var(--radius);cursor:pointer;
+}
+
+/* Admin Moderation Dashboard */
+.admin-dash-overlay {
+  position:fixed;inset:0;background:rgba(0,0,0,0.92);z-index:9300;
+  display:none;align-items:flex-start;justify-content:center;padding:20px 0;overflow-y:auto;
+}
+.admin-dash-overlay.open { display:flex; }
+.admin-dash-panel {
+  background:var(--bg);border:1px solid var(--border);border-radius:10px;
+  width:min(96vw,860px);min-height:60vh;padding:20px;font-family:'Space Mono',monospace;
+  position:relative;
+}
+.admin-dash-header {
+  display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;
+}
+.admin-dash-title {
+  font-family:'Unbounded',sans-serif;font-size:0.8rem;font-weight:700;color:var(--text);
+}
+.admin-dash-badge {
+  background:var(--accent2);color:#fff;font-size:0.36rem;font-weight:700;
+  padding:2px 6px;border-radius:3px;margin-left:8px;letter-spacing:0.06em;
+}
+.admin-dash-tabs {
+  display:flex;gap:6px;margin-bottom:16px;border-bottom:1px solid var(--border);padding-bottom:12px;
+}
+.admin-dash-tab {
+  background:none;border:1px solid var(--border);color:var(--text-muted);
+  font-family:'Space Mono',monospace;font-size:0.44rem;padding:6px 14px;
+  border-radius:var(--radius);cursor:pointer;letter-spacing:0.04em;transition:all 0.12s;
+}
+.admin-dash-tab.active { border-color:var(--accent2);color:var(--accent2);background:rgba(255,71,87,0.08); }
+.admin-report-row {
+  border:1px solid var(--border);border-radius:6px;padding:10px 12px;margin-bottom:8px;
+  font-size:0.44rem;
+}
+.admin-report-row.high { border-left:3px solid var(--accent2); }
+.admin-report-meta {
+  display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px;align-items:center;
+}
+.admin-report-chip {
+  background:rgba(255,255,255,0.06);border:1px solid var(--border);
+  border-radius:3px;padding:2px 6px;font-size:0.36rem;color:var(--text-dim);
+  text-transform:uppercase;letter-spacing:0.04em;
+}
+.admin-report-chip.type-track   { border-color:var(--accent3);color:var(--accent3); }
+.admin-report-chip.type-artist  { border-color:#c9b8ff;color:#c9b8ff; }
+.admin-report-chip.type-release { border-color:var(--accent);color:var(--accent); }
+.admin-report-chip.type-post    { border-color:rgba(255,180,0,0.6);color:rgba(255,200,0,0.9); }
+.admin-report-chip.priority-high { background:rgba(255,71,87,0.12);border-color:var(--accent2);color:var(--accent2); }
+.admin-report-details { font-size:0.42rem;color:var(--text-dim);margin-bottom:8px;font-style:italic; }
+.admin-report-actions { display:flex;flex-wrap:wrap;gap:6px; }
+.admin-action-btn {
+  background:none;border:1px solid var(--border);color:var(--text-muted);
+  font-family:'Space Mono',monospace;font-size:0.38rem;padding:4px 9px;
+  border-radius:var(--radius);cursor:pointer;letter-spacing:0.04em;
+  text-transform:uppercase;transition:all 0.12s;
+}
+.admin-action-btn:hover { border-color:var(--text);color:var(--text); }
+.admin-action-btn.danger { border-color:rgba(255,71,87,0.4);color:var(--accent2); }
+.admin-action-btn.danger:hover { background:rgba(255,71,87,0.12); }
+.admin-action-btn.verify { border-color:rgba(0,212,255,0.4);color:var(--accent3); }
+.admin-action-btn.verify:hover { background:rgba(0,212,255,0.08); }
+.admin-stats-strip {
+  display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;
+}
+.admin-stat-pill {
+  background:var(--surface);border:1px solid var(--border);border-radius:20px;
+  padding:4px 12px;font-size:0.42rem;color:var(--text-muted);
+}
+.admin-stat-pill span { font-weight:700;color:var(--text);margin-right:4px; }
+
 /* Release expanded track panel */
 .release-tracks-panel {
   background:var(--surface);border:1px solid var(--border);
@@ -2000,7 +2136,7 @@ body.oled-mode {
     <button class="header-tag" id="miniBtn" style="cursor:pointer;background:none;" title="Mini sidebar">⇄</button>
     <button class="header-tag" id="fullscreenBtn" style="cursor:pointer;background:none;" title="Fullscreen player">⛶</button>
     <button class="header-tag" id="shortcutsBtn" style="cursor:pointer;background:none;" title="Keyboard shortcuts">? Keys</button>
-    <div class="header-tag">v4.2</div>
+    <div class="header-tag">v4.6</div>
   </div>
 </header>
 
@@ -2439,6 +2575,7 @@ body.oled-mode {
   © 2026 FREQ · Slimey2017 · All rights reserved ·
   <button class="footer-support-btn" onclick="openSupportModal()">⚑ Support &amp; Feedback</button> ·
   <button class="footer-support-btn" onclick="openAboutModal()">ℹ About</button>
+  <span id="adminFooterEntry" style="display:none;"> · <button class="footer-support-btn" style="color:var(--accent2);border-color:rgba(255,71,87,0.4);" onclick="openAdminDash()">⊛ Moderation</button></span>
 </footer>
 
 <!-- Status Bar -->
@@ -2564,11 +2701,11 @@ body.oled-mode {
 <div class="support-overlay" id="aboutOverlay">
   <div class="about-panel">
     <div class="about-logo">FREQ</div>
-    <div class="about-version">Universal Music Player · v4.5</div>
+    <div class="about-version">Universal Music Player · v4.6</div>
 
     <div class="about-section">
       <div class="about-row"><span class="about-label">Developer</span><span class="about-val">Slimey2017</span></div>
-      <div class="about-row"><span class="about-label">Version</span><span class="about-val">v4.3</span></div>
+      <div class="about-row"><span class="about-label">Version</span><span class="about-val">v4.6</span></div>
       <div class="about-row"><span class="about-label">Engine</span><span class="about-val">Web Audio API + Node.js</span></div>
       <div class="about-row"><span class="about-label">Hosting</span><span class="about-val">Render.com (Keep-Alive enabled)</span></div>
     </div>
@@ -2952,6 +3089,7 @@ body.oled-mode {
         <button id="artistProfileFollowBtn" style="background:none;border:1px solid var(--accent3);color:var(--accent3);font-family:'Space Mono',monospace;font-size:0.5rem;padding:8px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.06em;text-transform:uppercase;">Follow</button>
         <button class="share-btn" id="artistProfileShareBtn" style="flex:0 0 auto;padding:8px 12px;">⇪ Share</button>
         <button id="artistDashboardToggleBtn" class="artist-dash-btn">🎤 Artist Dashboard</button>
+        <button id="artistProfileReportBtn" onclick="reportArtistProfile()" style="display:none;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.4rem;padding:8px 10px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.04em;text-transform:uppercase;" title="Report this artist">⚑ Report</button>
       </div>
       <input type="file" id="artistAvatarFileInput" accept="image/png,image/jpeg,image/webp,image/gif" style="display:none;" />
       <input type="file" id="artistBannerFileInput" accept="image/png,image/jpeg,image/webp,image/gif" style="display:none;" />
@@ -3023,9 +3161,88 @@ body.oled-mode {
     <select id="publishReleaseSelect" style="width:100%;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-main);font-family:'Space Mono',monospace;font-size:0.5rem;padding:9px 11px;box-sizing:border-box;margin-bottom:10px;">
       <option value="">— Standalone single (no release) —</option>
     </select>
+    <label style="display:flex;align-items:center;gap:8px;font-family:'Space Mono',monospace;font-size:0.48rem;color:var(--text-dim);margin-bottom:10px;cursor:pointer;">
+      <input type="checkbox" id="publishExplicitCheck" style="width:14px;height:14px;accent-color:var(--accent);cursor:pointer;" />
+      <span style="display:flex;align-items:center;gap:6px;">
+        <span style="background:#111;color:#fff;font-family:'Space Mono',monospace;font-size:0.4rem;font-weight:700;padding:1px 4px;border-radius:2px;letter-spacing:0.04em;">E</span>
+        Explicit Content
+      </span>
+    </label>
     <div id="publishTrackStatus" style="font-size:0.42rem;color:var(--text-muted);margin-bottom:10px;min-height:1.2em;"></div>
     <button id="publishTrackSubmitBtn" style="width:100%;background:var(--accent);color:var(--bg);border:none;font-family:'Unbounded',sans-serif;font-weight:700;font-size:0.52rem;padding:10px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.05em;text-transform:uppercase;margin-bottom:8px;">Publish</button>
     <button class="support-close-btn" onclick="closePublishTrackModal()">Cancel</button>
+  </div>
+</div>
+
+<!-- Report Modal -->
+<div class="report-overlay" id="reportOverlay">
+  <div class="report-panel" id="reportPanel">
+    <div class="report-panel-title">Report Content</div>
+    <div class="report-panel-subtitle" id="reportSubtitle">Select a reason for your report.</div>
+
+    <!-- Founder warning (shown conditionally) -->
+    <div class="report-founder-warning" id="reportFounderWarning" style="display:none;">
+      <strong>⚠️ Slimey2017 is the creator of FREQ.</strong>
+      <br>False reports may result in moderation action against your account. Only continue if reporting:
+      <ul>
+        <li>Account compromise</li>
+        <li>Spam or Harassment</li>
+        <li>Copyright violations</li>
+        <li>Other legitimate concerns</li>
+      </ul>
+      <div style="display:flex;gap:8px;margin-top:10px;">
+        <button class="report-cancel-btn" style="flex:1;" onclick="closeReportModal()">Cancel</button>
+        <button class="report-submit-btn" style="flex:1;font-size:0.42rem;" onclick="reportFounderContinue()">Continue Anyway</button>
+      </div>
+    </div>
+
+    <div id="reportMainContent">
+      <div class="report-reason-list" id="reportReasonList">
+        <label class="report-reason-option"><input type="radio" name="reportReason" value="impersonation" /> Impersonation</label>
+        <label class="report-reason-option"><input type="radio" name="reportReason" value="copyright_violation" /> Copyright Violation</label>
+        <label class="report-reason-option"><input type="radio" name="reportReason" value="spam" /> Spam</label>
+        <label class="report-reason-option"><input type="radio" name="reportReason" value="harassment_bullying" /> Harassment / Bullying</label>
+        <label class="report-reason-option"><input type="radio" name="reportReason" value="hate_speech" /> Hate Speech</label>
+        <label class="report-reason-option"><input type="radio" name="reportReason" value="explicit_not_marked" /> Explicit Content Not Marked Explicit</label>
+        <label class="report-reason-option"><input type="radio" name="reportReason" value="misleading_metadata" /> Misleading Metadata</label>
+        <label class="report-reason-option"><input type="radio" name="reportReason" value="other" /> Other</label>
+      </div>
+      <textarea class="report-details-input" id="reportDetails" placeholder="Optional details (max 500 chars)…" maxlength="500"></textarea>
+      <div id="reportStatus" style="font-size:0.42rem;color:var(--accent2);margin-bottom:8px;min-height:1.2em;"></div>
+      <div class="report-actions">
+        <button class="report-cancel-btn" onclick="closeReportModal()">Cancel</button>
+        <button class="report-submit-btn" id="reportSubmitBtn" onclick="submitReport()">Submit Report</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Admin Moderation Dashboard -->
+<div class="admin-dash-overlay" id="adminDashOverlay">
+  <div class="admin-dash-panel">
+    <div class="admin-dash-header">
+      <div>
+        <span class="admin-dash-title">Moderation</span>
+        <span class="admin-dash-badge">ADMIN</span>
+      </div>
+      <button onclick="closeAdminDash()" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.42rem;padding:5px 11px;border-radius:var(--radius);cursor:pointer;">✕ Close</button>
+    </div>
+    <div class="admin-stats-strip" id="adminStatsStrip">
+      <div class="admin-stat-pill"><span id="adminStatPending">—</span>Pending</div>
+      <div class="admin-stat-pill"><span id="adminStatReviewed">—</span>Reviewed</div>
+      <div class="admin-stat-pill"><span id="adminStatActioned">—</span>Actioned</div>
+      <div class="admin-stat-pill"><span id="adminStatDismissed">—</span>Dismissed</div>
+    </div>
+    <div class="admin-dash-tabs">
+      <button class="admin-dash-tab active" id="adminTabPending"   onclick="setAdminTab('pending')">Open</button>
+      <button class="admin-dash-tab"         id="adminTabReviewed" onclick="setAdminTab('reviewed')">Reviewed</button>
+      <button class="admin-dash-tab"         id="adminTabActioned" onclick="setAdminTab('action_taken')">Actioned</button>
+      <button class="admin-dash-tab"         id="adminTabDismissed" onclick="setAdminTab('dismissed')">Dismissed</button>
+    </div>
+    <div id="adminReportsList"><div class="empty-panel">Loading…</div></div>
+    <div id="adminReportsLoadMore" style="display:none;margin-top:10px;">
+      <button onclick="loadAdminReports(true)" style="width:100%;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.44rem;padding:8px;border-radius:var(--radius);cursor:pointer;">Load More</button>
+    </div>
   </div>
 </div>
 
@@ -4192,6 +4409,7 @@ const AUTH = {
   username:    '',
   name:        '',
   playlists:   [],
+  isAdmin:     false,
 };
 
 const AUTH_BASE = '/api/auth';
@@ -4226,6 +4444,9 @@ function updateAuthUI() {
     $('authLoggedInSection').style.display = 'none';
     $('authGuestSection').style.display    = 'block';
   }
+  // Show/hide admin footer entry
+  const adminEntry = $('adminFooterEntry');
+  if (adminEntry) adminEntry.style.display = AUTH.isAdmin ? '' : 'none';
 }
 
 function renderSavedPlaylists() {
@@ -4700,17 +4921,21 @@ function renderCharts() {
   }
   list.innerHTML = chartsTracks.map((t, i) => {
     const cfg = PLATFORM_CONFIG[t.platform] || { label: t.platform || '?', color: 'var(--text-muted)' };
+    const reportBtn = (AUTH.loggedIn && t.id)
+      ? `<button onclick="event.stopPropagation();openReportModal('track','${t.id}','${(t.title||'').replace(/'/g,"\\'").replace(/"/g,'&quot;')}')" style="background:none;border:none;color:var(--text-muted);font-size:0.5rem;cursor:pointer;flex-shrink:0;padding:2px 4px;opacity:0.6;" title="Report">⚑</button>`
+      : '';
     return `
       <div class="saved-playlist-row" style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--border);">
         <div style="width:22px;flex-shrink:0;text-align:right;font-size:0.5rem;color:var(--text-dim);font-weight:600;">${t.rank}</div>
         <div style="flex:1;min-width:0;cursor:pointer;" onclick="playFromChart(${i})">
-          <div style="font-size:0.55rem;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(t.title)}</div>
+          <div style="font-size:0.55rem;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(t.title)}${t.isExplicit ? ' <span class="explicit-badge">E</span>' : ''}</div>
           <div style="font-size:0.42rem;color:var(--text-muted);">
             <span style="color:${cfg.color};">${escapeHtml(cfg.label)}</span>
             · ${t.playCount} play${t.playCount === 1 ? '' : 's'}${chartsWindow === '7d' ? ' this week' : ''}
           </div>
         </div>
         <button onclick="event.stopPropagation(); queueFromChart(${i})" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.42rem;padding:4px 8px;border-radius:var(--radius);cursor:pointer;flex-shrink:0;letter-spacing:0.04em;text-transform:uppercase;" title="Add to queue">+ Queue</button>
+        ${reportBtn}
       </div>
     `;
   }).join('');
@@ -4940,14 +5165,18 @@ function renderDiscoverTracks() {
   list.innerHTML = discoverTracksData.map((t, i) => {
     const cfg = PLATFORM_CONFIG[t.platform] || { label: t.platform || '?', color: 'var(--text-muted)' };
     const credits = formatCollaboratorCredits(t.collaborators);
+    const reportBtn = (AUTH.loggedIn && t.id)
+      ? `<button onclick="event.stopPropagation();openReportModal('track','${t.id}','${(t.title||'').replace(/'/g,"\\'").replace(/"/g,'&quot;')}')" style="background:none;border:none;color:var(--text-muted);font-size:0.5rem;cursor:pointer;flex-shrink:0;padding:2px 4px;opacity:0.6;" title="Report">⚑</button>`
+      : '';
     return `
       <div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--border);">
         <div style="width:22px;flex-shrink:0;text-align:right;font-size:0.5rem;color:var(--text-dim);font-weight:600;">${t.rank}</div>
         <div style="flex:1;min-width:0;cursor:pointer;" onclick="playFromDiscoverTracks(${i})">
-          <div style="font-size:0.55rem;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(t.title)}</div>
+          <div style="font-size:0.55rem;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(t.title)}${t.isExplicit ? ' <span class="explicit-badge">E</span>' : ''}</div>
           <div style="font-size:0.42rem;color:var(--text-muted);"><span style="color:${cfg.color};">${escapeHtml(cfg.label)}</span> · ${t.playCount} play${t.playCount === 1 ? '' : 's'}${discoverTracksWindow === '7d' ? ' this week' : ''}${credits ? ' · ' + credits : ''}</div>
         </div>
         <button onclick="event.stopPropagation(); queueFromDiscoverTracks(${i})" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.4rem;padding:4px 8px;border-radius:var(--radius);cursor:pointer;flex-shrink:0;text-transform:uppercase;" title="Add to queue">+ Queue</button>
+        ${reportBtn}
       </div>
     `;
   }).join('');
@@ -5286,6 +5515,13 @@ async function openArtistProfile(idOrSlug) {
     $('artistBannerUploadWrap').style.cursor = data.isOwner ? 'pointer' : 'default';
 
     $('artistDashboardToggleBtn').style.display = data.isOwner ? '' : 'none';
+
+    // Report button — only for logged-in non-owners
+    const reportArtistBtn = $('artistProfileReportBtn');
+    if (reportArtistBtn) {
+      reportArtistBtn.style.display = (AUTH.loggedIn && !data.isOwner) ? '' : 'none';
+      reportArtistBtn.onclick = () => openReportModal('artist', data.id, data.name);
+    }
     // Note: the old inline dashboard panel (#artistDashboardPanel) was removed
     // during the dashboard redesign in favor of the #artistDashboardOverlay
     // modal (see openArtistDashboardModal()). That overlay has no .open class
@@ -5448,11 +5684,12 @@ async function loadArtistTopTracks(artistId) {
       <div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border);">
         <div style="width:16px;flex-shrink:0;text-align:right;font-size:0.46rem;color:var(--text-dim);">${i + 1}</div>
         <div style="flex:1;min-width:0;cursor:pointer;" onclick="playPublishedTrack('${t.id}')">
-          <div style="font-size:0.55rem;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(t.title)}</div>
+          <div style="font-size:0.55rem;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(t.title)}${t.isExplicit ? ' <span class="explicit-badge">E</span>' : ''}</div>
           <div style="font-size:0.42rem;color:var(--text-muted);">${formatCompactCount(t.playCount || 0)} play${t.playCount === 1 ? '' : 's'}${credits ? ' · ' + credits : ''}</div>
         </div>
         <button onclick="event.stopPropagation(); toggleTrackLyricsSection('${t.id}')" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.42rem;padding:4px 8px;border-radius:var(--radius);cursor:pointer;flex-shrink:0;letter-spacing:0.04em;text-transform:uppercase;" title="Lyrics">Lyrics</button>
         <button onclick="event.stopPropagation(); queuePublishedTrack('${t.id}')" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.42rem;padding:4px 8px;border-radius:var(--radius);cursor:pointer;flex-shrink:0;letter-spacing:0.04em;text-transform:uppercase;" title="Add to queue">+ Queue</button>
+        ${AUTH.loggedIn ? `<button onclick="event.stopPropagation();openReportModal('track','${t.id}','${escapeHtml(t.title).replace(/'/g,"\\'")}')" style="background:none;border:none;color:var(--text-muted);font-size:0.5rem;cursor:pointer;flex-shrink:0;padding:2px 4px;opacity:0.6;" title="Report">⚑</button>` : ''}
       </div>
     `;
     }).join('');
@@ -5661,7 +5898,7 @@ function renderReleaseGrid() {
         <button class="release-card-play-btn" onclick="event.stopPropagation();playEntireRelease('${escapeHtml(r.id)}')" title="Play release">▶</button>
       </div>
       <div class="release-card-meta">
-        <span class="release-type-badge ${escapeHtml(r.releaseType)}">${typeLabel}</span>${visiBadge}
+        <span class="release-type-badge ${escapeHtml(r.releaseType)}">${typeLabel}</span>${visiBadge}${r.isExplicit ? '<span class="explicit-badge">E</span>' : ''}
         <div class="release-card-title">${escapeHtml(r.title)}</div>
         <div class="release-card-sub">${year}${year && r.trackCount ? ' · ' : ''}${r.trackCount || 0} track${r.trackCount === 1 ? '' : 's'}</div>
       </div>
@@ -5706,7 +5943,7 @@ async function toggleReleaseCard(releaseId) {
             <div class="release-track-num">${i + 1}</div>
             <div class="release-track-art" style="${artStyle}"></div>
             <div class="release-track-info">
-              <div class="release-track-title">${escapeHtml(t.title || t.originalUrl || '')}</div>
+              <div class="release-track-title">${escapeHtml(t.title || t.originalUrl || '')}${t.isExplicit ? ' <span class="explicit-badge">E</span>' : ''}</div>
               ${credits ? `<div class="release-track-credits">${credits}</div>` : ''}
             </div>
           </div>`;
@@ -6059,6 +6296,7 @@ $('publishTrackSubmitBtn')?.addEventListener('click', async () => {
         title: $('publishTrackTitleInput').value.trim() || undefined,
         coverUrl: publishingCoverUrl || undefined,
         releaseId: $('publishReleaseSelect').value || undefined,
+        isExplicit: !!$('publishExplicitCheck')?.checked,
       }),
     });
     const data = await res.json();
@@ -7906,6 +8144,9 @@ async function authInit() {
     AUTH.username  = data.username;
     AUTH.name      = data.displayName;
     AUTH.playlists = data.playlists || [];
+    // Check admin status
+    fetch('/api/admin/me', { headers: { 'Authorization': `Bearer ${AUTH.token}` } })
+      .then(r => r.json()).then(d => { AUTH.isAdmin = !!d.isAdmin; updateAuthUI(); }).catch(() => {});
     updateAuthUI();
     setSyncStatus(`✓ Session restored · ${AUTH.playlists.length} playlists`, 'var(--accent3)');
     loadSharedWithMe();
@@ -7934,6 +8175,8 @@ $('signinSubmit').addEventListener('click', async () => {
     AUTH.name      = data.displayName;
     AUTH.playlists = data.playlists || [];
     localStorage.setItem('freq_token_v4', AUTH.token);
+    fetch('/api/admin/me', { headers: { 'Authorization': `Bearer ${AUTH.token}` } })
+      .then(r => r.json()).then(d => { AUTH.isAdmin = !!d.isAdmin; updateAuthUI(); }).catch(() => {});
     updateAuthUI();
     loadSharedWithMe();
     loadLikedPlaylists();
@@ -7969,6 +8212,7 @@ $('signupSubmit').addEventListener('click', async () => {
     AUTH.name      = data.displayName;
     AUTH.playlists = [];
     localStorage.setItem('freq_token_v4', AUTH.token);
+    AUTH.isAdmin = false; // New accounts are never admins
     updateAuthUI();
     errEl.classList.remove('show');
     ['signupUsername','signupName','signupPassword','signupConfirm'].forEach(id => $(id).value = '');
