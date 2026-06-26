@@ -1612,7 +1612,19 @@ async function dbGetSession(token) {
     await supabase.from('sessions').delete().eq('token', token);
     return null;
   }
-  return { username: data.username, expiresAt: new Date(data.expires_at).getTime() };
+  // Fetch is_admin from accounts (cheap read, cached by Postgres for repeated calls)
+  const { data: acct } = await supabase.from('accounts').select('is_admin').eq('username', data.username).maybeSingle();
+  return { username: data.username, expiresAt: new Date(data.expires_at).getTime(), isAdmin: !!(acct?.is_admin) };
+}
+
+// Middleware: require an authenticated admin session
+async function requireAdmin(req, res, next) {
+  const token = (req.headers.authorization || '').replace('Bearer ', '') || req.body?.token || req.query.token;
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Authentication required.' });
+  if (!sess.isAdmin) return res.status(403).json({ error: 'Admin access required.' });
+  req._adminSession = sess;
+  next();
 }
 
 async function dbRefreshSession(token, expiresAt) {
@@ -5001,6 +5013,7 @@ app.get('/api/artists/:id/tracks', async (req, res) => {
         cloudFileId: t.cloud_file_id || null,
         publishedAt: t.published_at || null,
         isUpload: !!t.cloud_file_id,
+        isExplicit: !!t.is_explicit,
         collaborators: (collabsByTrack.get(t.id) || []).map(shapeCollaborator),
       })),
     });
@@ -5027,12 +5040,22 @@ app.get('/api/artists/:id/releases', async (req, res) => {
       r, collaborators: (await dbGetReleaseCollaborators(r.id)).map(shapeCollaborator),
     })));
     return res.json({
-      releases: releasesWithCollabs.map(({ r, collaborators }) => ({
-        id: r.id, title: r.title, releaseType: r.release_type, coverUrl: r.cover_url,
-        releaseDate: r.release_date, trackCount: r.track_count, totalPlays: r.total_plays,
-        totalLikes: r.total_likes, description: r.description, externalUrl: r.external_url,
-        visibility: r.visibility || 'public',
-        collaborators,
+      releases: await Promise.all(releasesWithCollabs.map(async ({ r, collaborators }) => {
+        // Live explicit check: any track in this release explicit?
+        const { data: explicitCheck } = await supabase
+          .from('artist_release_tracks')
+          .select('tracks!inner(is_explicit)')
+          .eq('release_id', r.id)
+          .eq('tracks.is_explicit', true)
+          .limit(1);
+        return {
+          id: r.id, title: r.title, releaseType: r.release_type, coverUrl: r.cover_url,
+          releaseDate: r.release_date, trackCount: r.track_count, totalPlays: r.total_plays,
+          totalLikes: r.total_likes, description: r.description, externalUrl: r.external_url,
+          visibility: r.visibility || 'public',
+          isExplicit: !!(explicitCheck && explicitCheck.length > 0),
+          collaborators,
+        };
       })),
     });
   } catch (err) {
@@ -5071,6 +5094,7 @@ app.get('/api/artists/:id/releases/:releaseId/tracks', async (req, res) => {
         artistId: t.artist_id || null,
         artistName: t.artist_name || null,
         isUpload: !!t.cloud_file_id,
+        isExplicit: !!t.is_explicit,
         collaborators: (collabsByTrack.get(t.id) || []).map(shapeCollaborator),
       })),
     });
@@ -5633,7 +5657,7 @@ async function dbGetPublishableCloudFiles(username) {
 // scheme. platform is the literal string 'cloud' so the frontend/queue can
 // tell a published upload apart from a YouTube-resolved track without
 // needing to check cloud_file_id specifically.
-async function dbPublishTrack({ cloudFile, artist, title, coverUrl }) {
+async function dbPublishTrack({ cloudFile, artist, title, coverUrl, isExplicit = false }) {
   const finalTitle = (title && title.trim()) ? title.trim().slice(0, 255) : (cloudFile.title || cloudFile.filename);
   const { data, error } = await supabase
     .from('tracks')
@@ -5646,6 +5670,7 @@ async function dbPublishTrack({ cloudFile, artist, title, coverUrl }) {
       cloud_file_id: cloudFile.id,
       cover_url: coverUrl || null,
       is_published: true,
+      is_explicit: !!isExplicit,
       published_at: new Date().toISOString(),
     })
     .select()
@@ -5741,7 +5766,7 @@ app.post('/api/artists/:id/track-cover', rateLimit, imageUpload.single('file'), 
 });
 
 app.post('/api/artists/:id/publish', rateLimit, async (req, res) => {
-  const { token, cloudFileId, title, coverUrl, releaseId } = req.body || {};
+  const { token, cloudFileId, title, coverUrl, releaseId, isExplicit } = req.body || {};
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
   if (!cloudFileId) return res.status(400).json({ error: '"cloudFileId" is required.' });
@@ -5764,6 +5789,7 @@ app.post('/api/artists/:id/publish', rateLimit, async (req, res) => {
     const track = await dbPublishTrack({
       cloudFile, artist, title,
       coverUrl: coverUrl || release?.cover_url || null,
+      isExplicit: !!isExplicit,
     });
 
     if (release) {
@@ -6128,6 +6154,206 @@ app.get('/artist/:slug', async (req, res) => {
   }
   return res.sendFile(path.join(__dirname, 'index.html'));
 });
+
+
+// ─── Reports ─────────────────────────────────────────────────────────────────
+
+const REPORT_REASONS = [
+  'impersonation', 'copyright_violation', 'spam',
+  'harassment_bullying', 'hate_speech', 'explicit_not_marked',
+  'misleading_metadata', 'other',
+];
+const REPORT_TARGET_TYPES = ['track', 'release', 'artist', 'post', 'profile'];
+
+// POST /api/reports
+app.post('/api/reports', rateLimit, async (req, res) => {
+  const { token, targetType, targetId, reason, details } = req.body || {};
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Sign in to report content.' });
+  if (!REPORT_TARGET_TYPES.includes(targetType)) return res.status(400).json({ error: 'Invalid targetType.' });
+  if (!targetId) return res.status(400).json({ error: '"targetId" is required.' });
+  if (!REPORT_REASONS.includes(reason)) return res.status(400).json({ error: 'Invalid reason.' });
+
+  let priority = 'normal';
+  let targetUsername = null;
+  if (targetType === 'profile') targetUsername = targetId;
+  else if (targetType === 'artist') {
+    const { data: artistRow } = await supabase.from('artists').select('account_id').eq('id', targetId).maybeSingle();
+    targetUsername = artistRow?.account_id || null;
+  }
+  if (targetUsername && targetUsername.toLowerCase() === 'slimey2017') priority = 'high';
+
+  try {
+    const { data, error } = await supabase.from('reports').insert({
+      reporter_user_id: sess.username,
+      target_type: targetType,
+      target_id: String(targetId),
+      reason,
+      details: details ? String(details).slice(0, 2000) : null,
+      priority,
+    }).select().single();
+    if (error) {
+      if (error.code === '23505') return res.status(409).json({ error: 'You have already reported this content.' });
+      throw error;
+    }
+    return res.status(201).json({ id: data.id, status: data.status, isFounder: priority === 'high' });
+  } catch (err) {
+    console.error('[reports create]', err);
+    return res.status(500).json({ error: 'Could not submit report.' });
+  }
+});
+
+// GET /api/reports/check
+app.get('/api/reports/check', async (req, res) => {
+  const token = (req.headers.authorization || '').replace('Bearer ', '') || req.query.token;
+  const sess = token ? await dbGetSession(token) : null;
+  if (!sess) return res.json({ reported: false });
+  const { targetType, targetId } = req.query;
+  if (!targetType || !targetId) return res.json({ reported: false });
+  const { data } = await supabase.from('reports')
+    .select('id').eq('reporter_user_id', sess.username)
+    .eq('target_type', targetType).eq('target_id', String(targetId))
+    .maybeSingle();
+  return res.json({ reported: !!data });
+});
+
+// GET /api/admin/me
+app.get('/api/admin/me', async (req, res) => {
+  const token = (req.headers.authorization || '').replace('Bearer ', '') || req.query.token;
+  const sess = token ? await dbGetSession(token) : null;
+  if (!sess) return res.json({ isAdmin: false });
+  return res.json({ isAdmin: sess.isAdmin, username: sess.username });
+});
+
+// GET /api/admin/reports/stats (must come before /api/admin/reports/:id)
+app.get('/api/admin/reports/stats', requireAdmin, async (req, res) => {
+  try {
+    const statuses = ['pending', 'reviewed', 'action_taken', 'dismissed'];
+    const counts = {};
+    for (const s of statuses) {
+      const { count } = await supabase.from('reports').select('*', { count: 'exact', head: true }).eq('status', s);
+      counts[s] = count || 0;
+    }
+    return res.json(counts);
+  } catch (err) {
+    return res.status(500).json({ error: 'Could not load stats.' });
+  }
+});
+
+// GET /api/admin/reports
+app.get('/api/admin/reports', requireAdmin, async (req, res) => {
+  const status = ['pending', 'reviewed', 'action_taken', 'dismissed'].includes(req.query.status) ? req.query.status : 'pending';
+  const limit  = Math.min(Number(req.query.limit) || 50, 100);
+  const offset = Number(req.query.offset) || 0;
+  try {
+    const { data, error, count } = await supabase.from('reports')
+      .select('*', { count: 'exact' })
+      .eq('status', status)
+      .order('priority', { ascending: false })
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1);
+    if (error) throw error;
+    return res.json({ reports: data, total: count, status, limit, offset });
+  } catch (err) {
+    console.error('[admin reports list]', err);
+    return res.status(500).json({ error: 'Could not load reports.' });
+  }
+});
+
+// PATCH /api/admin/reports/:id
+app.patch('/api/admin/reports/:id', requireAdmin, async (req, res) => {
+  const { action } = req.body || {};
+  const reportId = Number(req.params.id);
+  if (!reportId) return res.status(400).json({ error: 'Invalid report ID.' });
+  const VALID_ACTIONS = ['reviewed', 'action_taken', 'dismissed', 'ban_user', 'verify_artist', 'remove_content'];
+  if (!VALID_ACTIONS.includes(action)) return res.status(400).json({ error: 'Invalid action.' });
+  try {
+    const { data: report } = await supabase.from('reports').select('*').eq('id', reportId).maybeSingle();
+    if (!report) return res.status(404).json({ error: 'Report not found.' });
+
+    // Founder protection
+    if (action === 'ban_user' || action === 'remove_content') {
+      if (report.target_type === 'profile' && report.target_id?.toLowerCase() === 'slimey2017')
+        return res.status(403).json({ error: 'Cannot apply automated moderation to the platform founder account.' });
+      if (report.target_type === 'artist') {
+        const { data: a } = await supabase.from('artists').select('account_id').eq('id', report.target_id).maybeSingle();
+        if (a?.account_id?.toLowerCase() === 'slimey2017')
+          return res.status(403).json({ error: 'Cannot apply automated moderation to the platform founder account.' });
+      }
+    }
+
+    let newStatus = report.status;
+    if (action === 'reviewed')       newStatus = 'reviewed';
+    if (action === 'action_taken')   newStatus = 'action_taken';
+    if (action === 'dismissed')      newStatus = 'dismissed';
+    if (action === 'ban_user')       newStatus = 'action_taken';
+    if (action === 'remove_content') newStatus = 'action_taken';
+    if (action === 'verify_artist')  newStatus = 'action_taken';
+
+    if (action === 'verify_artist' && report.target_type === 'artist')
+      await supabase.from('artists').update({ is_verified: true }).eq('id', report.target_id);
+    if (action === 'remove_content' && report.target_type === 'track')
+      await supabase.from('tracks').delete().eq('id', report.target_id);
+    if (action === 'remove_content' && report.target_type === 'release')
+      await supabase.from('artist_releases').delete().eq('id', report.target_id);
+    if (action === 'remove_content' && report.target_type === 'post')
+      await supabase.from('posts').delete().eq('id', report.target_id);
+    if (action === 'ban_user') {
+      await supabase.from('accounts').update({ is_banned: true }).eq('username', report.target_id);
+      await supabase.from('sessions').delete().eq('username', report.target_id);
+    }
+
+    const { data: updated } = await supabase.from('reports')
+      .update({ status: newStatus, updated_at: new Date().toISOString() })
+      .eq('id', reportId).select().single();
+    return res.json({ report: updated, action });
+  } catch (err) {
+    console.error('[admin report action]', err);
+    return res.status(500).json({ error: 'Could not update report.' });
+  }
+});
+
+// POST /api/admin/artists/:id/verify
+app.post('/api/admin/artists/:id/verify', requireAdmin, async (req, res) => {
+  try {
+    const artist = await resolveArtistFromParam(req.params.id);
+    if (!artist) return res.status(404).json({ error: 'Artist not found.' });
+    await supabase.from('artists').update({ is_verified: true }).eq('id', artist.id);
+    return res.json({ id: artist.id, isVerified: true });
+  } catch (err) {
+    console.error('[admin verify artist]', err);
+    return res.status(500).json({ error: 'Could not verify artist.' });
+  }
+});
+
+// DELETE /api/admin/artists/:id/verify
+app.delete('/api/admin/artists/:id/verify', requireAdmin, async (req, res) => {
+  try {
+    const artist = await resolveArtistFromParam(req.params.id);
+    if (!artist) return res.status(404).json({ error: 'Artist not found.' });
+    await supabase.from('artists').update({ is_verified: false }).eq('id', artist.id);
+    return res.json({ id: artist.id, isVerified: false });
+  } catch (err) {
+    console.error('[admin unverify artist]', err);
+    return res.status(500).json({ error: 'Could not unverify artist.' });
+  }
+});
+
+// PATCH /api/admin/tracks/:trackId/explicit
+app.patch('/api/admin/tracks/:trackId/explicit', requireAdmin, async (req, res) => {
+  const { isExplicit } = req.body || {};
+  try {
+    const { data, error } = await supabase.from('tracks')
+      .update({ is_explicit: !!isExplicit }).eq('id', req.params.trackId).select().single();
+    if (error || !data) return res.status(404).json({ error: 'Track not found.' });
+    return res.json({ id: data.id, isExplicit: data.is_explicit });
+  } catch (err) {
+    console.error('[admin explicit flag]', err);
+    return res.status(500).json({ error: 'Could not update track.' });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
