@@ -416,6 +416,11 @@ header {
 .hist-clear,.fav-remove {background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:0.6rem;padding:0;line-height:1;transition:color 0.15s;flex-shrink:0;}
 .hist-clear:hover,.fav-remove:hover{color:var(--accent2);}
 .empty-panel{text-align:center;padding:24px 8px;color:var(--text-muted);font-size:0.6rem;line-height:2;opacity:0.6;}
+/* Track-row action buttons (Edit / Credits / Analytics) — glow on hover so
+   they read as interactive against the flat bordered default state. */
+.dash-track-action-btn{transition:box-shadow 0.15s,border-color 0.15s,color 0.15s;}
+.dash-track-action-btn:hover{border-color:var(--accent);color:var(--accent);box-shadow:0 0 8px var(--accent);}
+.dash-track-action-btn.accent3:hover{border-color:var(--accent3);color:var(--accent3);box-shadow:0 0 8px var(--accent3);}
 .quick-links{display:flex;flex-wrap:wrap;gap:4px;padding:10px 0 2px;}
 .qlink {font-size:0.46rem;font-weight:700;letter-spacing:0.08em;padding:3px 7px;border-radius:2px;border:1px solid;cursor:pointer;text-decoration:none;transition:opacity 0.15s;}
 .qlink:hover{opacity:0.75;}
@@ -6010,7 +6015,7 @@ async function toggleReleaseCard(releaseId) {
           </div>
           <div style="display:flex;align-items:center;gap:6px;">
             ${tracks.length ? `<button onclick="playEntireRelease('${escapeHtml(releaseId)}')" style="background:var(--accent);color:var(--bg);border:none;font-family:'Unbounded',sans-serif;font-size:0.4rem;font-weight:700;padding:5px 11px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.04em;">▶ Play All</button>` : ''}
-            ${AUTH.loggedIn ? `<button onclick="openReportModal('release','${escapeHtml(releaseId)}',${JSON.stringify(release.title || '')})" style="background:none;border:none;color:var(--text-muted);font-size:0.5rem;cursor:pointer;padding:4px;opacity:0.6;" title="Report">⚑</button>` : ''}
+            ${AUTH.loggedIn ? `<button onclick="${escapeHtml(`openReportModal('release','${releaseId}',${JSON.stringify(release.title || '')})`)}" style="background:none;border:none;color:var(--text-muted);font-size:0.5rem;cursor:pointer;padding:4px;opacity:0.6;" title="Report">⚑</button>` : ''}
           </div>
         </div>
         ${trackRows}
@@ -6425,9 +6430,9 @@ async function loadDashReleases() {
           <div style="font-size:0.4rem;color:var(--text-muted);text-transform:uppercase;">${r.releaseType} · ${r.trackCount} track${r.trackCount === 1 ? '' : 's'}${r.releaseDate ? ' · ' + r.releaseDate.slice(0, 4) : ''}</div>
         </div>
         <div style="display:flex;gap:4px;flex-shrink:0;">
-          <button onclick="openEditReleaseOverlay('${r.id}')" title="Edit release" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.38rem;padding:4px 7px;border-radius:var(--radius);cursor:pointer;">Edit</button>
-          <button onclick="openManageCollaboratorsModal('release', '${r.id}', ${JSON.stringify(r.title)})" title="Manage credits" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.38rem;padding:4px 7px;border-radius:var(--radius);cursor:pointer;">Credits</button>
-          <button onclick="deleteDashRelease('${r.id}', ${JSON.stringify(r.title)})" title="Delete release" style="background:none;border:1px solid var(--accent2);color:var(--accent2);font-family:'Space Mono',monospace;font-size:0.38rem;padding:4px 7px;border-radius:var(--radius);cursor:pointer;">Delete</button>
+          <button class="dash-track-action-btn" onclick="openEditReleaseOverlay('${r.id}')" title="Edit release" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.38rem;padding:4px 7px;border-radius:var(--radius);cursor:pointer;">Edit</button>
+          <button class="dash-track-action-btn" onclick="${escapeHtml(`openManageCollaboratorsModal('release', '${r.id}', ${JSON.stringify(r.title)})`)}" title="Manage credits" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.38rem;padding:4px 7px;border-radius:var(--radius);cursor:pointer;">Credits</button>
+          <button onclick="${escapeHtml(`deleteDashRelease('${r.id}', ${JSON.stringify(r.title)})`)}" title="Delete release" style="background:none;border:1px solid var(--accent2);color:var(--accent2);font-family:'Space Mono',monospace;font-size:0.38rem;padding:4px 7px;border-radius:var(--radius);cursor:pointer;">Delete</button>
         </div>
       </div>
     `).join('');
@@ -6564,9 +6569,9 @@ async function loadDashTracks() {
           <div style="font-size:0.4rem;color:var(--text-muted);">${formatCompactCount(t.playCount)} plays</div>
         </div>
         <div style="display:flex;gap:4px;flex-shrink:0;">
-          <button onclick="openEditTrackOverlay('${t.id}', ${JSON.stringify(t.title)}, ${JSON.stringify(t.coverUrl || '')}, ${JSON.stringify(t.description || '')})" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.38rem;padding:4px 7px;border-radius:var(--radius);cursor:pointer;">Edit</button>
-          <button onclick="openManageCollaboratorsModal('track', '${t.id}', ${JSON.stringify(t.title)})" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.38rem;padding:4px 7px;border-radius:var(--radius);cursor:pointer;">Credits</button>
-          <button onclick="openTrackAnalyticsModal('${t.id}', ${JSON.stringify(t.title)})" style="background:none;border:1px solid var(--accent3);color:var(--accent3);font-family:'Space Mono',monospace;font-size:0.38rem;padding:4px 7px;border-radius:var(--radius);cursor:pointer;">Analytics</button>
+          <button class="dash-track-action-btn" onclick="${escapeHtml(`openEditTrackOverlay('${t.id}', ${JSON.stringify(t.title)}, ${JSON.stringify(t.coverUrl || '')}, ${JSON.stringify(t.description || '')})`)}" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.38rem;padding:4px 7px;border-radius:var(--radius);cursor:pointer;">Edit</button>
+          <button class="dash-track-action-btn" onclick="${escapeHtml(`openManageCollaboratorsModal('track', '${t.id}', ${JSON.stringify(t.title)})`)}" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.38rem;padding:4px 7px;border-radius:var(--radius);cursor:pointer;">Credits</button>
+          <button class="dash-track-action-btn accent3" onclick="${escapeHtml(`openTrackAnalyticsModal('${t.id}', ${JSON.stringify(t.title)})`)}" style="background:none;border:1px solid var(--accent3);color:var(--accent3);font-family:'Space Mono',monospace;font-size:0.38rem;padding:4px 7px;border-radius:var(--radius);cursor:pointer;">Analytics</button>
           <button onclick="deleteDashTrack('${t.id}')" style="background:none;border:1px solid var(--accent2);color:var(--accent2);font-family:'Space Mono',monospace;font-size:0.38rem;padding:4px 7px;border-radius:var(--radius);cursor:pointer;">Delete</button>
         </div>
       </div>
@@ -8058,7 +8063,7 @@ function renderPostCard(post) {
     <button class="${likeClass}" onclick="togglePostLike('${post.id}',${post.likedByMe?'true':'false'})"><span class="post-action-icon">${likeIcon}</span>${likeCount}</button>
     <button class="post-action-btn" onclick="openPostComments('${post.id}')"><span class="post-action-icon">&#128172;</span>${cmtCount}</button>
     <button class="post-action-btn" onclick="sharePost('${post.id}')"><span class="post-action-icon">&#8599;</span>${shrCount}</button>
-    ${(!post.isOwner && AUTH.loggedIn) ? `<button class="post-action-btn" onclick="openReportModal('post','${post.id}',${JSON.stringify((post.body || '').slice(0, 60))})" title="Report">&#9873;</button>` : ''}
+    ${(!post.isOwner && AUTH.loggedIn) ? `<button class="post-action-btn" onclick="${escapeHtml(`openReportModal('post','${post.id}',${JSON.stringify((post.body || '').slice(0, 60))})`)}" title="Report">&#9873;</button>` : ''}
     ${ownerBtns}
   </div>
 </div>`;
