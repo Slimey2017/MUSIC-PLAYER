@@ -1138,6 +1138,17 @@ textarea.support-field { height:90px;resize:vertical; }
   backdrop-filter:blur(8px);
 }
 .lyrics-overlay.open { display:flex; }
+/* Modal regression fix: these five .lyrics-overlay modals (Publish Track,
+   Create Release, Track Analytics, Edit Artist Bio, Manage Collaborators)
+   are all opened by buttons that live INSIDE the Artist Dashboard
+   (.dash-overlay, z-index:9700). At the base .lyrics-overlay z-index:9600
+   they were rendering — correctly .open, correctly in the DOM — but
+   stacked underneath the dashboard's own backdrop, so they were invisible
+   and unclickable: buttons appeared to do nothing. .above-dash simply puts
+   them above the dashboard they're launched from, same as .dash-overlay
+   was deliberately put above .lyrics-overlay/artistProfileOverlay (see
+   that comment below) — same pattern, one layer further up. */
+.lyrics-overlay.above-dash { z-index:9750; }
 .lyrics-panel {
   background:var(--surface2);border:1px solid var(--border);
   border-radius:10px;padding:28px;max-width:500px;width:92%;
@@ -3150,7 +3161,7 @@ body.oled-mode {
 </div>
 
 <!-- Publish modal: set title + cover art for a chosen unpublished upload -->
-<div class="lyrics-overlay" id="publishTrackOverlay">
+<div class="lyrics-overlay above-dash" id="publishTrackOverlay">
   <div class="lyrics-panel" style="max-width:380px;">
     <div class="lyrics-title" style="font-size:0.65rem;">Publish Track</div>
     <div style="font-size:0.46rem;color:var(--text-dim);margin-bottom:12px;" id="publishTrackSourceFilename"></div>
@@ -3177,7 +3188,7 @@ body.oled-mode {
 </div>
 
 <!-- Track Analytics Modal -->
-<div class="lyrics-overlay" id="trackAnalyticsOverlay">
+<div class="lyrics-overlay above-dash" id="trackAnalyticsOverlay">
   <div class="lyrics-panel" style="max-width:400px;">
     <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:4px;">
       <div class="lyrics-title" style="font-size:0.65rem;margin-bottom:0;">Track Analytics</div>
@@ -3263,7 +3274,7 @@ body.oled-mode {
 </div>
 
 <!-- Create Release modal -->
-<div class="lyrics-overlay" id="createReleaseOverlay">
+<div class="lyrics-overlay above-dash" id="createReleaseOverlay">
   <div class="lyrics-panel" style="max-width:380px;">
     <div class="lyrics-title" style="font-size:0.65rem;">New Release</div>
     <input type="text" id="createReleaseTitleInput" maxlength="200" placeholder="Release title…" style="width:100%;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-main);font-family:'Space Mono',monospace;font-size:0.55rem;padding:9px 11px;box-sizing:border-box;margin-bottom:10px;" />
@@ -3303,7 +3314,7 @@ body.oled-mode {
 <!-- Edit Artist Bio modal — owner-only, opened from the ✎ button next to
      artistProfileBio. Backend (PATCH /api/artists/:id) already enforces the
      2000-char limit and ownership check independently of anything here. -->
-<div class="lyrics-overlay" id="editArtistBioOverlay">
+<div class="lyrics-overlay above-dash" id="editArtistBioOverlay">
   <div class="lyrics-panel" style="max-width:420px;">
     <div class="lyrics-title" style="font-size:0.65rem;">Edit Bio</div>
     <div style="font-size:0.5rem;color:var(--text-muted);line-height:1.7;margin-bottom:10px;">
@@ -3339,7 +3350,7 @@ body.oled-mode {
 <!-- Manage Collaborators modal — owner-only, opened from the "Credits"
      shared targetType ('track'|'release') since the backend exposes
      mirrored routes for each (see JS below). -->
-<div class="lyrics-overlay" id="manageCollaboratorsOverlay">
+<div class="lyrics-overlay above-dash" id="manageCollaboratorsOverlay">
   <div class="lyrics-panel" style="max-width:420px;">
     <div class="lyrics-title" style="font-size:0.65rem;">Credits</div>
     <div id="manageCollaboratorsSubtitle" style="font-size:0.46rem;color:var(--text-muted);margin-bottom:14px;"></div>
@@ -10599,6 +10610,55 @@ localAudio.addEventListener('timeupdate', () => {
   if (remaining <= 15) refreshUpcomingCloudUrl();
 });
 
+// ─── Expired-URL safety net ────────────────────────────────────────────────
+// playItem()'s pre-play check (above) catches a stale signed URL before
+// playback starts, but a few paths can still slip past it: the user pauses
+// for a long stretch then resumes/seeks without re-triggering playItem, or
+// the browser issues a fresh range request mid-playback that lands just
+// past the 10s grace window. Either way the symptom is the same browser
+// MediaError this whole investigation started from — "no supported source
+// was found" — fired as an 'error' event on the element, not a rejected
+// play() promise. This is the last line of defense: if the failing item is
+// a known refreshable signed-url item (freqTrackId/cloudFileId) and hasn't
+// already been retried, refresh the URL once, re-seek to where playback
+// died, and resume. Anything else (a genuinely unsupported file, a true
+// local blob: URL that's gone) is left to surface as a real error.
+let _expiredUrlRetried = false;
+localAudio.addEventListener('error', async () => {
+  const item = state.queue[state.activeIndex];
+  if (!item || (!item.freqTrackId && !item.cloudFileId) || _expiredUrlRetried) {
+    if (item) showToast('Playback error', 'This track could not be played.', 'error');
+    return;
+  }
+  _expiredUrlRetried = true;
+  const resumeAt = localAudio.currentTime || 0;
+  const ok = item.freqTrackId
+    ? await refreshPublishedTrackUrl(item)
+    : await (async () => {
+        try {
+          const res  = await fetch(`${CLOUD_FILES_BASE}/${item.cloudFileId}?token=${encodeURIComponent(AUTH.token)}`);
+          const data = await res.json();
+          if (res.ok && data.url) { item.blobUrl = data.url; item.urlExpiresAt = Date.now() + (Number(data.expiresIn) || 600) * 1000; return true; }
+          return false;
+        } catch (_) { return false; }
+      })();
+  if (!ok) {
+    showToast('Playback error', 'This track\'s link expired and could not be refreshed.', 'error');
+    return;
+  }
+  localAudio.crossOrigin = item.blobUrl.startsWith('blob:') ? null : 'anonymous';
+  localAudio.src = item.blobUrl;
+  localAudio.addEventListener('loadedmetadata', function resumeOnce() {
+    localAudio.removeEventListener('loadedmetadata', resumeOnce);
+    localAudio.currentTime = resumeAt;
+    PlaybackManager.requestPlay();
+  });
+});
+// Reset the one-shot retry guard every time a *new* play actually starts,
+// so the next track (or a later genuine expiry on the same track) gets its
+// own retry attempt instead of being silently blocked by an old guard.
+localAudio.addEventListener('playing', () => { _expiredUrlRetried = false; });
+
 
 function removeItem(index) {
   playSfx('remove');
@@ -12930,7 +12990,7 @@ document.addEventListener('keydown', e => {
 })();
 
 // ─── Patch: Close new overlays via clicking outside ──────────────────────────
-['supportOverlay','aboutOverlay','settingsOverlay','lyricsOverlay','userProfileOverlay','artistProfileOverlay','becomeArtistOverlay','editArtistBioOverlay','manageCollaboratorsOverlay'].forEach(id => {
+['supportOverlay','aboutOverlay','settingsOverlay','lyricsOverlay','userProfileOverlay','artistProfileOverlay','becomeArtistOverlay','editArtistBioOverlay','manageCollaboratorsOverlay','publishTrackOverlay','trackAnalyticsOverlay','createReleaseOverlay'].forEach(id => {
   const el = $(id);
   if (!el) return;
   el.addEventListener('click', e => { if (e.target === el) el.classList.remove('open'); });
