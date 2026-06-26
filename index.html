@@ -6887,13 +6887,9 @@ let reportFounderAcknowledged = false;
 // above) on purpose: this fires on every submitted report, to the moderation
 // inbox, with report-specific fields (target type/id, reason, reporter) —
 // a different audience and shape than a user-submitted support ticket.
-// NOTE: template_id below is a placeholder — create a "New Content Report"
-// template in the EmailJS dashboard (same account, service_4hd2w5n) with
-// {{target_type}} {{target_id}} {{target_title}} {{reason}} {{details}}
-// {{reporter}} {{priority}} {{report_id}} variables, then swap the ID in.
 const FREQ_MODERATION = {
   SERVICE_ID:  'service_4hd2w5n',
-  TEMPLATE_ID: 'template_moderation_report', // ← replace with real EmailJS template ID
+  TEMPLATE_ID: 'template_6pj12p3',
 };
 
 const REPORT_REASON_LABELS = {
@@ -7025,7 +7021,7 @@ async function submitReport() {
 // of truth). Errors are logged, never surfaced to the reporter.
 function _notifyModeration(target, reason, details, reportId, isFounder) {
   if (typeof emailjs === 'undefined') return;
-  emailjs.send(service_4hd2w5n, template_6pj12p3, {
+  emailjs.send(FREQ_MODERATION.SERVICE_ID, FREQ_MODERATION.TEMPLATE_ID, {
     target_type:  target.type,
     target_id:    target.id,
     target_title: target.title || target.id,
