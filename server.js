@@ -759,7 +759,7 @@ async function dbGetArtistTracks(artistId, { sort = 'plays', limit = 20 } = {}) 
   const col = sort === 'trending' ? 'play_count_7d' : 'play_count';
   const { data, error } = await supabase
     .from('tracks')
-    .select('id, original_url, platform, title, play_count, play_count_7d, last_played_at, cover_url, cloud_file_id, published_at')
+    .select('id, original_url, platform, title, play_count, play_count_7d, last_played_at, cover_url, cloud_file_id, published_at, like_count, is_explicit')
     .eq('artist_id', artistId)
     .eq('is_published', true)
     .order(col, { ascending: false })
@@ -2747,6 +2747,7 @@ app.post('/api/auth/signin', rateLimit, async (req, res) => {
   try {
     const acct = await dbGetAccount(key);
     if (!acct) return res.status(401).json({ error: 'No account found with that username.' });
+    if (acct.is_banned) return res.status(403).json({ error: 'This account has been suspended.' });
 
     const hash = await hashPassword(password, acct.salt);
     if (hash !== acct.hash) return res.status(401).json({ error: 'Incorrect password.' });
@@ -5007,7 +5008,7 @@ app.get('/api/artists/:id/tracks', async (req, res) => {
         id: t.id, originalUrl: t.original_url, platform: t.platform,
         title: t.title || t.original_url,
         playCount: t.play_count, playCount7d: t.play_count_7d,
-        likeCount: 0, // honest placeholder — see dbGetArtistTracks comment, no per-track likes exist yet
+        likeCount: t.like_count || 0,
         lastPlayedAt: t.last_played_at,
         coverUrl: t.cover_url || null,
         cloudFileId: t.cloud_file_id || null,
@@ -6071,6 +6072,116 @@ app.get('/api/tracks/:trackId/stream', rateLimit, async (req, res) => {
     return res.status(500).json({ error: 'Could not load track audio.' });
   }
 });
+
+// POST/DELETE /api/tracks/:trackId/like   { token }
+// Mirrors /api/posts/:id/like exactly — upsert/delete on a join table, then
+// recompute and persist the denormalized count. No per-track like existed
+// anywhere in this schema before; track_likes + tracks.like_count were added
+// specifically to back the Artist Dashboard Analytics view's Likes stat with
+// a real number instead of the previous hardcoded `likeCount: 0` placeholder.
+app.post('/api/tracks/:trackId/like', rateLimit, async (req, res) => {
+  const { token } = req.body || {};
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  try {
+    const { error } = await supabase.from('track_likes')
+      .upsert({ track_id: req.params.trackId, username: sess.username }, { onConflict: 'track_id,username' });
+    if (error && error.code !== '23505') throw new Error(error.message);
+    const { count } = await supabase.from('track_likes')
+      .select('*', { count: 'exact', head: true }).eq('track_id', req.params.trackId);
+    await supabase.from('tracks').update({ like_count: count || 0 }).eq('id', req.params.trackId);
+    return res.json({ liked: true, likeCount: count || 0 });
+  } catch (err) {
+    console.error('[track like]', err);
+    return res.status(500).json({ error: 'Could not like track.' });
+  }
+});
+
+app.delete('/api/tracks/:trackId/like', rateLimit, async (req, res) => {
+  const { token } = req.body || {};
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  try {
+    await supabase.from('track_likes').delete().eq('track_id', req.params.trackId).eq('username', sess.username);
+    const { count } = await supabase.from('track_likes')
+      .select('*', { count: 'exact', head: true }).eq('track_id', req.params.trackId);
+    await supabase.from('tracks').update({ like_count: count || 0 }).eq('id', req.params.trackId);
+    return res.json({ liked: false, likeCount: count || 0 });
+  } catch (err) {
+    console.error('[track unlike]', err);
+    return res.status(500).json({ error: 'Could not unlike track.' });
+  }
+});
+
+// GET /api/artists/:id/tracks/:trackId/analytics   ?token=
+// Owner-only. Aggregates everything the Artist Dashboard's Analytics button
+// needs in one call: play stats already on the tracks row, real like count,
+// release association, publish date, and a small recent-activity slice from
+// track_plays. Comments are intentionally NOT included — there is no
+// comments-on-tracks feature anywhere in this schema (only posts have
+// comments), so the analytics endpoint reports commentCount as null with a
+// supported:false flag rather than fabricating a 0 that looks real but never
+// updates. Surface that honestly in the UI instead of pretending it's wired up.
+app.get('/api/artists/:id/tracks/:trackId/analytics', async (req, res) => {
+  try {
+    const artist = await resolveArtistFromParam(req.params.id);
+    if (!artist) return res.status(404).json({ error: 'Artist not found.' });
+    const token = (req.headers.authorization || '').replace('Bearer ', '') || req.query.token;
+    const sess = token ? await dbGetSession(token) : null;
+    if (!sess || artist.account_id !== sess.username) {
+      return res.status(403).json({ error: 'Only the artist who claimed this page can view track analytics.' });
+    }
+
+    const { data: track, error: trackErr } = await supabase
+      .from('tracks')
+      .select('id, title, play_count, play_count_7d, like_count, published_at, cover_url, artist_id, cloud_file_id, is_explicit')
+      .eq('id', req.params.trackId)
+      .eq('artist_id', artist.id)
+      .maybeSingle();
+    if (trackErr) throw new Error(trackErr.message);
+    if (!track) return res.status(404).json({ error: 'Track not found.' });
+
+    // Release association — artist_release_tracks is the join table; a
+    // track can appear in at most one release in this schema (no junction
+    // beyond the single release_id/track_id pair per row).
+    const { data: releaseLink } = await supabase
+      .from('artist_release_tracks')
+      .select('release_id, artist_releases(id, title, release_type)')
+      .eq('track_id', track.id)
+      .maybeSingle();
+
+    // Recent activity — last 10 individual plays, newest first. This is the
+    // existing track_plays log (already populated by dbLogPlay on every
+    // play), just sliced and surfaced here for the first time.
+    const { data: recentPlays } = await supabase
+      .from('track_plays')
+      .select('username, played_at')
+      .eq('track_id', track.id)
+      .order('played_at', { ascending: false })
+      .limit(10);
+
+    return res.json({
+      id: track.id, title: track.title,
+      coverUrl: track.cover_url, isExplicit: !!track.is_explicit,
+      totalPlays: track.play_count || 0,
+      totalPlays7d: track.play_count_7d || 0,
+      likeCount: track.like_count || 0,
+      commentCount: null, commentsSupported: false,
+      publishedAt: track.published_at || null,
+      release: releaseLink?.artist_releases
+        ? { id: releaseLink.artist_releases.id, title: releaseLink.artist_releases.title, releaseType: releaseLink.artist_releases.release_type }
+        : null,
+      recentActivity: (recentPlays || []).map(p => ({
+        username: p.username || 'Anonymous listener',
+        playedAt: p.played_at,
+      })),
+    });
+  } catch (err) {
+    console.error('[track analytics]', err);
+    return res.status(500).json({ error: 'Could not load track analytics.' });
+  }
+});
+
 // These exist purely so pasting a profile/artist link into Discord/Twitter/
 // iMessage shows that person's name and avatar instead of generic FREQ
 // branding — the entire point of a "shareable" URL is how it looks when
@@ -6158,12 +6269,18 @@ app.get('/artist/:slug', async (req, res) => {
 
 // ─── Reports ─────────────────────────────────────────────────────────────────
 
+// Reason/targetType strings here MUST exactly match the `reports` table's
+// CHECK constraints in Supabase — a mismatch passes server-side validation
+// but throws a 23514 check-violation on insert. The DB calls the user-report
+// type 'user' (not 'profile') and the harassment reason 'harassment' (not
+// 'harassment_bullying'); the frontend label "Harassment / Bullying" maps to
+// the single 'harassment' reason value.
 const REPORT_REASONS = [
   'impersonation', 'copyright_violation', 'spam',
-  'harassment_bullying', 'hate_speech', 'explicit_not_marked',
+  'harassment', 'hate_speech', 'explicit_not_marked',
   'misleading_metadata', 'other',
 ];
-const REPORT_TARGET_TYPES = ['track', 'release', 'artist', 'post', 'profile'];
+const REPORT_TARGET_TYPES = ['track', 'release', 'artist', 'post', 'user'];
 
 // POST /api/reports
 app.post('/api/reports', rateLimit, async (req, res) => {
@@ -6176,7 +6293,7 @@ app.post('/api/reports', rateLimit, async (req, res) => {
 
   let priority = 'normal';
   let targetUsername = null;
-  if (targetType === 'profile') targetUsername = targetId;
+  if (targetType === 'user') targetUsername = targetId;
   else if (targetType === 'artist') {
     const { data: artistRow } = await supabase.from('artists').select('account_id').eq('id', targetId).maybeSingle();
     targetUsername = artistRow?.account_id || null;
@@ -6273,7 +6390,7 @@ app.patch('/api/admin/reports/:id', requireAdmin, async (req, res) => {
 
     // Founder protection
     if (action === 'ban_user' || action === 'remove_content') {
-      if (report.target_type === 'profile' && report.target_id?.toLowerCase() === 'slimey2017')
+      if (report.target_type === 'user' && report.target_id?.toLowerCase() === 'slimey2017')
         return res.status(403).json({ error: 'Cannot apply automated moderation to the platform founder account.' });
       if (report.target_type === 'artist') {
         const { data: a } = await supabase.from('artists').select('account_id').eq('id', report.target_id).maybeSingle();
