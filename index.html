@@ -6388,6 +6388,11 @@ $('publishTrackSubmitBtn')?.addEventListener('click', async () => {
     loadDashTracks();
     loadDashReleases();
     loadArtistTopTracks(viewedArtist.id);
+    // Roll straight into Credits so featured artists / collaborators can be
+    // added in the same flow as publishing, instead of requiring the user
+    // to find the track again afterward and click "Credits" separately.
+    openManageCollaboratorsModal('track', data.id, data.title);
+    setTimeout(() => $('collabArtistSearchInput')?.focus(), 50);
   } catch (err) {
     $('publishTrackStatus').textContent = err.message || 'Could not publish track.';
     $('publishTrackStatus').style.color = 'var(--accent2)';
