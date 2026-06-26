@@ -437,7 +437,7 @@ header {
 /* ─── Local Audio Player ──────────────────────────────────────────── */
 .local-player{display:none;flex-direction:column;align-items:center;justify-content:center;flex:1;padding:32px;gap:22px;background:var(--bg);}
 .local-player.visible{display:flex;}
-.local-artwork{width:160px;height:160px;border-radius:8px;background:var(--surface2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:3.5rem;position:relative;overflow:hidden;}
+.local-artwork{width:clamp(160px,32vw,320px);height:clamp(160px,32vw,320px);border-radius:8px;background:var(--surface2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:3.5rem;position:relative;overflow:hidden;}
 .local-artwork-img{width:100%;height:100%;object-fit:cover;display:none;}
 .local-artwork-img.visible{display:block;}
 .local-artwork-placeholder{position:absolute;font-size:3.5rem;opacity:0.2;}
@@ -1996,6 +1996,7 @@ body.oled-mode {
 .admin-report-chip.type-artist  { border-color:#c9b8ff;color:#c9b8ff; }
 .admin-report-chip.type-release { border-color:var(--accent);color:var(--accent); }
 .admin-report-chip.type-post    { border-color:rgba(255,180,0,0.6);color:rgba(255,200,0,0.9); }
+.admin-report-chip.type-user    { border-color:#8fd9a8;color:#8fd9a8; }
 .admin-report-chip.priority-high { background:rgba(255,71,87,0.12);border-color:var(--accent2);color:var(--accent2); }
 .admin-report-details { font-size:0.42rem;color:var(--text-dim);margin-bottom:8px;font-style:italic; }
 .admin-report-actions { display:flex;flex-wrap:wrap;gap:6px; }
@@ -3021,6 +3022,7 @@ body.oled-mode {
       <div class="profile-action-row">
         <button id="userProfileFollowBtn" style="background:none;border:1px solid var(--accent3);color:var(--accent3);font-family:'Space Mono',monospace;font-size:0.5rem;padding:8px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.06em;text-transform:uppercase;">Follow</button>
         <button class="share-btn" id="userProfileShareBtn" style="flex:0 0 auto;padding:8px 12px;">⇪ Share</button>
+        <button id="userProfileReportBtn" style="display:none;flex:0 0 auto;background:none;border:none;color:var(--text-muted);font-size:0.6rem;cursor:pointer;padding:8px;opacity:0.6;" title="Report">⚑</button>
       </div>
 
       <!-- Posts section -->
@@ -3174,6 +3176,20 @@ body.oled-mode {
   </div>
 </div>
 
+<!-- Track Analytics Modal -->
+<div class="lyrics-overlay" id="trackAnalyticsOverlay">
+  <div class="lyrics-panel" style="max-width:400px;">
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:4px;">
+      <div class="lyrics-title" style="font-size:0.65rem;margin-bottom:0;">Track Analytics</div>
+      <button onclick="closeTrackAnalyticsModal()" style="background:none;border:none;color:var(--text-muted);font-size:1.1rem;cursor:pointer;line-height:1;">✕</button>
+    </div>
+    <div id="trackAnalyticsSubtitle" style="font-size:0.46rem;color:var(--text-dim);margin-bottom:14px;"></div>
+    <div id="trackAnalyticsBody">
+      <div class="empty-panel" style="font-size:0.46rem;">Loading…</div>
+    </div>
+  </div>
+</div>
+
 <!-- Report Modal -->
 <div class="report-overlay" id="reportOverlay">
   <div class="report-panel" id="reportPanel">
@@ -3201,7 +3217,7 @@ body.oled-mode {
         <label class="report-reason-option"><input type="radio" name="reportReason" value="impersonation" /> Impersonation</label>
         <label class="report-reason-option"><input type="radio" name="reportReason" value="copyright_violation" /> Copyright Violation</label>
         <label class="report-reason-option"><input type="radio" name="reportReason" value="spam" /> Spam</label>
-        <label class="report-reason-option"><input type="radio" name="reportReason" value="harassment_bullying" /> Harassment / Bullying</label>
+        <label class="report-reason-option"><input type="radio" name="reportReason" value="harassment" /> Harassment / Bullying</label>
         <label class="report-reason-option"><input type="radio" name="reportReason" value="hate_speech" /> Hate Speech</label>
         <label class="report-reason-option"><input type="radio" name="reportReason" value="explicit_not_marked" /> Explicit Content Not Marked Explicit</label>
         <label class="report-reason-option"><input type="radio" name="reportReason" value="misleading_metadata" /> Misleading Metadata</label>
@@ -4755,6 +4771,11 @@ async function openUserProfile(username) {
     }
 
     const followBtn = $('userProfileFollowBtn');
+    const reportBtn = $('userProfileReportBtn');
+    if (reportBtn) {
+      reportBtn.style.display = data.isSelf ? 'none' : '';
+      reportBtn.onclick = () => openReportModal('user', key, data.displayName || data.username);
+    }
     if (data.isSelf) {
       // Viewing your own profile through the lookup — there's nothing to
       // follow, so the button is hidden rather than shown disabled.
@@ -5957,7 +5978,10 @@ async function toggleReleaseCard(releaseId) {
             <div style="font-family:'Unbounded',sans-serif;font-size:0.52rem;font-weight:700;color:var(--text);">${escapeHtml(release.title || '')}</div>
             <div style="font-size:0.36rem;color:var(--text-muted);text-transform:uppercase;margin-top:2px;">${(release.releaseType || '').toUpperCase()}${release.releaseDate ? ' · ' + release.releaseDate.slice(0,4) : ''}</div>
           </div>
-          ${tracks.length ? `<button onclick="playEntireRelease('${escapeHtml(releaseId)}')" style="background:var(--accent);color:var(--bg);border:none;font-family:'Unbounded',sans-serif;font-size:0.4rem;font-weight:700;padding:5px 11px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.04em;">▶ Play All</button>` : ''}
+          <div style="display:flex;align-items:center;gap:6px;">
+            ${tracks.length ? `<button onclick="playEntireRelease('${escapeHtml(releaseId)}')" style="background:var(--accent);color:var(--bg);border:none;font-family:'Unbounded',sans-serif;font-size:0.4rem;font-weight:700;padding:5px 11px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.04em;">▶ Play All</button>` : ''}
+            ${AUTH.loggedIn ? `<button onclick="openReportModal('release','${escapeHtml(releaseId)}',${JSON.stringify(release.title || '')})" style="background:none;border:none;color:var(--text-muted);font-size:0.5rem;cursor:pointer;padding:4px;opacity:0.6;" title="Report">⚑</button>` : ''}
+          </div>
         </div>
         ${trackRows}
       </div>`;
@@ -6483,6 +6507,7 @@ async function loadDashTracks() {
         <div style="display:flex;gap:4px;flex-shrink:0;">
           <button onclick="openEditTrackOverlay('${t.id}', ${JSON.stringify(t.title)}, ${JSON.stringify(t.coverUrl || '')}, ${JSON.stringify(t.description || '')})" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.38rem;padding:4px 7px;border-radius:var(--radius);cursor:pointer;">Edit</button>
           <button onclick="openManageCollaboratorsModal('track', '${t.id}', ${JSON.stringify(t.title)})" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.38rem;padding:4px 7px;border-radius:var(--radius);cursor:pointer;">Credits</button>
+          <button onclick="openTrackAnalyticsModal('${t.id}', ${JSON.stringify(t.title)})" style="background:none;border:1px solid var(--accent3);color:var(--accent3);font-family:'Space Mono',monospace;font-size:0.38rem;padding:4px 7px;border-radius:var(--radius);cursor:pointer;">Analytics</button>
           <button onclick="deleteDashTrack('${t.id}')" style="background:none;border:1px solid var(--accent2);color:var(--accent2);font-family:'Space Mono',monospace;font-size:0.38rem;padding:4px 7px;border-radius:var(--radius);cursor:pointer;">Delete</button>
         </div>
       </div>
@@ -6758,6 +6783,370 @@ function refreshAfterCollabChange() {
   if (!viewedArtist) return;
   loadArtistTopTracks(viewedArtist.id);
   loadArtistReleases(viewedArtist.id);
+}
+
+// ── Track Analytics modal ────────────────────────────────────────────────────
+// Owner-only view backed by GET /api/artists/:id/tracks/:trackId/analytics.
+// Shows real numbers everywhere a real number exists (plays, likes via the
+// new track_likes table, release association, publish date, recent plays)
+// and is explicit about the one stat that ISN'T backed by anything yet —
+// there is no comments-on-tracks feature in this schema (only posts have
+// comments), so Comments renders as "Not yet supported" rather than a
+// fabricated 0 that would look identical to a real, just-quiet count.
+let analyticsTrackId = null;
+
+function closeTrackAnalyticsModal() {
+  $('trackAnalyticsOverlay')?.classList.remove('open');
+  analyticsTrackId = null;
+}
+
+async function openTrackAnalyticsModal(trackId, trackTitle) {
+  if (!viewedArtist) return;
+  analyticsTrackId = trackId;
+  $('trackAnalyticsSubtitle').textContent = trackTitle || '';
+  $('trackAnalyticsBody').innerHTML = '<div class="empty-panel" style="font-size:0.46rem;">Loading…</div>';
+  $('trackAnalyticsOverlay')?.classList.add('open');
+  playSfx('click');
+
+  try {
+    const params = new URLSearchParams(AUTH.token ? { token: AUTH.token } : {});
+    const res = await fetch(`${ARTISTS_BASE}/${encodeURIComponent(viewedArtist.id)}/tracks/${encodeURIComponent(trackId)}/analytics?${params}`);
+    const data = await res.json();
+    if (!res.ok) {
+      if (res.status === 401) { handleTokenExpiry(); return; }
+      throw new Error(data.error || 'Could not load analytics.');
+    }
+
+    const releaseHtml = data.release
+      ? `${escapeHtml(data.release.title)} <span style="color:var(--text-muted);text-transform:uppercase;font-size:0.36rem;">(${escapeHtml(data.release.releaseType)})</span>`
+      : '<span style="color:var(--text-muted);">Standalone single — no release</span>';
+
+    const publishedHtml = data.publishedAt
+      ? new Date(data.publishedAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+      : '<span style="color:var(--text-muted);">Not published</span>';
+
+    const recentHtml = (data.recentActivity || []).length
+      ? data.recentActivity.map(a => `
+          <div style="display:flex;justify-content:space-between;font-size:0.42rem;color:var(--text-dim);padding:4px 0;border-bottom:1px solid var(--border);">
+            <span>${escapeHtml(a.username)}</span>
+            <span style="color:var(--text-muted);">${new Date(a.playedAt).toLocaleString()}</span>
+          </div>`).join('')
+      : '<div style="font-size:0.44rem;color:var(--text-muted);padding:6px 0;">No plays logged yet.</div>';
+
+    $('trackAnalyticsBody').innerHTML = `
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px;">
+        <div style="background:var(--surface2);border-radius:var(--radius);padding:10px;text-align:center;">
+          <div style="font-family:'Unbounded',sans-serif;font-size:0.85rem;font-weight:700;color:var(--accent3);">${formatCompactCount(data.totalPlays)}</div>
+          <div style="font-size:0.4rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;margin-top:2px;">Total Plays</div>
+        </div>
+        <div style="background:var(--surface2);border-radius:var(--radius);padding:10px;text-align:center;">
+          <div style="font-family:'Unbounded',sans-serif;font-size:0.85rem;font-weight:700;color:var(--accent);">${formatCompactCount(data.totalPlays7d)}</div>
+          <div style="font-size:0.4rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;margin-top:2px;">Plays (7d)</div>
+        </div>
+        <div style="background:var(--surface2);border-radius:var(--radius);padding:10px;text-align:center;">
+          <div style="font-family:'Unbounded',sans-serif;font-size:0.85rem;font-weight:700;color:var(--text-main);">${formatCompactCount(data.likeCount)}</div>
+          <div style="font-size:0.4rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;margin-top:2px;">Likes</div>
+        </div>
+        <div style="background:var(--surface2);border-radius:var(--radius);padding:10px;text-align:center;">
+          <div style="font-family:'Unbounded',sans-serif;font-size:0.7rem;font-weight:700;color:var(--text-muted);">—</div>
+          <div style="font-size:0.4rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;margin-top:2px;">Comments</div>
+          <div style="font-size:0.36rem;color:var(--text-muted);opacity:0.7;margin-top:1px;">Not yet supported</div>
+        </div>
+      </div>
+      <div style="margin-bottom:10px;">
+        <div style="font-size:0.4rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:3px;">Release</div>
+        <div style="font-size:0.48rem;color:var(--text-main);">${releaseHtml}</div>
+      </div>
+      <div style="margin-bottom:14px;">
+        <div style="font-size:0.4rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:3px;">Published</div>
+        <div style="font-size:0.48rem;color:var(--text-main);">${publishedHtml}</div>
+      </div>
+      <div style="font-size:0.4rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px;">Recent Activity</div>
+      <div style="max-height:160px;overflow-y:auto;">${recentHtml}</div>
+    `;
+  } catch (err) {
+    $('trackAnalyticsBody').innerHTML = `<div class="empty-panel" style="font-size:0.46rem;">${escapeHtml(err.message || 'Could not load analytics.')}</div>`;
+  }
+}
+
+// ── Report modal ─────────────────────────────────────────────────────────────
+// Generic across all 5 reportable target types. Mirrors the
+// collaborator-modal pattern: one small state object + one set of handlers
+// serving every caller, rather than a bespoke modal per content type.
+//
+// targetType must be one of: 'artist' | 'track' | 'release' | 'post' | 'user'
+// — these strings are sent verbatim to POST /api/reports and must match
+// both that route's REPORT_TARGET_TYPES allow-list and the `reports` table's
+// CHECK constraint in Supabase. Do not introduce a 6th type or rename one of
+// these without updating both places.
+let reportTarget = { type: null, id: null, title: null };
+let reportFounderAcknowledged = false;
+
+// EmailJS — FREQ Moderation Notifications
+// Separate service/template from FREQ_SUPPORT (the bug-report ticket system
+// above) on purpose: this fires on every submitted report, to the moderation
+// inbox, with report-specific fields (target type/id, reason, reporter) —
+// a different audience and shape than a user-submitted support ticket.
+// NOTE: template_id below is a placeholder — create a "New Content Report"
+// template in the EmailJS dashboard (same account, service_4hd2w5n) with
+// {{target_type}} {{target_id}} {{target_title}} {{reason}} {{details}}
+// {{reporter}} {{priority}} {{report_id}} variables, then swap the ID in.
+const FREQ_MODERATION = {
+  SERVICE_ID:  'service_4hd2w5n',
+  TEMPLATE_ID: 'template_moderation_report', // ← replace with real EmailJS template ID
+};
+
+const REPORT_REASON_LABELS = {
+  impersonation:        'Impersonation',
+  copyright_violation:  'Copyright Violation',
+  spam:                 'Spam',
+  harassment:           'Harassment / Bullying',
+  hate_speech:          'Hate Speech',
+  explicit_not_marked:  'Explicit Content Not Marked Explicit',
+  misleading_metadata:  'Misleading Metadata',
+  other:                'Other',
+};
+
+function openReportModal(targetType, targetId, targetTitle) {
+  if (!AUTH.loggedIn) {
+    showToast('Sign In Required', 'Sign in to report content.', 'error');
+    return;
+  }
+  if (!REPORT_REASON_LABELS || !targetId) return;
+  reportTarget = { type: targetType, id: String(targetId), title: targetTitle || '' };
+  reportFounderAcknowledged = false;
+
+  const labels = { artist: 'Artist', track: 'Track', release: 'Release', post: 'Post', user: 'User' };
+  $('reportSubtitle').textContent = `${labels[targetType] || 'Content'}: ${reportTarget.title || reportTarget.id}`;
+  $('reportFounderWarning').style.display = 'none';
+  $('reportMainContent').style.display = '';
+  document.querySelectorAll('input[name="reportReason"]').forEach(r => r.checked = false);
+  document.querySelectorAll('.report-reason-option').forEach(el => el.classList.remove('selected'));
+  $('reportDetails').value = '';
+  $('reportStatus').textContent = '';
+  const submitBtn = $('reportSubmitBtn');
+  submitBtn.disabled = false;
+  submitBtn.textContent = 'Submit Report';
+  $('reportOverlay').classList.add('open');
+  playSfx('click');
+}
+
+function closeReportModal() {
+  $('reportOverlay')?.classList.remove('open');
+  reportTarget = { type: null, id: null, title: null };
+  reportFounderAcknowledged = false;
+  playSfx('click');
+}
+
+// Founder-protection UX: if the reported artist/user account resolves to
+// Slimey2017, swap the reason picker for a warning the reporter must click
+// through. The actual enforcement (rejecting automated mod actions against
+// the founder) lives server-side in PATCH /api/admin/reports/:id — this is
+// purely a "are you sure" speed bump on the way in, never a security
+// boundary by itself.
+function reportFounderContinue() {
+  reportFounderAcknowledged = true;
+  $('reportFounderWarning').style.display = 'none';
+  $('reportMainContent').style.display = '';
+  playSfx('click');
+}
+
+document.querySelectorAll('.report-reason-option').forEach(el => {
+  el.addEventListener('click', () => {
+    document.querySelectorAll('.report-reason-option').forEach(o => o.classList.remove('selected'));
+    el.classList.add('selected');
+  });
+});
+
+async function submitReport() {
+  const selected = document.querySelector('input[name="reportReason"]:checked');
+  if (!selected) {
+    $('reportStatus').textContent = 'Select a reason first.';
+    $('reportStatus').style.color = 'var(--accent2)';
+    return;
+  }
+  if (!reportTarget.id || !reportTarget.type) return;
+
+  const reason  = selected.value;
+  const details = $('reportDetails').value.trim().slice(0, 500);
+  const btn = $('reportSubmitBtn');
+  btn.disabled = true; btn.textContent = 'Submitting…';
+  $('reportStatus').textContent = '';
+
+  try {
+    const res = await fetch('/api/reports', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        token: AUTH.token,
+        targetType: reportTarget.type,
+        targetId: reportTarget.id,
+        reason, details,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      if (res.status === 401) { handleTokenExpiry(); return; }
+      if (res.status === 409) {
+        $('reportStatus').textContent = data.error || 'You have already reported this content.';
+        $('reportStatus').style.color = 'var(--accent2)';
+        return;
+      }
+      throw new Error(data.error || 'Could not submit report.');
+    }
+
+    // Founder-protection warning, shown only after we know server-side
+    // whether this report was flagged high-priority (founder account) —
+    // the report itself still goes through either way, this is informational.
+    if (data.isFounder && !reportFounderAcknowledged) {
+      $('reportMainContent').style.display = 'none';
+      $('reportFounderWarning').style.display = 'block';
+      // Reports already submitted at this point — "Continue Anyway" and
+      // "Cancel" both just close the modal, no second submission happens.
+      btn.disabled = false; btn.textContent = 'Submit Report';
+      _notifyModeration(reportTarget, reason, details, data.id, true);
+      showToast('Report Submitted', 'Thanks for helping keep FREQ safe.', 'success');
+      return;
+    }
+
+    showToast('Report Submitted', 'Thanks for helping keep FREQ safe.', 'success');
+    playSfx('success');
+    _notifyModeration(reportTarget, reason, details, data.id, !!data.isFounder);
+    closeReportModal();
+  } catch (err) {
+    $('reportStatus').textContent = err.message || 'Could not submit report.';
+    $('reportStatus').style.color = 'var(--accent2)';
+    btn.disabled = false; btn.textContent = 'Submit Report';
+  }
+}
+
+// Fire-and-forget moderation email — must never block or fail the report
+// submission itself (the report is already saved in Supabase by the time
+// this runs; email is a notification convenience on top, not the source
+// of truth). Errors are logged, never surfaced to the reporter.
+function _notifyModeration(target, reason, details, reportId, isFounder) {
+  if (typeof emailjs === 'undefined') return;
+  emailjs.send(service_4hd2w5n, template_6pj12p3, {
+    target_type:  target.type,
+    target_id:    target.id,
+    target_title: target.title || target.id,
+    reason:       REPORT_REASON_LABELS[reason] || reason,
+    details:      details || '(none provided)',
+    reporter:     AUTH.loggedIn ? AUTH.username : 'unknown',
+    priority:     isFounder ? 'HIGH — founder account' : 'normal',
+    report_id:    reportId,
+    timestamp:    new Date().toISOString().replace('T', ' ').slice(0, 19) + ' UTC',
+  }).catch(err => console.error('[moderation notify] EmailJS error:', err));
+}
+
+// ── Admin Moderation Dashboard ───────────────────────────────────────────────
+let adminCurrentTab = 'pending';
+let adminCurrentOffset = 0;
+const ADMIN_REPORTS_PAGE_SIZE = 50;
+
+function openAdminDash() {
+  if (!AUTH.isAdmin) return;
+  $('adminDashOverlay')?.classList.add('open');
+  adminCurrentTab = 'pending';
+  adminCurrentOffset = 0;
+  loadAdminStats();
+  loadAdminReports(false);
+  playSfx('click');
+}
+
+function closeAdminDash() {
+  $('adminDashOverlay')?.classList.remove('open');
+  playSfx('click');
+}
+
+function setAdminTab(status) {
+  adminCurrentTab = status;
+  adminCurrentOffset = 0;
+  document.querySelectorAll('.admin-dash-tab').forEach(t => t.classList.remove('active'));
+  const tabIds = { pending: 'adminTabPending', reviewed: 'adminTabReviewed', action_taken: 'adminTabActioned', dismissed: 'adminTabDismissed' };
+  $(tabIds[status])?.classList.add('active');
+  loadAdminReports(false);
+}
+
+async function loadAdminStats() {
+  try {
+    const res = await fetch('/api/admin/reports/stats', { headers: authHeaders() });
+    const data = await res.json();
+    if (!res.ok) return;
+    $('adminStatPending').textContent   = data.pending ?? '—';
+    $('adminStatReviewed').textContent  = data.reviewed ?? '—';
+    $('adminStatActioned').textContent  = data.action_taken ?? '—';
+    $('adminStatDismissed').textContent = data.dismissed ?? '—';
+  } catch (err) {
+    console.error('[admin stats]', err);
+  }
+}
+
+async function loadAdminReports(loadMore) {
+  const list = $('adminReportsList');
+  const offset = loadMore ? adminCurrentOffset : 0;
+  if (!loadMore) list.innerHTML = '<div class="empty-panel">Loading…</div>';
+  try {
+    const res = await fetch(`/api/admin/reports?status=${encodeURIComponent(adminCurrentTab)}&limit=${ADMIN_REPORTS_PAGE_SIZE}&offset=${offset}`, {
+      headers: authHeaders(),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      if (res.status === 401) { handleTokenExpiry(); return; }
+      throw new Error(data.error || 'Could not load reports.');
+    }
+    const rows = data.reports || [];
+    const rowsHtml = rows.map(r => `
+      <div class="admin-report-row ${r.priority === 'high' ? 'high' : ''}">
+        <div class="admin-report-meta">
+          <span class="admin-report-chip type-${escapeHtml(r.target_type)}">${escapeHtml(r.target_type)}</span>
+          <span class="admin-report-chip">${escapeHtml(REPORT_REASON_LABELS[r.reason] || r.reason)}</span>
+          ${r.priority === 'high' ? '<span class="admin-report-chip priority-high">High Priority</span>' : ''}
+          <span style="font-size:0.4rem;color:var(--text-muted);margin-left:auto;">${escapeHtml(r.target_id)}</span>
+        </div>
+        <div style="font-size:0.42rem;color:var(--text-dim);margin-bottom:4px;">
+          Reported by ${escapeHtml(r.reporter_user_id)} · ${new Date(r.created_at).toLocaleString()}
+        </div>
+        ${r.details ? `<div class="admin-report-details">"${escapeHtml(r.details)}"</div>` : ''}
+        <div class="admin-report-actions">
+          ${r.status === 'pending' ? `<button class="admin-action-btn" onclick="actOnAdminReport(${r.id},'reviewed')">Mark Reviewed</button>` : ''}
+          ${r.status !== 'dismissed' ? `<button class="admin-action-btn" onclick="actOnAdminReport(${r.id},'dismissed')">Dismiss</button>` : ''}
+          ${r.target_type === 'artist' ? `<button class="admin-action-btn" onclick="actOnAdminReport(${r.id},'verify_artist')">Verify Artist</button>` : ''}
+          ${['track','release','post'].includes(r.target_type) ? `<button class="admin-action-btn danger" onclick="actOnAdminReport(${r.id},'remove_content')">Remove Content</button>` : ''}
+          ${r.target_type === 'user' ? `<button class="admin-action-btn danger" onclick="actOnAdminReport(${r.id},'ban_user')">Ban User</button>` : ''}
+        </div>
+      </div>
+    `).join('');
+    if (loadMore) list.insertAdjacentHTML('beforeend', rowsHtml);
+    else list.innerHTML = rowsHtml || '<div class="empty-panel">No reports here.</div>';
+    adminCurrentOffset = offset + rows.length;
+    $('adminReportsLoadMore').style.display = (data.total > adminCurrentOffset) ? 'block' : 'none';
+  } catch (err) {
+    if (!loadMore) list.innerHTML = `<div class="empty-panel">${escapeHtml(err.message || 'Could not load reports.')}</div>`;
+    else showToast('Error', err.message || 'Could not load more reports.', 'error');
+  }
+}
+
+async function actOnAdminReport(reportId, action) {
+  if (action === 'remove_content' || action === 'ban_user') {
+    const verb = action === 'ban_user' ? 'ban this user' : 'remove this content';
+    if (!confirm(`Are you sure you want to ${verb}? This cannot be undone.`)) return;
+  }
+  try {
+    const res = await fetch(`/api/admin/reports/${encodeURIComponent(reportId)}`, {
+      method: 'PATCH', headers: authHeaders(),
+      body: JSON.stringify({ action }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      if (res.status === 401) { handleTokenExpiry(); return; }
+      throw new Error(data.error || 'Action failed.');
+    }
+    showToast('Report Updated', action.replace('_', ' '), 'success');
+    loadAdminStats();
+    loadAdminReports(false);
+  } catch (err) {
+    showToast('Error', err.message || 'Could not update report.', 'error');
+  }
 }
 
 // ── Stats tab ─────────────────────────────────────────────────────────────
@@ -7494,6 +7883,7 @@ function renderPostCard(post) {
     <button class="${likeClass}" onclick="togglePostLike('${post.id}',${post.likedByMe?'true':'false'})"><span class="post-action-icon">${likeIcon}</span>${likeCount}</button>
     <button class="post-action-btn" onclick="openPostComments('${post.id}')"><span class="post-action-icon">&#128172;</span>${cmtCount}</button>
     <button class="post-action-btn" onclick="sharePost('${post.id}')"><span class="post-action-icon">&#8599;</span>${shrCount}</button>
+    ${(!post.isOwner && AUTH.loggedIn) ? `<button class="post-action-btn" onclick="openReportModal('post','${post.id}',${JSON.stringify((post.body || '').slice(0, 60))})" title="Report">&#9873;</button>` : ''}
     ${ownerBtns}
   </div>
 </div>`;
