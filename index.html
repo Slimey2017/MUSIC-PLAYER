@@ -6033,10 +6033,19 @@ async function playEntireRelease(releaseId) {
 // local <audio> playback path (see playItem's platform check) but is a
 // distinct, non-downloadable identity, same way cloud files are distinct
 // from true local blob: files despite both currently riding platform:'local'.
+//
+// freqTrackId + urlExpiresAt mark this item as carrying a Supabase signed
+// URL that WILL expire (server-side TTL, see SIGNED_URL_TTL_SECONDS) —
+// same shape as cloudFileId on private cloud-file queue items, so
+// refreshUpcomingCloudUrl() and playItem()'s pre-play check both already
+// know how to keep it fresh. See "Playback Ghost" fix: without this, a
+// published track's URL was fetched once at enqueue time and never
+// refreshed, so playback failed ~10 minutes in with "no supported source".
 async function resolvePublishedTrack(trackId) {
   const res = await fetch(`${TRACKS_BASE}/${encodeURIComponent(trackId)}/stream`);
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Could not load track.');
+  const ttlMs = (Number(data.expiresIn) || 600) * 1000;
   return {
     platform: 'freq', type: 'freq', title: data.title || 'Unknown Track',
     originalUrl: `cloud:${data.id}`, // matches dbPublishTrack's identity, so logPlay increments the SAME tracks row, not a fork
@@ -6044,7 +6053,21 @@ async function resolvePublishedTrack(trackId) {
     artist: data.artistName || undefined, artistId: data.artistId || undefined,
     artworkUrl: data.coverUrl || undefined, fileType: data.mimeType,
     collaborators: data.collaborators || [],
+    freqTrackId: data.id, // marks this as a refreshable signed-url item, parallel to cloudFileId
+    urlExpiresAt: Date.now() + ttlMs,
   };
+}
+
+// Re-resolves a published track's signed URL in place — same trackId, fresh
+// url/expiresAt, everything else on the queue item left untouched. Used both
+// by the lookahead refresh below and by playItem()'s just-in-time check.
+async function refreshPublishedTrackUrl(item) {
+  const res = await fetch(`${TRACKS_BASE}/${encodeURIComponent(item.freqTrackId)}/stream`);
+  const data = await res.json();
+  if (!res.ok || !data.url) return false;
+  item.blobUrl = data.url;
+  item.urlExpiresAt = Date.now() + ((Number(data.expiresIn) || 600) * 1000);
+  return true;
 }
 
 async function playPublishedTrack(trackId) {
@@ -10341,7 +10364,7 @@ const PlaybackManager = (() => {
   return { requestPlay, requestPause, toggle, prepareForTrackChange, cancelPending, getState, onStateChange };
 })();
 
-function playItem(index) {
+async function playItem(index) {
   if (index < 0 || index >= state.queue.length) return;
   state.activeIndex = index;
   const item = state.queue[index];
@@ -10389,6 +10412,29 @@ function playItem(index) {
     // below, and this ensures PlaybackManager already recognizes it as
     // stale by the time that rejection arrives, rather than racing it.
     PlaybackManager.prepareForTrackChange();
+
+    // Just-in-time signed URL refresh — covers every path that lands here
+    // (replay, direct queue click, Next/Previous, repeat-one looping), not
+    // just the "upcoming track" lookahead in refreshUpcomingCloudUrl(). A
+    // signed URL within 10s of its known expiry, or already past it, is
+    // refreshed before .src is ever assigned, so playback never starts on
+    // a link the browser is about to reject as "no supported source".
+    if ((item.freqTrackId || item.cloudFileId) && item.urlExpiresAt && Date.now() > item.urlExpiresAt - 10000) {
+      const ok = item.freqTrackId
+        ? await refreshPublishedTrackUrl(item)
+        : await (async () => {
+            try {
+              const res  = await fetch(`${CLOUD_FILES_BASE}/${item.cloudFileId}?token=${encodeURIComponent(AUTH.token)}`);
+              const data = await res.json();
+              if (res.ok && data.url) { item.blobUrl = data.url; item.urlExpiresAt = Date.now() + (Number(data.expiresIn) || 600) * 1000; return true; }
+              return false;
+            } catch (_) { return false; }
+          })();
+      if (!ok) {
+        showToast('Playback error', 'Could not refresh this track\'s link. Try again.', 'error');
+        return;
+      }
+    }
 
     // Cross-origin sources (Supabase signed URLs) must have crossOrigin set
     // BEFORE assigning .src, or createMediaElementSource() taints the output
@@ -10518,21 +10564,28 @@ localAudio.addEventListener('ended', () => {
 // ahead once .src is set, so there's nothing to gain there), this refreshes
 // just the URL itself a few seconds before the current track ends, so the
 // next track always has a fresh, working link by the time playItem() needs
-// it. cloudFileId marks which queue items are refreshable; non-cloud items
-// (local blob: URLs, YouTube) are left untouched.
+// it. cloudFileId marks which private-cloud-file queue items are
+// refreshable; freqTrackId marks published FREQ tracks the same way (see
+// resolvePublishedTrack). Non-refreshable items (local blob: URLs, YouTube)
+// are left untouched.
 let _refreshedAheadForIndex = -1; // guards against re-refreshing the same upcoming track every timeupdate tick
 
 async function refreshUpcomingCloudUrl() {
   const nextIndex = state.activeIndex + 1;
   if (nextIndex >= state.queue.length || nextIndex === _refreshedAheadForIndex) return;
   const next = state.queue[nextIndex];
-  if (!next || next.platform !== 'local' || !next.cloudFileId) return; // not a cloud file, nothing to refresh
+  if (!next || next.platform !== 'local' && next.platform !== 'freq') return;
+  if (!next.cloudFileId && !next.freqTrackId) return; // not a refreshable signed-url item
 
   _refreshedAheadForIndex = nextIndex;
   try {
-    const res  = await fetch(`${CLOUD_FILES_BASE}/${next.cloudFileId}?token=${encodeURIComponent(AUTH.token)}`);
-    const data = await res.json();
-    if (res.ok && data.url) next.blobUrl = data.url;
+    if (next.freqTrackId) {
+      await refreshPublishedTrackUrl(next);
+    } else {
+      const res  = await fetch(`${CLOUD_FILES_BASE}/${next.cloudFileId}?token=${encodeURIComponent(AUTH.token)}`);
+      const data = await res.json();
+      if (res.ok && data.url) { next.blobUrl = data.url; next.urlExpiresAt = Date.now() + (Number(data.expiresIn) || 600) * 1000; }
+    }
   } catch (_) {
     // Non-fatal — if this fails, playItem() will surface the real error
     // (expired link) when the track's turn actually comes up.
@@ -12525,6 +12578,7 @@ async function playCloudFile(index, playNow = true) {
       fileType: f.mimeType, customLabel: f.filename, artist: f.artist || undefined,
       cloudFileId: f.id, // marks this as a cloud item with a refreshable signed URL,
                           // distinct from true local blob: files which also use platform:'local'
+      urlExpiresAt: Date.now() + ((Number(data.expiresIn) || 600) * 1000),
     };
     state.queue.push(item);
     save(); renderQueue();
