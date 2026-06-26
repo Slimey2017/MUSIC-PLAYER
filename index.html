@@ -3459,6 +3459,25 @@ body.oled-mode {
           <select id="editTrackReleaseSelect" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-main);font-family:'Space Mono',monospace;font-size:0.5rem;padding:9px 11px;box-sizing:border-box;margin-bottom:16px;">
             <option value="">— No release (standalone) —</option>
           </select>
+
+          <!-- Collaborators — inline version of the standalone Credits modal,
+               reusing the exact same backend routes (GET/POST/DELETE
+               /api/tracks/:id/collaborators) so adding a credit from here
+               and from the Credits button always agree on the same data. -->
+          <label style="display:block;font-size:0.42rem;color:var(--text-dim);letter-spacing:0.04em;text-transform:uppercase;margin-bottom:5px;">Collaborators</label>
+          <div id="editTrackCollabList" style="display:flex;flex-direction:column;gap:4px;margin-bottom:8px;"></div>
+          <div style="display:flex;gap:6px;margin-bottom:6px;">
+            <input type="text" id="editTrackCollabSearchInput" placeholder="Search FREQ artists by name…" autocomplete="off" style="flex:1;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-main);font-family:'Space Mono',monospace;font-size:0.5rem;padding:8px 10px;box-sizing:border-box;" />
+            <select id="editTrackCollabRoleSelect" style="background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-main);font-family:'Space Mono',monospace;font-size:0.44rem;padding:6px 8px;">
+              <option value="featured">Featured</option>
+              <option value="collaborator">Collaborator</option>
+              <option value="producer">Producer</option>
+              <option value="contributor">Contributor</option>
+            </select>
+          </div>
+          <div id="editTrackCollabSearchResults" style="display:flex;flex-direction:column;gap:4px;max-height:110px;overflow-y:auto;margin-bottom:10px;"></div>
+          <div id="editTrackCollabStatus" style="font-size:0.4rem;color:var(--text-muted);min-height:1.1em;margin-bottom:12px;"></div>
+
           <div id="editTrackStatus" style="font-size:0.42rem;color:var(--text-muted);min-height:1.2em;margin-bottom:12px;"></div>
           <div style="display:flex;gap:8px;">
             <button id="editTrackSaveBtn" onclick="submitEditTrack()" style="flex:1;background:var(--accent);color:var(--bg);border:none;font-family:'Unbounded',sans-serif;font-weight:700;font-size:0.5rem;padding:10px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.05em;text-transform:uppercase;">Save Changes</button>
@@ -6024,6 +6043,7 @@ async function resolvePublishedTrack(trackId) {
     blobUrl: data.url, id: data.id, customLabel: data.title,
     artist: data.artistName || undefined, artistId: data.artistId || undefined,
     artworkUrl: data.coverUrl || undefined, fileType: data.mimeType,
+    collaborators: data.collaborators || [],
   };
 }
 
@@ -6537,6 +6557,11 @@ async function openEditTrackOverlay(trackId, title, coverUrl, description) {
     // Try to detect current release from cache (best-effort)
     sel.value = '';
   }
+  $('editTrackCollabSearchInput').value = '';
+  $('editTrackCollabSearchResults').innerHTML = '';
+  $('editTrackCollabStatus').textContent = '';
+  editTrackCollabSelectedArtist = null;
+  loadEditTrackCollabList();
   const overlay = $('editTrackOverlay');
   if (overlay) {
     overlay.style.display = 'block';
@@ -6549,6 +6574,121 @@ function closeEditTrackOverlay() {
   if (overlay) overlay.style.display = 'none';
   editingTrackId = null;
 }
+
+// ── Edit Track > Collaborators (inline) ─────────────────────────────────────
+// Deliberately calls /api/tracks/:id/collaborators directly rather than
+// going through collabTarget/collabRouteBase (the standalone Credits modal's
+// state) — the two UIs can be opened independently and shouldn't share
+// mutable module-level state just because they happen to hit the same route.
+let editTrackCollabSelectedArtist = null;
+let editTrackCollabSearchDebounce = null;
+
+async function loadEditTrackCollabList() {
+  const list = $('editTrackCollabList');
+  if (!list || !editingTrackId) return;
+  list.innerHTML = '<div style="font-size:0.42rem;color:var(--text-muted);">Loading…</div>';
+  try {
+    const res = await fetch(`/api/tracks/${encodeURIComponent(editingTrackId)}/collaborators`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not load collaborators.');
+    const collaborators = data.collaborators || [];
+    if (!collaborators.length) {
+      list.innerHTML = '<div style="font-size:0.42rem;color:var(--text-muted);">No collaborators credited yet.</div>';
+      return;
+    }
+    list.innerHTML = collaborators.map(c => `
+      <div style="display:flex;align-items:center;gap:8px;background:var(--surface2);border-radius:var(--radius);padding:6px 8px;">
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:0.46rem;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(c.name)}${c.isVerified ? ' ✓' : ''}</div>
+          <div style="font-size:0.36rem;color:var(--text-muted);text-transform:uppercase;">${escapeHtml(COLLAB_ROLE_LABELS[c.role] || c.role)}</div>
+        </div>
+        <button onclick="removeEditTrackCollaborator('${c.id}')" style="flex:0 0 auto;background:none;border:1px solid var(--accent2);color:var(--accent2);font-family:'Space Mono',monospace;font-size:0.36rem;padding:3px 6px;border-radius:var(--radius);cursor:pointer;">Remove</button>
+      </div>
+    `).join('');
+  } catch (err) {
+    list.innerHTML = `<div style="font-size:0.42rem;color:var(--accent2);">${escapeHtml(err.message || 'Could not load collaborators.')}</div>`;
+  }
+}
+
+// Reuses the same artist-search endpoint as the standalone Credits modal
+// (GET /api/discover/artists?mode=search) — only existing, real FREQ artist
+// pages are ever returned, so there is no path here that creates or matches
+// a duplicate artist record.
+$('editTrackCollabSearchInput')?.addEventListener('input', function() {
+  const q = this.value.trim();
+  clearTimeout(editTrackCollabSearchDebounce);
+  if (!q) { $('editTrackCollabSearchResults').innerHTML = ''; return; }
+  editTrackCollabSearchDebounce = setTimeout(async () => {
+    try {
+      const res = await fetch(`/api/discover/artists?mode=search&q=${encodeURIComponent(q)}&limit=8`);
+      const data = await res.json();
+      const results = (data.artists || []).filter(a => a.id !== viewedArtist?.id);
+      renderEditTrackCollabSearchResults(results);
+    } catch (err) {
+      console.error('[edit track collab search]', err);
+    }
+  }, 300);
+});
+
+function renderEditTrackCollabSearchResults(results) {
+  const wrap = $('editTrackCollabSearchResults');
+  if (!wrap) return;
+  if (!results.length) {
+    wrap.innerHTML = '<div style="font-size:0.4rem;color:var(--text-muted);padding:4px 2px;">No matching FREQ artists. Inviting artists who haven\'t joined yet isn\'t supported here.</div>';
+    return;
+  }
+  wrap.innerHTML = results.map(a => `
+    <div onclick='addEditTrackCollaborator(${JSON.stringify(a.id)}, ${JSON.stringify(a.name)})' style="display:flex;align-items:center;gap:8px;padding:6px 8px;background:var(--surface2);border-radius:var(--radius);cursor:pointer;">
+      <div style="width:20px;height:20px;border-radius:50%;background:var(--surface3) center/cover;flex:0 0 auto;${a.avatarUrl ? `background-image:url('${a.avatarUrl}');` : ''}"></div>
+      <div style="font-size:0.46rem;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(a.name)}${a.isVerified ? ' ✓' : ''}</div>
+    </div>
+  `).join('');
+}
+
+async function addEditTrackCollaborator(artistId, artistName) {
+  if (!editingTrackId) return;
+  $('editTrackCollabStatus').textContent = '';
+  try {
+    const res = await fetch(`/api/tracks/${encodeURIComponent(editingTrackId)}/collaborators`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        token: AUTH.token, artistId,
+        role: $('editTrackCollabRoleSelect').value,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      if (res.status === 401) { handleTokenExpiry(); return; }
+      throw new Error(data.error || 'Could not add collaborator.');
+    }
+    $('editTrackCollabSearchInput').value = '';
+    $('editTrackCollabSearchResults').innerHTML = '';
+    showToast('Credit Added', `${artistName} added.`, 'success');
+    loadEditTrackCollabList();
+    refreshAfterCollabChange();
+  } catch (err) {
+    $('editTrackCollabStatus').textContent = err.message || 'Could not add collaborator.';
+    $('editTrackCollabStatus').style.color = 'var(--accent2)';
+  }
+}
+
+async function removeEditTrackCollaborator(collaborationId) {
+  if (!editingTrackId) return;
+  try {
+    const res = await fetch(`/api/tracks/${encodeURIComponent(editingTrackId)}/collaborators/${encodeURIComponent(collaborationId)}`, {
+      method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: AUTH.token }),
+    });
+    const data = await res.json();
+    if (!res.ok) { if (res.status === 401) { handleTokenExpiry(); return; } throw new Error(data.error || 'Could not remove collaborator.'); }
+    showToast('Credit Removed', '', 'success');
+    loadEditTrackCollabList();
+    refreshAfterCollabChange();
+  } catch (err) {
+    showToast('Error', err.message || 'Could not remove collaborator.', 'error');
+  }
+}
+
 async function submitEditTrack() {
   if (!editingTrackId) return;
   const title = $('editTrackTitle').value.trim();
@@ -10233,7 +10373,11 @@ function playItem(index) {
     if (typeof hideEmbedBlockBanner === 'function') hideEmbedBlockBanner();
 
     localTitle.textContent  = item.customLabel || item.title || 'Unknown Track';
-    localMeta.textContent   = item.meta    || (item.platform === 'freq' ? (item.artist || 'FREQ') : 'Local File');
+    const baseArtistMeta = item.meta || (item.platform === 'freq' ? (item.artist || 'FREQ') : 'Local File');
+    const nowPlayingCredits = item.platform === 'freq' ? formatCollaboratorCredits(item.collaborators) : '';
+    localMeta.innerHTML = nowPlayingCredits
+      ? `${escapeHtml(baseArtistMeta)} <span style="color:var(--text-muted);">· ${nowPlayingCredits}</span>`
+      : escapeHtml(baseArtistMeta);
     localFormat.textContent = item.format  || '—';
     localSize.textContent   = item.sizeLabel || '—';
 
