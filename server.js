@@ -1008,7 +1008,7 @@ async function dbAddCollaborator({ trackId = null, releaseId = null, collaborato
   return data;
 }
 
-async function dbRemoveCollaborator(collaborationId) {
+async function dbRemoveCollaboration(collaborationId) {
   const { error } = await supabase.from('artist_collaborations').delete().eq('id', collaborationId);
   if (error) throw new Error(error.message);
 }
@@ -5599,7 +5599,7 @@ app.delete('/api/artists/:id/releases/:releaseId/collaborators/:collabId', rateL
     if (!release) return res.status(404).json({ error: 'Release not found.' });
     const collab = await dbGetCollaboration(req.params.collabId);
     if (!collab || collab.release_id !== release.id) return res.status(404).json({ error: 'Collaborator credit not found.' });
-    await dbRemoveCollaborator(collab.id);
+    await dbRemoveCollaboration(collab.id);
     return res.json({ success: true });
   } catch (err) {
     console.error('[release collaborator remove]', err);
@@ -5959,7 +5959,7 @@ app.delete('/api/tracks/:trackId/collaborators/:collabId', rateLimit, async (req
     }
     const collab = await dbGetCollaboration(req.params.collabId);
     if (!collab || collab.track_id !== track.id) return res.status(404).json({ error: 'Collaborator credit not found.' });
-    await dbRemoveCollaborator(collab.id);
+    await dbRemoveCollaboration(collab.id);
     return res.json({ success: true });
   } catch (err) {
     console.error('[track collaborator remove]', err);
