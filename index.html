@@ -3723,8 +3723,17 @@ body.oled-mode {
 
     <!-- Posts sub-view — community feed inside Discovery -->
     <div id="discoverPanePosts" class="discover-pane" style="display:none;">
-      <div style="font-size:0.42rem;color:var(--text-muted);margin-bottom:10px;line-height:1.8;">
-        Community updates, track shares, and artist announcements.
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:10px;">
+        <div style="font-size:0.42rem;color:var(--text-muted);line-height:1.8;">
+          Community updates, track shares, and artist announcements.
+        </div>
+        <!-- Visible to every logged-in user, regardless of artist status — see
+             openPostsFeed()/populatePostComposeTypes() for how the composer
+             itself gates artist-only post types, not whether someone can post
+             at all. Logged-out visitors get a disabled, explanatory button
+             rather than this control silently disappearing on them. -->
+        <button id="discoverCreatePostBtn" onclick="openCreatePostFromDiscover()"
+          style="flex-shrink:0;white-space:nowrap;background:var(--accent);color:var(--bg);border:none;font-family:'Unbounded',sans-serif;font-size:0.42rem;font-weight:700;padding:6px 11px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.04em;text-transform:uppercase;">➕ Create Post</button>
       </div>
       <div id="discoverPostsList" style="max-height:390px;overflow-y:auto;"><div class="empty-panel">Loading…</div></div>
       <div id="discoverPostsLoadMore" style="display:none;margin-top:8px;">
@@ -5033,11 +5042,30 @@ function setChartsWindow(win) {
   loadCharts();
 }
 
-// Charts only knows originalUrl/platform/title — not a full resolved embedUrl
-// — so playing or queueing a chart entry has to re-resolve it through the
-// same /api/resolve path a freshly pasted URL would go through, rather than
-// constructing a queue item by hand from incomplete chart data.
+// Charts/Discovery-Tracks only know originalUrl/platform/title — not a full
+// resolved embedUrl — so playing or queueing an entry has to resolve it
+// first. For external platform URLs (YouTube, Spotify, etc.) that means
+// /api/resolve, same path a freshly pasted URL goes through. FREQ-published
+// tracks are different: their originalUrl is `cloud:<trackId>` (see
+// dbPublishTrack), which has no hostname for /api/resolve's detectPlatform()
+// to recognize — it would 400 "Unsupported platform" and silently fail to
+// play, the root cause of "artist plays go up but this track's plays never
+// move" for anything played from Charts or Discovery → Tracks specifically
+// (Track Finder and the Artist Page already use this same stream-by-id path
+// via trackFinderPlay, which is why those two surfaces worked fine). Route
+// cloud: tracks the same way trackFinderPlay does instead of through resolve.
 async function resolveChartTrack(t) {
+  if (t.originalUrl && t.originalUrl.startsWith('cloud:')) {
+    const res = await fetch(`/api/tracks/${encodeURIComponent(t.id)}/stream`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not load this track.');
+    return {
+      id: t.id, title: data.title || t.title, platform: 'freq', type: 'track',
+      originalUrl: t.originalUrl, embedUrl: data.url,
+      artist: data.artistName, artistId: data.artistId, coverUrl: data.coverUrl,
+      mimeType: data.mimeType, duration: data.duration,
+    };
+  }
   const res = await fetch('/api/resolve', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ url: t.originalUrl }),
@@ -5527,7 +5555,7 @@ async function loadDiscoverPosts(append = false) {
     discoverPostsLoaded = true;
     const posts = data.posts || [];
     if (!posts.length && !append) {
-      list.innerHTML = '<div class="empty-panel">No posts yet — be the first to say something!</div>';
+      list.innerHTML = `<div class="empty-panel">No posts yet.<br><button onclick="openCreatePostFromDiscover()" style="margin-top:8px;background:var(--accent);color:var(--bg);border:none;font-family:'Unbounded',sans-serif;font-size:0.42rem;font-weight:700;padding:6px 12px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.04em;text-transform:uppercase;">➕ Create First Post</button></div>`;
       $('discoverPostsLoadMore').style.display = 'none';
       return;
     }
@@ -5540,6 +5568,24 @@ async function loadDiscoverPosts(append = false) {
     console.error('[loadDiscoverPosts]', err);
     if (!append) list.innerHTML = '<div class="empty-panel">Could not load posts.</div>';
   }
+}
+
+// Entry point for the Discovery → Posts "➕ Create Post" button (header and
+// empty-state variants both call this). Deliberately does NOT duplicate the
+// composer — it reuses the exact same postComposeBox / submitPost() flow
+// already wired up on the Posts Feed overlay, so text/track/playlist/artist
+// post types, the artist-only types gate, and server-side validation all
+// stay defined in exactly one place. Available to every logged-in user; no
+// artist-page ownership check here — that distinction only matters for the
+// two artist-only post TYPES inside the composer (see
+// populatePostComposeTypes), not for whether someone can open it at all.
+function openCreatePostFromDiscover() {
+  if (!AUTH.loggedIn) {
+    showToast('Sign In Required', 'Sign in to create a post.', 'error');
+    return;
+  }
+  closeDiscoverOverlay();
+  openPostsFeed();
 }
 
 // ─── Public Playlists (relational, playlists_v2 — separate from the legacy
@@ -5949,7 +5995,7 @@ async function loadArtistTopTracks(artistId) {
         </div>
         <button onclick="event.stopPropagation(); toggleTrackLyricsSection('${t.id}')" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.42rem;padding:4px 8px;border-radius:var(--radius);cursor:pointer;flex-shrink:0;letter-spacing:0.04em;text-transform:uppercase;" title="Lyrics">Lyrics</button>
         <button onclick="event.stopPropagation(); queuePublishedTrack('${t.id}')" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.42rem;padding:4px 8px;border-radius:var(--radius);cursor:pointer;flex-shrink:0;letter-spacing:0.04em;text-transform:uppercase;" title="Add to queue">+ Queue</button>
-        ${AUTH.loggedIn ? `<button onclick="event.stopPropagation();openReportModal('track','${t.id}','${escapeHtml(t.title).replace(/'/g,"\\'")}')" style="background:none;border:none;color:var(--text-muted);font-size:0.5rem;cursor:pointer;flex-shrink:0;padding:2px 4px;opacity:0.6;" title="Report">⚑</button>` : ''}
+        ${AUTH.loggedIn ? `<button onclick="${escapeHtml(`event.stopPropagation();openReportModal('track','${t.id}',${JSON.stringify(t.title || '')})`)}" style="background:none;border:none;color:var(--text-muted);font-size:0.5rem;cursor:pointer;flex-shrink:0;padding:2px 4px;opacity:0.6;" title="Report">⚑</button>` : ''}
       </div>
     `;
     }).join('');
@@ -8500,7 +8546,7 @@ function searchPostComposeArtists(q) {
       const data = await res.json();
       const artists = data.artists || [];
       results.innerHTML = artists.length
-        ? artists.map(a => `<div class="post-ref-card" style="cursor:pointer;" onclick="selectPostComposeArtist('${a.id}','${escapeHtml(a.name).replace(/'/g, "\\'")}')">&#127908; ${escapeHtml(a.name)}</div>`).join('')
+        ? artists.map(a => `<div class="post-ref-card" style="cursor:pointer;" onclick="${escapeHtml(`selectPostComposeArtist('${a.id}',${JSON.stringify(a.name || '')})`)}">&#127908; ${escapeHtml(a.name)}</div>`).join('')
         : `<div class="empty-panel" style="font-size:0.42rem;padding:6px;">No artists found.</div>`;
     } catch (_) { /* non-fatal — just leave previous results showing */ }
   }, 300);
