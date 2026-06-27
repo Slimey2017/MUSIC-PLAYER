@@ -3689,20 +3689,47 @@ body.oled-mode {
     <div class="lyrics-artist" style="margin-bottom:12px;">What's happening across FREQ right now.</div>
 
     <!-- Sub-tabs -->
-    <div style="display:flex;gap:6px;margin-bottom:14px;">
-      <button id="discoverTabTracks" onclick="setDiscoverTab('tracks')" class="discover-tab-btn discover-tab-active" style="flex:1;background:none;border:1px solid var(--accent3);color:var(--accent3);font-family:'Space Mono',monospace;font-size:0.44rem;letter-spacing:0.05em;text-transform:uppercase;padding:7px 4px;border-radius:var(--radius);cursor:pointer;transition:color 0.15s,border-color 0.15s;">♪ Tracks</button>
-      <button id="discoverTabArtists" onclick="setDiscoverTab('artists')" class="discover-tab-btn" style="flex:1;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.44rem;letter-spacing:0.05em;text-transform:uppercase;padding:7px 4px;border-radius:var(--radius);cursor:pointer;transition:color 0.15s,border-color 0.15s;">★ Artists</button>
-      <button id="discoverTabPlaylists" onclick="setDiscoverTab('playlists')" class="discover-tab-btn" style="flex:1;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.44rem;letter-spacing:0.05em;text-transform:uppercase;padding:7px 4px;border-radius:var(--radius);cursor:pointer;transition:color 0.15s,border-color 0.15s;">⊞ Playlists</button>
-      <button id="discoverTabPeople" onclick="setDiscoverTab('people')" class="discover-tab-btn" style="flex:1;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.44rem;letter-spacing:0.05em;text-transform:uppercase;padding:7px 4px;border-radius:var(--radius);cursor:pointer;transition:color 0.15s,border-color 0.15s;">⊕ People</button>
+    <div style="display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap;">
+      <button id="discoverTabTracks" onclick="setDiscoverTab('tracks')" class="discover-tab-btn discover-tab-active" style="flex:1;min-width:80px;background:none;border:1px solid var(--accent3);color:var(--accent3);font-family:'Space Mono',monospace;font-size:0.44rem;letter-spacing:0.05em;text-transform:uppercase;padding:7px 4px;border-radius:var(--radius);cursor:pointer;transition:color 0.15s,border-color 0.15s;">📊 Charts</button>
+      <button id="discoverTabFinder" onclick="setDiscoverTab('finder')" class="discover-tab-btn" style="flex:1;min-width:80px;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.44rem;letter-spacing:0.05em;text-transform:uppercase;padding:7px 4px;border-radius:var(--radius);cursor:pointer;transition:color 0.15s,border-color 0.15s;">🎵 Find</button>
+      <button id="discoverTabArtists" onclick="setDiscoverTab('artists')" class="discover-tab-btn" style="flex:1;min-width:80px;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.44rem;letter-spacing:0.05em;text-transform:uppercase;padding:7px 4px;border-radius:var(--radius);cursor:pointer;transition:color 0.15s,border-color 0.15s;">★ Artists</button>
+      <button id="discoverTabPosts" onclick="setDiscoverTab('posts')" class="discover-tab-btn" style="flex:1;min-width:80px;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.44rem;letter-spacing:0.05em;text-transform:uppercase;padding:7px 4px;border-radius:var(--radius);cursor:pointer;transition:color 0.15s,border-color 0.15s;">📰 Posts</button>
+      <button id="discoverTabPlaylists" onclick="setDiscoverTab('playlists')" class="discover-tab-btn" style="flex:1;min-width:80px;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.44rem;letter-spacing:0.05em;text-transform:uppercase;padding:7px 4px;border-radius:var(--radius);cursor:pointer;transition:color 0.15s,border-color 0.15s;">⊞ Playlists</button>
+      <button id="discoverTabPeople" onclick="setDiscoverTab('people')" class="discover-tab-btn" style="flex:1;min-width:80px;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.44rem;letter-spacing:0.05em;text-transform:uppercase;padding:7px 4px;border-radius:var(--radius);cursor:pointer;transition:color 0.15s,border-color 0.15s;">⊕ People</button>
     </div>
 
-    <!-- Tracks sub-view (reuses Charts data) -->
+    <!-- Charts sub-view (was "Tracks" — this is play-ranked charts data, renamed for clarity) -->
     <div id="discoverPaneTracks" class="discover-pane">
       <div style="display:flex;gap:6px;margin-bottom:10px;">
         <button id="discoverTracksAll" onclick="setDiscoverTracksWindow('all')" style="flex:1;background:none;border:1px solid var(--accent3);color:var(--accent3);font-family:'Space Mono',monospace;font-size:0.4rem;letter-spacing:0.05em;text-transform:uppercase;padding:5px 4px;border-radius:var(--radius);cursor:pointer;">All-Time</button>
         <button id="discoverTracks7d" onclick="setDiscoverTracksWindow('7d')" style="flex:1;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.4rem;letter-spacing:0.05em;text-transform:uppercase;padding:5px 4px;border-radius:var(--radius);cursor:pointer;">Trending · 7d</button>
       </div>
       <div id="discoverTracksList" style="max-height:380px;overflow-y:auto;"><div class="empty-panel">Loading…</div></div>
+    </div>
+
+    <!-- Track Finder pane — search/filter across published FREQ tracks -->
+    <div id="discoverPaneFinder" class="discover-pane" style="display:none;">
+      <div style="display:flex;gap:6px;margin-bottom:8px;">
+        <input type="text" id="trackFinderSearch" placeholder="Search tracks, artists…" oninput="handleTrackFinderInput(this.value)"
+          style="flex:1;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-main);font-family:'Space Mono',monospace;font-size:0.5rem;padding:8px 11px;box-sizing:border-box;" />
+      </div>
+      <div style="display:flex;gap:6px;margin-bottom:10px;" id="trackFinderFilters">
+        <button id="trackFinderExplicit" onclick="toggleTrackFinderExplicit()" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.4rem;padding:4px 8px;border-radius:var(--radius);cursor:pointer;text-transform:uppercase;letter-spacing:0.05em;" title="Toggle explicit">🔞 Explicit</button>
+        <button id="trackFinderSortPlays" onclick="setTrackFinderSort('plays')" style="flex:1;background:none;border:1px solid var(--accent3);color:var(--accent3);font-family:'Space Mono',monospace;font-size:0.4rem;padding:4px 4px;border-radius:var(--radius);cursor:pointer;text-transform:uppercase;letter-spacing:0.05em;">Most Played</button>
+        <button id="trackFinderSortRecent" onclick="setTrackFinderSort('recent')" style="flex:1;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.4rem;padding:4px 4px;border-radius:var(--radius);cursor:pointer;text-transform:uppercase;letter-spacing:0.05em;">Newest</button>
+      </div>
+      <div id="trackFinderList" style="max-height:360px;overflow-y:auto;"><div class="empty-panel">Search or browse FREQ tracks.</div></div>
+    </div>
+
+    <!-- Posts sub-view — community feed inside Discovery -->
+    <div id="discoverPanePosts" class="discover-pane" style="display:none;">
+      <div style="font-size:0.42rem;color:var(--text-muted);margin-bottom:10px;line-height:1.8;">
+        Community updates, track shares, and artist announcements.
+      </div>
+      <div id="discoverPostsList" style="max-height:390px;overflow-y:auto;"><div class="empty-panel">Loading…</div></div>
+      <div id="discoverPostsLoadMore" style="display:none;margin-top:8px;">
+        <button onclick="loadDiscoverPosts(true)" style="width:100%;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.44rem;padding:7px;border-radius:var(--radius);cursor:pointer;">Load More</button>
+      </div>
     </div>
 
     <!-- Artists sub-view -->
@@ -5056,13 +5083,10 @@ async function queueFromChart(i) {
 }
 
 // ─── Discovery ────────────────────────────────────────────────────────────────
-// Three independent sub-views (tracks / playlists / people) sharing one
-// overlay. Each pane lazy-loads the first time its tab is opened, then
-// caches in module-level state (discoverTracksData etc) so switching tabs
-// back and forth doesn't re-fetch — only the explicit window/sort toggles
-// inside a pane trigger a fresh load. The overlay itself defaults to the
-// Tracks pane (set in the HTML) since "what's playing right now" is the
-// most immediately graspable answer to "what's happening on FREQ."
+// Sub-views: charts (renamed from "Tracks"), finder, artists, posts, playlists, people.
+// Each pane lazy-loads the first time its tab is opened, then caches results so
+// switching back and forth doesn't re-fetch — only explicit sort/window toggles
+// inside a pane trigger a fresh load.
 let discoverTab           = 'tracks';
 let discoverTracksWindow  = 'all';
 let discoverPlaylistsSort = 'likes';
@@ -5070,9 +5094,17 @@ let discoverTracksLoaded    = false;
 let discoverPlaylistsLoaded = false;
 let discoverPeopleLoaded    = false;
 let discoverArtistsLoaded   = false;
+let discoverPostsLoaded     = false;
 let discoverArtistsSort     = 'trending'; // 'trending' | 'new' | 'search'
 let discoverArtistsSearchTimer = null;
 let discoverTracksData    = []; // separate cache from chartsTracks — same shape, different lifecycle/UI
+let discoverPostsCursor   = null;
+
+// Track Finder state
+let trackFinderSort         = 'plays';
+let trackFinderExplicitOnly = false;
+let trackFinderSearchTimer  = null;
+let trackFinderData         = [];
 
 function openDiscoverOverlay() {
   $('discoverOverlay')?.classList.add('open');
@@ -5083,12 +5115,15 @@ function closeDiscoverOverlay() {
   $('discoverOverlay')?.classList.remove('open');
 }
 
+// Pane name → tab id suffix mapping
+const DISCOVER_PANES = ['Tracks', 'Finder', 'Artists', 'Posts', 'Playlists', 'People'];
+
 function setDiscoverTab(tab) {
   if (discoverTab === tab) return;
   discoverTab = tab;
-  ['Tracks', 'Artists', 'Playlists', 'People'].forEach(name => {
+  DISCOVER_PANES.forEach(name => {
     const isActive = name.toLowerCase() === tab;
-    const btn = $(`discoverTab${name}`);
+    const btn  = $(`discoverTab${name}`);
     const pane = $(`discoverPane${name}`);
     if (btn) {
       btn.style.color = isActive ? 'var(--accent3)' : 'var(--text-muted)';
@@ -5096,10 +5131,12 @@ function setDiscoverTab(tab) {
     }
     if (pane) pane.style.display = isActive ? 'block' : 'none';
   });
-  if (tab === 'tracks' && !discoverTracksLoaded) loadDiscoverTracks();
-  if (tab === 'artists' && !discoverArtistsLoaded) loadDiscoverArtists();
+  if (tab === 'tracks'    && !discoverTracksLoaded)    loadDiscoverTracks();
+  if (tab === 'finder'    )                             loadTrackFinder();
+  if (tab === 'artists'   && !discoverArtistsLoaded)   loadDiscoverArtists();
+  if (tab === 'posts'     && !discoverPostsLoaded)     loadDiscoverPosts(false);
   if (tab === 'playlists' && !discoverPlaylistsLoaded) loadDiscoverPlaylists();
-  if (tab === 'people' && !discoverPeopleLoaded) loadDiscoverPeople();
+  if (tab === 'people'    && !discoverPeopleLoaded)    loadDiscoverPeople();
 }
 
 function setDiscoverTracksWindow(win) {
@@ -5337,6 +5374,173 @@ async function loadDiscoverPeople() {
 }
 
 $('discoverBtn')?.addEventListener('click', openDiscoverOverlay);
+
+// ── Track Finder ─────────────────────────────────────────────────────────────
+// Searches FREQ's published track catalog by title/artist. Backed by
+// GET /api/discover/tracks which accepts q=, sort=plays|recent, explicit= params.
+
+function handleTrackFinderInput(val) {
+  clearTimeout(trackFinderSearchTimer);
+  trackFinderSearchTimer = setTimeout(() => loadTrackFinder(), 320);
+}
+
+function setTrackFinderSort(sort) {
+  if (trackFinderSort === sort) return;
+  trackFinderSort = sort;
+  const playsBtn  = $('trackFinderSortPlays');
+  const recentBtn = $('trackFinderSortRecent');
+  if (playsBtn)  { playsBtn.style.color  = sort === 'plays'  ? 'var(--accent3)' : 'var(--text-muted)'; playsBtn.style.borderColor  = sort === 'plays'  ? 'var(--accent3)' : 'var(--border)'; }
+  if (recentBtn) { recentBtn.style.color = sort === 'recent' ? 'var(--accent3)' : 'var(--text-muted)'; recentBtn.style.borderColor = sort === 'recent' ? 'var(--accent3)' : 'var(--border)'; }
+  loadTrackFinder();
+}
+
+function toggleTrackFinderExplicit() {
+  trackFinderExplicitOnly = !trackFinderExplicitOnly;
+  const btn = $('trackFinderExplicit');
+  if (btn) { btn.style.color = trackFinderExplicitOnly ? 'var(--accent2)' : 'var(--text-muted)'; btn.style.borderColor = trackFinderExplicitOnly ? 'var(--accent2)' : 'var(--border)'; }
+  loadTrackFinder();
+}
+
+async function loadTrackFinder() {
+  const list = $('trackFinderList');
+  if (!list) return;
+  const q = ($('trackFinderSearch')?.value || '').trim();
+  list.innerHTML = '<div class="empty-panel">Searching…</div>';
+  try {
+    const params = new URLSearchParams({ sort: trackFinderSort, limit: 30 });
+    if (q) params.set('q', q);
+    if (trackFinderExplicitOnly) params.set('explicit', '1');
+    const res  = await fetch(`/api/discover/tracks?${params}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not search tracks.');
+    const tracks = data.tracks || [];
+    trackFinderData = tracks;
+    if (!tracks.length) {
+      list.innerHTML = `<div class="empty-panel">${q ? 'No results.' : 'No FREQ tracks published yet.'}</div>`;
+      return;
+    }
+    list.innerHTML = tracks.map((t, i) => {
+      const explicitBadge = t.isExplicit ? ' <span class="explicit-badge">E</span>' : '';
+      const likeBtn = AUTH.loggedIn
+        ? `<button onclick="event.stopPropagation(); trackFinderLike(${i})" class="track-finder-like-btn" id="tfLikeBtn_${t.id}" title="Like" style="background:none;border:none;color:${t.likedByMe ? 'var(--accent2)' : 'var(--text-muted)'};font-size:0.6rem;cursor:pointer;flex-shrink:0;padding:2px 4px;">♥</button>`
+        : '';
+      return `
+        <div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border);">
+          <div style="flex:1;min-width:0;cursor:pointer;" onclick="trackFinderPlay(${i})">
+            <div style="font-size:0.55rem;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(t.title || 'Untitled')}${explicitBadge}</div>
+            <div style="font-size:0.42rem;color:var(--text-muted);">${escapeHtml(t.artistName || '—')} · ${t.playCount || 0} play${(t.playCount||0)===1?'':'s'}${t.likeCount ? ` · ♥ ${t.likeCount}` : ''}</div>
+          </div>
+          <button onclick="event.stopPropagation(); trackFinderQueue(${i})" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.4rem;padding:4px 8px;border-radius:var(--radius);cursor:pointer;flex-shrink:0;text-transform:uppercase;" title="Add to queue">+ Queue</button>
+          ${likeBtn}
+        </div>
+      `;
+    }).join('');
+  } catch (err) {
+    console.error('[loadTrackFinder]', err);
+    list.innerHTML = '<div class="empty-panel">Could not search tracks.</div>';
+  }
+}
+
+async function trackFinderPlay(i) {
+  const t = trackFinderData[i];
+  if (!t) return;
+  try {
+    // FREQ tracks stream via their signed URL — same path as artist page / discovery chart
+    const res = await fetch(`/api/tracks/${encodeURIComponent(t.id)}/stream`);
+    if (!res.ok) throw new Error('Could not load track.');
+    const data = await res.json();
+    const item = {
+      id: t.id, title: data.title, platform: 'freq', type: 'track',
+      originalUrl: `cloud:${t.id}`, embedUrl: data.url,
+      artist: data.artistName, artistId: data.artistId, coverUrl: data.coverUrl,
+      mimeType: data.mimeType, duration: data.duration,
+    };
+    if (!state.allowDups && state.queue.some(q => q.originalUrl === item.originalUrl)) {
+      playItem(state.queue.findIndex(q => q.originalUrl === item.originalUrl));
+      return;
+    }
+    state.queue.push(item); save(); renderQueue();
+    playItem(state.queue.length - 1);
+  } catch (err) { showToast('Error', err.message || 'Could not play track.', 'error'); }
+}
+
+async function trackFinderQueue(i) {
+  const t = trackFinderData[i];
+  if (!t) return;
+  try {
+    const res = await fetch(`/api/tracks/${encodeURIComponent(t.id)}/stream`);
+    if (!res.ok) throw new Error('Could not load track.');
+    const data = await res.json();
+    const item = {
+      id: t.id, title: data.title, platform: 'freq', type: 'track',
+      originalUrl: `cloud:${t.id}`, embedUrl: data.url,
+      artist: data.artistName, artistId: data.artistId, coverUrl: data.coverUrl,
+      mimeType: data.mimeType, duration: data.duration,
+    };
+    if (!state.allowDups && state.queue.some(q => q.originalUrl === item.originalUrl)) {
+      showToast('Already in Queue', t.title, 'info'); return;
+    }
+    state.queue.push(item); save(); renderQueue();
+    showToast('Added to Queue', t.title || 'Track', 'success');
+  } catch (err) { showToast('Error', err.message || 'Could not add track.', 'error'); }
+}
+
+async function trackFinderLike(i) {
+  if (!AUTH.loggedIn) { showToast('Sign in required', 'Please sign in to like tracks.', 'error'); return; }
+  const t = trackFinderData[i];
+  if (!t) return;
+  const wasLiked = t.likedByMe;
+  const method   = wasLiked ? 'DELETE' : 'POST';
+  try {
+    const res = await fetch(`/api/tracks/${encodeURIComponent(t.id)}/like`, {
+      method, headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: AUTH.token }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not update like.');
+    trackFinderData[i].likedByMe  = !wasLiked;
+    trackFinderData[i].likeCount  = data.likeCount;
+    // Update the button inline
+    const btn = $(`tfLikeBtn_${t.id}`);
+    if (btn) btn.style.color = !wasLiked ? 'var(--accent2)' : 'var(--text-muted)';
+    // Refresh the row text to update count
+    loadTrackFinder();
+  } catch (err) { showToast('Like failed', err.message, 'error'); }
+}
+
+// ── Discovery Posts pane ─────────────────────────────────────────────────────
+// Pulls from the main /api/posts feed — same data as the Community feed, just
+// embedded inside Discovery so you can browse posts without leaving the overlay.
+
+async function loadDiscoverPosts(append = false) {
+  const list = $('discoverPostsList');
+  if (!list) return;
+  if (!append) discoverPostsCursor = null;
+  if (!append) list.innerHTML = '<div class="empty-panel">Loading…</div>';
+  try {
+    const params = new URLSearchParams({ limit: 15 });
+    if (AUTH.token) params.set('token', AUTH.token);
+    if (append && discoverPostsCursor) params.set('before', discoverPostsCursor);
+    const res  = await fetch(`/api/posts?${params}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not load posts.');
+    discoverPostsLoaded = true;
+    const posts = data.posts || [];
+    if (!posts.length && !append) {
+      list.innerHTML = '<div class="empty-panel">No posts yet — be the first to say something!</div>';
+      $('discoverPostsLoadMore').style.display = 'none';
+      return;
+    }
+    const html = posts.map(renderPostCard).join('');
+    if (append) list.insertAdjacentHTML('beforeend', html);
+    else        list.innerHTML = html || '<div class="empty-panel">No posts yet.</div>';
+    if (posts.length) discoverPostsCursor = posts[posts.length - 1].createdAt;
+    $('discoverPostsLoadMore').style.display = data.hasMore ? 'block' : 'none';
+  } catch (err) {
+    console.error('[loadDiscoverPosts]', err);
+    if (!append) list.innerHTML = '<div class="empty-panel">Could not load posts.</div>';
+  }
+}
 
 // ─── Public Playlists (relational, playlists_v2 — separate from the legacy
 // AUTH.playlists blob used by Saved Playlists / serverSync above) ───────────
@@ -7288,9 +7492,10 @@ async function loadAdminReports(loadMore) {
         </div>
         ${r.details ? `<div class="admin-report-details">"${escapeHtml(r.details)}"</div>` : ''}
         <div class="admin-report-actions">
+          <button class="admin-action-btn" onclick="viewAdminTarget('${escapeHtml(r.target_type)}','${escapeHtml(r.target_id)}')">View Target</button>
           ${r.status === 'pending' ? `<button class="admin-action-btn" onclick="actOnAdminReport(${r.id},'reviewed')">Mark Reviewed</button>` : ''}
           ${r.status !== 'dismissed' ? `<button class="admin-action-btn" onclick="actOnAdminReport(${r.id},'dismissed')">Dismiss</button>` : ''}
-          ${r.target_type === 'artist' ? `<button class="admin-action-btn" onclick="actOnAdminReport(${r.id},'verify_artist')">Verify Artist</button>` : ''}
+          ${r.target_type === 'artist' ? `<button class="admin-action-btn verify" onclick="actOnAdminReport(${r.id},'verify_artist')">Verify Artist</button>` : ''}
           ${['track','release','post'].includes(r.target_type) ? `<button class="admin-action-btn danger" onclick="actOnAdminReport(${r.id},'remove_content')">Remove Content</button>` : ''}
           ${r.target_type === 'user' ? `<button class="admin-action-btn danger" onclick="actOnAdminReport(${r.id},'ban_user')">Ban User</button>` : ''}
         </div>
@@ -7321,11 +7526,72 @@ async function actOnAdminReport(reportId, action) {
       if (res.status === 401) { handleTokenExpiry(); return; }
       throw new Error(data.error || 'Action failed.');
     }
-    showToast('Report Updated', action.replace('_', ' '), 'success');
+    showToast('Report Updated', action.replace(/_/g, ' '), 'success');
     loadAdminStats();
     loadAdminReports(false);
   } catch (err) {
     showToast('Error', err.message || 'Could not update report.', 'error');
+  }
+}
+
+// View the reported content in context — navigates to the relevant page/overlay
+// without closing the moderation dashboard so the admin can return quickly.
+async function viewAdminTarget(targetType, targetId) {
+  if (!targetId) return;
+  try {
+    switch (targetType) {
+      case 'user':
+        // Open public profile for the reported user
+        closeAdminDash();
+        await openUserProfile(targetId);
+        break;
+      case 'artist': {
+        // Fetch artist by id, then open their artist page
+        const res = await fetch(`/api/artists/${encodeURIComponent(targetId)}`);
+        if (!res.ok) { showToast('Not found', 'Could not locate this artist.', 'error'); return; }
+        const data = await res.json();
+        closeAdminDash();
+        openArtistProfile(data.artist?.slug || targetId);
+        break;
+      }
+      case 'track': {
+        // Open the artist page that owns this track
+        const res = await fetch(`/api/tracks/${encodeURIComponent(targetId)}/stream`);
+        if (!res.ok) { showToast('Not found', 'Could not locate this track.', 'error'); return; }
+        const data = await res.json();
+        if (data.artistId) {
+          closeAdminDash();
+          openArtistProfile(data.artistId);
+        } else {
+          showToast('No artist', 'This track has no linked artist page.', 'info');
+        }
+        break;
+      }
+      case 'release': {
+        // Fetch the release and open its artist page
+        const res = await fetch(`/api/admin/releases/${encodeURIComponent(targetId)}`, { headers: authHeaders() });
+        if (!res.ok) {
+          // Fallback: nothing we can open without an artist slug
+          showToast('Release', `Release ID: ${targetId}`, 'info');
+          return;
+        }
+        const data = await res.json();
+        if (data.artistId) {
+          closeAdminDash();
+          openArtistProfile(data.artistId);
+        }
+        break;
+      }
+      case 'post':
+        // Show the post in the community feed
+        closeAdminDash();
+        openPostsFeed();
+        break;
+      default:
+        showToast('Target', `${targetType}: ${targetId}`, 'info');
+    }
+  } catch (err) {
+    showToast('Error', err.message || 'Could not open target.', 'error');
   }
 }
 
@@ -8027,6 +8293,13 @@ function renderPostCard(post) {
     ? `<span class="dot">·</span><span class="post-type-badge">${escapeHtml(POST_TYPE_BADGE_LABELS[post.postType] || post.postType)}</span>`
     : '';
 
+  // Author type badge: Verified Artist / Artist / (no badge for regular users)
+  const authorBadge = post.postedAsArtist
+    ? (post.artistIsVerified
+        ? `<span style="font-size:0.38rem;color:var(--accent3);border:1px solid var(--accent3);border-radius:2px;padding:1px 4px;margin-left:4px;letter-spacing:0.04em;vertical-align:middle;">✓ VERIFIED</span>`
+        : `<span style="font-size:0.38rem;color:#c9b8ff;border:1px solid rgba(201,184,255,0.4);border-radius:2px;padding:1px 4px;margin-left:4px;letter-spacing:0.04em;vertical-align:middle;">ARTIST</span>`)
+    : '';
+
   const ownerBtns = post.isOwner
     ? `<div class="post-owner-actions"><button class="post-owner-btn" onclick="editPost('${post.id}')">Edit</button><button class="post-owner-btn danger" onclick="deletePost('${post.id}')">Delete</button></div>`
     : '';
@@ -8053,7 +8326,7 @@ function renderPostCard(post) {
   <div class="post-header">
     ${avatar}
     <div class="post-meta">
-      <div class="post-displayname" ${avatarClick}>${escapeHtml(post.displayName || post.author)}${post.postedAsArtist && post.artistIsVerified ? ' <span title="Verified Artist">✓</span>' : ''}</div>
+      <div class="post-displayname" ${avatarClick}>${escapeHtml(post.displayName || post.author)}${authorBadge}</div>
       <div class="post-username-time">${post.postedAsArtist ? '' : `<span>@${authorKey}</span><span class="dot">·</span>`}<span>${postTimeAgo(post.createdAt)}</span>${typeLabel}</div>
     </div>
   </div>
