@@ -176,10 +176,25 @@ async function dbGenerateUniqueArtistSlug(name) {
 // ─── Supabase DB helpers ──────────────────────────────────────────────────────
 // All auth state now lives in Supabase. No local file, no in-memory Maps.
 
+// Single canonical normalizer for usernames — every place that turns raw
+// user input into a lookup/storage key (signup, signin, profile lookups,
+// etc.) MUST go through this function, never trim()+toLowerCase() on its
+// own. Previously signup stripped spaces/special characters
+// (.replace(/[^a-z0-9_]/g, '')) while signin only trimmed + lowercased —
+// so an account created from "Slimey 2017" was stored as "slimey2017", but
+// signing in with "Slimey 2017" produced the lookup key "slimey 2017",
+// which never matched. That's exactly the "founder account not recognized
+// unless I remove the space" regression. Centralizing the rule here means
+// signup and signin (and anything else that needs a username key) can
+// never drift apart again.
+function normalizeUsername(username) {
+  return (username || '').trim().toLowerCase().replace(/[^a-z0-9_]/g, '');
+}
+
 async function dbGetAccount(username) {
-  // Always normalize: trim whitespace and lowercase so space injection or case
-  // drift (e.g. "Slimey 2017" or "SLIMEY2017") never causes a lookup miss.
-  const key = (username || '').trim().toLowerCase();
+  // Always normalize through the single shared rule — see normalizeUsername
+  // above for why this can't just be trim()+toLowerCase() anymore.
+  const key = normalizeUsername(username);
   if (!key) return null;
   const { data, error } = await supabase
     .from('accounts')
@@ -243,7 +258,7 @@ async function dbEnsureProfile(username, displayName) {
 }
 
 async function dbGetProfile(username) {
-  const key = (username || '').trim().toLowerCase();
+  const key = normalizeUsername(username);
   if (!key) return null;
   const { data, error } = await supabase
     .from('profiles')
@@ -1621,8 +1636,8 @@ async function dbGetSession(token) {
   // Fetch is_admin from accounts (cheap read, cached by Postgres for repeated calls)
   const { data: acct } = await supabase.from('accounts').select('is_admin').eq('username', data.username).maybeSingle();
   // Always return a normalized username — guards against any historical row that
-  // somehow has trailing whitespace or mixed case drifting through.
-  return { username: data.username.trim().toLowerCase(), expiresAt: new Date(data.expires_at).getTime(), isAdmin: !!(acct?.is_admin) };
+  // somehow has trailing whitespace, mixed case, or stray characters drifting through.
+  return { username: normalizeUsername(data.username), expiresAt: new Date(data.expires_at).getTime(), isAdmin: !!(acct?.is_admin) };
 }
 
 // Middleware: require an authenticated admin session
@@ -2704,7 +2719,7 @@ app.post('/api/auth/signup', rateLimit, async (req, res) => {
   if (!username || !password)
     return res.status(400).json({ error: 'Username and password required.' });
 
-  const key = username.trim().toLowerCase().replace(/[^a-z0-9_]/g, '');
+  const key = normalizeUsername(username);
   if (!key || key.length < 2)
     return res.status(400).json({ error: 'Username must be 2+ alphanumeric chars or underscores.' });
   if (password.length < 4)
@@ -2751,7 +2766,7 @@ app.post('/api/auth/signin', rateLimit, async (req, res) => {
   if (!username || !password)
     return res.status(400).json({ error: 'Username and password required.' });
 
-  const key  = username.trim().toLowerCase();
+  const key  = normalizeUsername(username);
   try {
     const acct = await dbGetAccount(key);
     if (!acct) return res.status(401).json({ error: 'No account found with that username.' });
@@ -2843,7 +2858,7 @@ app.delete('/api/auth/account', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 app.get('/api/profiles/:username', async (req, res) => {
-  const key = (req.params.username || '').trim().toLowerCase();
+  const key = normalizeUsername(req.params.username);
   if (!key) return res.status(400).json({ error: 'Username required.' });
   try {
     const profile = await dbGetProfile(key);
@@ -2992,7 +3007,7 @@ app.post('/api/profiles/me/cover', rateLimit, imageUpload.single('file'), async 
 // ═══════════════════════════════════════════════════════════════════════════════
 
 app.post('/api/follows/:username', followRateLimit, async (req, res) => {
-  const target = (req.params.username || '').trim().toLowerCase();
+  const target = normalizeUsername(req.params.username);
   const sess = req._followSession; // resolved by followRateLimit — avoids a second dbGetSession round-trip
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
   if (!target) return res.status(400).json({ error: 'Username required.' });
@@ -3020,7 +3035,7 @@ app.post('/api/follows/:username', followRateLimit, async (req, res) => {
 });
 
 app.delete('/api/follows/:username', followRateLimit, async (req, res) => {
-  const target = (req.params.username || '').trim().toLowerCase();
+  const target = normalizeUsername(req.params.username);
   const sess = req._followSession; // resolved by followRateLimit — avoids a second dbGetSession round-trip
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
   if (!target) return res.status(400).json({ error: 'Username required.' });
@@ -3045,7 +3060,7 @@ app.delete('/api/follows/:username', followRateLimit, async (req, res) => {
 // through someone else's follower list. Simplest correct rule: filter to
 // is_public, full stop, even for the list owner viewing their own followers.
 app.get('/api/follows/:username/followers', async (req, res) => {
-  const key = (req.params.username || '').trim().toLowerCase();
+  const key = normalizeUsername(req.params.username);
   if (!key) return res.status(400).json({ error: 'Username required.' });
   const limit  = Math.min(Math.max(Number(req.query.limit) || 50, 1), 100);
   const offset = Math.max(Number(req.query.offset) || 0, 0);
@@ -3063,7 +3078,7 @@ app.get('/api/follows/:username/followers', async (req, res) => {
 });
 
 app.get('/api/follows/:username/following', async (req, res) => {
-  const key = (req.params.username || '').trim().toLowerCase();
+  const key = normalizeUsername(req.params.username);
   if (!key) return res.status(400).json({ error: 'Username required.' });
   const limit  = Math.min(Math.max(Number(req.query.limit) || 50, 1), 100);
   const offset = Math.max(Number(req.query.offset) || 0, 0);
@@ -3795,7 +3810,7 @@ app.post('/api/playlists/:id/collaborators', playlistRateLimit, async (req, res)
   const pl = await dbGetPlaylist(req.params.id);
   if (!pl || pl.owner !== sess.username) return res.status(404).json({ error: 'Playlist not found.' });
   // Verify the invitee exists
-  const invitee = username.trim().toLowerCase();
+  const invitee = normalizeUsername(username);
   const inviteeProfile = await dbGetProfile(invitee);
   if (!inviteeProfile) return res.status(404).json({ error: `User @${invitee} not found.` });
   try {
@@ -3978,7 +3993,7 @@ app.get('/api/playlists/:id/realtime', async (req, res) => {
 // doesn't exist/isn't public" — this endpoint is always a secondary call
 // made after that check already passed.
 app.get('/api/profiles/:username/playlists', async (req, res) => {
-  const key = (req.params.username || '').trim().toLowerCase();
+  const key = normalizeUsername(req.params.username);
   if (!key) return res.json({ playlists: [] });
   try {
     const rows = await dbGetPublicPlaylistsForUser(key);
@@ -4761,7 +4776,7 @@ app.get('/api/posts', async (req, res) => {
 });
 
 app.get('/api/posts/user/:username', async (req, res) => {
-  const username = (req.params.username || '').toLowerCase();
+  const username = normalizeUsername(req.params.username);
   const before   = req.query.before || null;
   const limit    = Math.min(Math.max(Number(req.query.limit) || 20, 1), 50);
   const token    = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
@@ -6297,7 +6312,7 @@ async function injectOgTags({ title, description, image, url }) {
 // a way that confirms the username exists.
 app.get('/u/:username', async (req, res) => {
   try {
-    const profile = await dbGetProfile((req.params.username || '').trim().toLowerCase());
+    const profile = await dbGetProfile(normalizeUsername(req.params.username));
     if (profile && profile.is_public) {
       const html = await injectOgTags({
         title: `${profile.display_name || profile.username} (@${profile.username}) · FREQ`,
