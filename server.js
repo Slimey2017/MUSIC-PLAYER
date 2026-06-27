@@ -177,10 +177,14 @@ async function dbGenerateUniqueArtistSlug(name) {
 // All auth state now lives in Supabase. No local file, no in-memory Maps.
 
 async function dbGetAccount(username) {
+  // Always normalize: trim whitespace and lowercase so space injection or case
+  // drift (e.g. "Slimey 2017" or "SLIMEY2017") never causes a lookup miss.
+  const key = (username || '').trim().toLowerCase();
+  if (!key) return null;
   const { data, error } = await supabase
     .from('accounts')
     .select('*')
-    .eq('username', username)
+    .eq('username', key)
     .single();
   if (error && error.code !== 'PGRST116') console.error('[db] getAccount:', error.message);
   return data || null;
@@ -239,10 +243,12 @@ async function dbEnsureProfile(username, displayName) {
 }
 
 async function dbGetProfile(username) {
+  const key = (username || '').trim().toLowerCase();
+  if (!key) return null;
   const { data, error } = await supabase
     .from('profiles')
     .select('*')
-    .eq('username', username)
+    .eq('username', key)
     .single();
   if (error && error.code !== 'PGRST116') console.error('[db] getProfile:', error.message);
   return data || null;
@@ -1295,7 +1301,7 @@ async function dbGetTopTracks({ window = 'all', limit = 50 } = {}) {
   const col = window === '7d' ? 'play_count_7d' : 'play_count';
   const { data, error } = await supabase
     .from('tracks')
-    .select('id, original_url, platform, title, play_count, play_count_7d, last_played_at, cover_url, artist_id, artist_name')
+    .select('id, original_url, platform, title, play_count, play_count_7d, last_played_at, cover_url, artist_id, artist_name, is_explicit')
     .eq('is_published', true)
     .gt(col, 0)
     .order(col, { ascending: false })
@@ -1614,7 +1620,9 @@ async function dbGetSession(token) {
   }
   // Fetch is_admin from accounts (cheap read, cached by Postgres for repeated calls)
   const { data: acct } = await supabase.from('accounts').select('is_admin').eq('username', data.username).maybeSingle();
-  return { username: data.username, expiresAt: new Date(data.expires_at).getTime(), isAdmin: !!(acct?.is_admin) };
+  // Always return a normalized username — guards against any historical row that
+  // somehow has trailing whitespace or mixed case drifting through.
+  return { username: data.username.trim().toLowerCase(), expiresAt: new Date(data.expires_at).getTime(), isAdmin: !!(acct?.is_admin) };
 }
 
 // Middleware: require an authenticated admin session
@@ -3484,6 +3492,7 @@ app.get('/api/charts/tracks', async (req, res) => {
         coverUrl: t.cover_url || null,
         artistId: t.artist_id || null,
         artistName: t.artist_name || null,
+        isExplicit: !!t.is_explicit,
         collaborators: (collabsByTrack.get(t.id) || []).map(shapeCollaborator),
       })),
     });
@@ -3540,6 +3549,62 @@ app.get('/api/discover/profiles', async (req, res) => {
   } catch (err) {
     console.error('[discover profiles]', err);
     return res.status(500).json({ error: 'Could not load discovery profiles.' });
+  }
+});
+
+// ─── Track Finder: GET /api/discover/tracks ──────────────────────────────────
+// Searches published FREQ tracks by title or artist name, with sort and
+// explicit filters. Backed by the same `tracks` table as Charts but exposed
+// here for the Discovery Track Finder which is keyword-searchable rather than
+// purely rank-ordered. Also returns like_count and isExplicit for UI display.
+app.get('/api/discover/tracks', async (req, res) => {
+  const q        = (req.query.q || '').toString().trim().slice(0, 100);
+  const sort     = req.query.sort === 'recent' ? 'recent' : 'plays';
+  const explicit = req.query.explicit === '1';
+  const limit    = Math.min(Math.max(Number(req.query.limit) || 30, 1), 100);
+  const token    = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
+  const sess     = token ? await dbGetSession(token) : null;
+
+  try {
+    let query = supabase
+      .from('tracks')
+      .select('id, title, artist_id, artist_name, play_count, play_count_7d, like_count, is_explicit, published_at, cover_url')
+      .eq('is_published', true);
+
+    if (q) {
+      // Title OR artist name match — Supabase's .or() with ilike
+      query = query.or(`title.ilike.%${q}%,artist_name.ilike.%${q}%`);
+    }
+    if (explicit) query = query.eq('is_explicit', true);
+
+    query = sort === 'recent'
+      ? query.order('published_at', { ascending: false, nullsFirst: false })
+      : query.order('play_count', { ascending: false });
+
+    const { data, error } = await query.limit(limit);
+    if (error) throw new Error(error.message);
+
+    // Batch-fetch liked status for the signed-in user
+    let likedIds = new Set();
+    if (sess && data?.length) {
+      const ids = data.map(t => t.id);
+      const { data: likes } = await supabase.from('track_likes')
+        .select('track_id').eq('username', sess.username).in('track_id', ids);
+      likedIds = new Set((likes || []).map(l => l.track_id));
+    }
+
+    return res.json({
+      tracks: (data || []).map(t => ({
+        id: t.id, title: t.title, artistId: t.artist_id, artistName: t.artist_name,
+        playCount: t.play_count || 0, playCount7d: t.play_count_7d || 0,
+        likeCount: t.like_count || 0, isExplicit: !!t.is_explicit,
+        publishedAt: t.published_at, coverUrl: t.cover_url,
+        likedByMe: likedIds.has(t.id),
+      })),
+    });
+  } catch (err) {
+    console.error('[discover tracks]', err);
+    return res.status(500).json({ error: 'Could not search tracks.' });
   }
 });
 
@@ -6470,6 +6535,28 @@ app.patch('/api/admin/tracks/:trackId/explicit', requireAdmin, async (req, res) 
   }
 });
 
+// GET /api/admin/releases/:releaseId — admin-only lookup for moderation
+// "View Target" on a release report needs the artist to navigate to their page.
+app.get('/api/admin/releases/:releaseId', requireAdmin, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('artist_releases')
+      .select('id, title, release_type, artist_id, artists(id, slug, name)')
+      .eq('id', req.params.releaseId)
+      .maybeSingle();
+    if (error || !data) return res.status(404).json({ error: 'Release not found.' });
+    return res.json({
+      id: data.id, title: data.title, releaseType: data.release_type,
+      artistId: data.artist_id,
+      artistSlug: data.artists?.slug || null,
+      artistName: data.artists?.name || null,
+    });
+  } catch (err) {
+    console.error('[admin releases get]', err);
+    return res.status(500).json({ error: 'Could not load release.' });
+  }
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 app.get('*', (req, res) => {
@@ -6478,7 +6565,7 @@ app.get('*', (req, res) => {
 
 // ─── Start ────────────────────────────────────────────────────────────────────
 const server = app.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n🎵  FREQ v4.5 "The Social" is running`);
+  console.log(`\n🎵  FREQ v4.6 "The Platform" is running`);
   console.log(`    Local:  http://localhost:${PORT}`);
   console.log(`    Health: http://localhost:${PORT}/health`);
   console.log(`    Store:  Supabase (persistent)`);
