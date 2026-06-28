@@ -1009,27 +1009,6 @@ async function dbGetCollaboratorsForTracks(trackIds) {
   return map;
 }
 
-// Batched track_id -> { id, title, releaseType } release lookup, same
-// one-query-for-all-ids shape as dbGetCollaboratorsForTracks above, added
-// specifically so list endpoints (Top Tracks, dashboard Tracks tab) can
-// show which release a track belongs to without an N+1 query per track.
-// A track has at most one release in this schema (artist_release_tracks
-// has no uniqueness constraint enforcing that, but nothing in the app
-// ever inserts a second row for the same track_id today).
-async function dbGetReleasesForTracks(trackIds) {
-  if (!trackIds || !trackIds.length) return new Map();
-  const { data, error } = await supabase
-    .from('artist_release_tracks')
-    .select('track_id, artist_releases(id, title, release_type)')
-    .in('track_id', trackIds);
-  if (error) { console.error('[db] getReleasesForTracks:', error.message); return new Map(); }
-  const map = new Map();
-  for (const row of data || []) {
-    if (row.artist_releases) map.set(row.track_id, row.artist_releases);
-  }
-  return map;
-}
-
 // addedByUsername is captured for audit purposes (artist_collaborations.added_by)
 // — it's always the session username of whoever called the route, which the
 // route handler has already verified owns the track/release being credited.
@@ -3672,6 +3651,17 @@ app.get('/api/discover/tracks', async (req, res) => {
       likedIds = new Set((likes || []).map(l => l.track_id));
     }
 
+    // Batch-fetch which of these tracks have a music video attached, same
+    // shape as the likes batch above — backs the "🎬 Video Available"
+    // search badge requirement without an N+1 query per result row.
+    let videoTrackIds = new Set();
+    if (data?.length) {
+      const ids = data.map(t => t.id);
+      const { data: videos } = await supabase.from('track_videos')
+        .select('track_id').in('track_id', ids);
+      videoTrackIds = new Set((videos || []).map(v => v.track_id));
+    }
+
     return res.json({
       tracks: (data || []).map(t => ({
         id: t.id, title: t.title, artistId: t.artist_id, artistName: t.artist_name,
@@ -3679,6 +3669,7 @@ app.get('/api/discover/tracks', async (req, res) => {
         likeCount: t.like_count || 0, isExplicit: !!t.is_explicit,
         publishedAt: t.published_at, coverUrl: t.cover_url,
         likedByMe: likedIds.has(t.id),
+        hasVideo: videoTrackIds.has(t.id),
       })),
     });
   } catch (err) {
@@ -4371,6 +4362,509 @@ app.delete('/api/cloud-files/:id', async (req, res) => {
   } catch (err) {
     console.error('[cloud-files delete]', err);
     return res.status(500).json({ error: 'Delete failed.' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  MUSIC VIDEOS — direct-to-storage upload, attach to track, playback, analytics
+//
+//  Upload flow (browser uploads straight to Supabase Storage — the Node
+//  process never buffers video bytes, unlike the audio cloud-files path
+//  above):
+//    1. POST /api/videos/upload-url   { token, filename, mimeType, size }
+//       → creates a `pending` video_files row + a short-lived signed
+//         UPLOAD url (createSignedUploadUrl), scoped to that row's exact
+//         storage_path. The signed URL itself is the authorization the
+//         browser needs — Supabase Storage checks the URL's embedded
+//         token, not the browser's own credentials, so no storage RLS
+//         policy is required for this to be safe (mirrors how cloud-audio
+//         has zero RLS policies today and relies entirely on server_role-
+//         issued signed URLs for both directions).
+//    2. Browser PUTs the file bytes directly to the returned signedUrl.
+//    3. POST /api/videos/:id/confirm  { token, duration?, width?, height? }
+//       → flips upload_status to 'ready' once the browser confirms the
+//         PUT succeeded. A 'pending' row that never gets confirmed (user
+//         closed the tab mid-upload) is simply never attachable to a
+//         track — dbGetVideoFile's owner+ready check below blocks it —
+//         and is harmless dead weight until a cleanup sweep is added later.
+//    4. POST /api/tracks/:trackId/video  { token, videoFileId, thumbnailUrl? }
+//       → attaches the ready video_files row to the track (creates the
+//         track_videos row). This step is separate from publish — a video
+//         can be attached before OR after a track is published, same
+//         flexibility cover art already has via track-cover.
+//
+//  Playback mirrors the existing audio stream pattern exactly:
+//  GET /api/tracks/:trackId/video-stream is public or token-optional, the
+//  same "is_published is the only real gate" philosophy as
+//  GET /api/tracks/:trackId/stream.
+//
+//  Analytics are intentionally on SEPARATE counters from tracks.play_count
+//  /track_plays — see track_videos/video_plays in the migration — per the
+//  explicit "do not merge video plays into audio plays" requirement.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const VIDEO_BUCKET = 'cloud-video';
+const VIDEO_MAX_BYTES = 500 * 1048576; // 500MB — matches the bucket's own file_size_limit (Storage enforces this independently; this is just for a fast, friendly error before even requesting a signed URL)
+const VIDEO_SIGNED_UPLOAD_TTL_SECONDS = 60 * 30; // 30 minutes — long enough for a slow connection to finish uploading a few hundred MB, short enough that an abandoned upload URL doesn't stay valid indefinitely
+const VIDEO_MIME_TYPES = {
+  'video/mp4': 'mp4', 'video/webm': 'webm', 'video/quicktime': 'mov',
+};
+
+function guessVideoExtFromMime(mimeType) {
+  return VIDEO_MIME_TYPES[mimeType] || 'mp4';
+}
+
+async function dbGetVideoFile(id, username) {
+  const { data, error } = await supabase
+    .from('video_files').select('*').eq('id', id).eq('owner', username).maybeSingle();
+  if (error) { console.error('[db] getVideoFile:', error.message); return null; }
+  return data;
+}
+
+async function dbInsertVideoFile(row) {
+  const { data, error } = await supabase.from('video_files').insert(row).select().single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+async function dbGetTrackVideo(trackId) {
+  const { data, error } = await supabase
+    .from('track_videos').select('*, video_files(*)').eq('track_id', trackId).maybeSingle();
+  if (error) { console.error('[db] getTrackVideo:', error.message); return null; }
+  return data;
+}
+
+// POST /api/videos/upload-url   { token, filename, mimeType, size }
+// Step 1 of the direct-to-storage flow. Validates format/size up front so
+// a doomed upload never starts, then creates the pending video_files row
+// and asks Storage for a signed upload URL scoped to that row's path.
+app.post('/api/videos/upload-url', rateLimit, async (req, res) => {
+  const { token, filename, mimeType, size } = req.body || {};
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  if (!VIDEO_MIME_TYPES[mimeType]) {
+    return res.status(400).json({ error: 'Unsupported video format. Upload MP4, WebM, or MOV.' });
+  }
+  const sizeNum = Number(size);
+  if (!Number.isFinite(sizeNum) || sizeNum <= 0) {
+    return res.status(400).json({ error: '"size" (bytes) is required.' });
+  }
+  if (sizeNum > VIDEO_MAX_BYTES) {
+    return res.status(413).json({ error: `Video exceeds the ${VIDEO_MAX_BYTES / 1048576}MB limit.` });
+  }
+
+  try {
+    const safeName = String(filename || 'video').replace(/[^a-zA-Z0-9._-]/g, '_').slice(-150);
+    const ext = guessVideoExtFromMime(mimeType);
+    const storagePath = `${sess.username}/${Date.now()}-${crypto.randomBytes(4).toString('hex')}-${safeName.replace(/\.[a-zA-Z0-9]+$/, '')}.${ext}`;
+
+    const row = await dbInsertVideoFile({
+      owner: sess.username,
+      filename: String(filename || 'video').slice(0, 255),
+      mime_type: mimeType,
+      size: sizeNum,
+      storage_path: storagePath,
+      upload_status: 'pending',
+    });
+
+    const { data, error } = await supabase.storage
+      .from(VIDEO_BUCKET)
+      .createSignedUploadUrl(storagePath, { upsert: false });
+    if (error) throw new Error(error.message);
+
+    return res.status(201).json({
+      videoFileId: row.id,
+      uploadUrl: data.signedUrl,
+      uploadToken: data.token,
+      storagePath,
+      expiresIn: VIDEO_SIGNED_UPLOAD_TTL_SECONDS,
+    });
+  } catch (err) {
+    console.error('[videos upload-url]', err);
+    return res.status(500).json({ error: 'Could not start video upload.' });
+  }
+});
+
+// POST /api/videos/:id/confirm   { token, duration?, width?, height? }
+// Step 3 — browser calls this after the direct PUT to Storage succeeds.
+// Does NOT re-verify the object actually exists in Storage via a HEAD
+// request before flipping to 'ready' — attach-to-track (below) is the
+// real gate that matters (a track can't go live with a broken video
+// reference unnoticed for long, since video-stream will 404 immediately
+// the first time anyone tries to watch it), and adding a verification
+// round-trip here would slow down every single confirm call for a
+// failure mode that's already cheap to detect downstream.
+app.post('/api/videos/:id/confirm', rateLimit, async (req, res) => {
+  const { token, duration, width, height } = req.body || {};
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  try {
+    const file = await dbGetVideoFile(req.params.id, sess.username);
+    if (!file) return res.status(404).json({ error: 'Video upload not found.' });
+
+    const patch = {
+      upload_status: 'ready',
+      ready_at: new Date().toISOString(),
+    };
+    if (duration != null && Number.isFinite(Number(duration))) patch.duration = Number(duration);
+    if (width != null && Number.isFinite(Number(width)))       patch.width = Math.round(Number(width));
+    if (height != null && Number.isFinite(Number(height)))     patch.height = Math.round(Number(height));
+
+    const { data, error } = await supabase
+      .from('video_files').update(patch).eq('id', file.id).select().single();
+    if (error) throw new Error(error.message);
+
+    return res.json({
+      id: data.id, filename: data.filename, mimeType: data.mime_type,
+      size: data.size, duration: data.duration, width: data.width, height: data.height,
+      uploadStatus: data.upload_status,
+    });
+  } catch (err) {
+    console.error('[videos confirm]', err);
+    return res.status(500).json({ error: 'Could not confirm video upload.' });
+  }
+});
+
+// DELETE /api/videos/:id   { token }
+// Lets an artist abandon a pending/ready upload that was never attached to
+// a track (e.g. picked the wrong file). Mirrors DELETE /api/cloud-files/:id.
+// Does NOT allow deleting a video_files row that's currently attached to a
+// track_videos row — use DELETE /api/tracks/:trackId/video for that, which
+// detaches first; this route alone would otherwise leave a dangling FK
+// reference for track_videos.video_file_id (ON DELETE RESTRICT blocks it
+// at the DB level regardless, but the clearer error belongs here).
+app.delete('/api/videos/:id', rateLimit, async (req, res) => {
+  const token = req.body?.token || (req.headers.authorization || '').replace('Bearer ', '');
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  try {
+    const file = await dbGetVideoFile(req.params.id, sess.username);
+    if (!file) return res.status(404).json({ error: 'Video not found.' });
+
+    const { data: attached } = await supabase
+      .from('track_videos').select('id').eq('video_file_id', file.id).maybeSingle();
+    if (attached) {
+      return res.status(409).json({ error: 'This video is attached to a track. Remove it from the track first.' });
+    }
+
+    const { error: removeErr } = await supabase.storage.from(VIDEO_BUCKET).remove([file.storage_path]);
+    if (removeErr) console.error('[videos delete] storage:', removeErr.message);
+    await supabase.from('video_files').delete().eq('id', file.id).eq('owner', sess.username);
+    return res.json({ ok: true, deleted: file.filename });
+  } catch (err) {
+    console.error('[videos delete]', err);
+    return res.status(500).json({ error: 'Could not delete video.' });
+  }
+});
+
+// POST /api/tracks/:trackId/video   { token, videoFileId, thumbnailUrl? }
+// Attaches a ready, owned video_files row to a track the caller's artist
+// page owns. One video per track — re-attaching replaces the existing
+// track_videos row (and its old video_files row is left in place,
+// unattached, rather than auto-deleted, so a mistaken swap is recoverable
+// via DELETE /api/videos/:id afterward rather than being unrecoverable).
+app.post('/api/tracks/:trackId/video', rateLimit, async (req, res) => {
+  const { token, videoFileId, thumbnailUrl } = req.body || {};
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  if (!videoFileId) return res.status(400).json({ error: '"videoFileId" is required.' });
+  try {
+    const track = await dbGetTrackById(req.params.trackId);
+    if (!track || !track.cloud_file_id) return res.status(404).json({ error: 'Track not found.' });
+    const artist = await supabase.from('artists').select('account_id').eq('id', track.artist_id).maybeSingle();
+    if (!artist.data || artist.data.account_id !== sess.username) {
+      return res.status(403).json({ error: 'Only the artist who owns this track can attach a video.' });
+    }
+
+    const videoFile = await dbGetVideoFile(videoFileId, sess.username);
+    if (!videoFile) return res.status(404).json({ error: 'Video upload not found.' });
+    if (videoFile.upload_status !== 'ready') {
+      return res.status(409).json({ error: 'This video upload has not finished processing yet.' });
+    }
+
+    const existing = await dbGetTrackVideo(track.id);
+    let trackVideo;
+    if (existing) {
+      const { data, error } = await supabase
+        .from('track_videos')
+        .update({ video_file_id: videoFile.id, thumbnail_url: thumbnailUrl || existing.thumbnail_url || null, updated_at: new Date().toISOString() })
+        .eq('id', existing.id).select().single();
+      if (error) throw new Error(error.message);
+      trackVideo = data;
+    } else {
+      const { data, error } = await supabase
+        .from('track_videos')
+        .insert({ track_id: track.id, video_file_id: videoFile.id, thumbnail_url: thumbnailUrl || null })
+        .select().single();
+      if (error) throw new Error(error.message);
+      trackVideo = data;
+    }
+
+    return res.status(201).json({
+      id: trackVideo.id, trackId: trackVideo.track_id, videoFileId: trackVideo.video_file_id,
+      thumbnailUrl: trackVideo.thumbnail_url,
+    });
+  } catch (err) {
+    console.error('[track video attach]', err);
+    return res.status(500).json({ error: 'Could not attach video to track.' });
+  }
+});
+
+// Thumbnail upload for a track's music video — same uploadMediaImage()
+// helper and public `media` bucket every other image route already uses,
+// namespaced under video-thumbnails/. Separate from track-cover since a
+// video's thumbnail and a track's cover art are conceptually different
+// images an artist may want to differ (e.g. a freeze-frame vs. the single
+// artwork), even though they're allowed to be the same image if the
+// artist just reuses the cover.
+app.post('/api/tracks/:trackId/video-thumbnail', rateLimit, imageUpload.single('file'), async (req, res) => {
+  const sess = await dbGetSession(req.body?.token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  if (!req.file) return res.status(400).json({ error: 'No image file uploaded.' });
+  try {
+    const track = await dbGetTrackById(req.params.trackId);
+    if (!track) return res.status(404).json({ error: 'Track not found.' });
+    const artist = await supabase.from('artists').select('account_id').eq('id', track.artist_id).maybeSingle();
+    if (!artist.data || artist.data.account_id !== sess.username) {
+      return res.status(403).json({ error: 'Only the artist who owns this track can upload a thumbnail.' });
+    }
+    const thumbnailUrl = await uploadMediaImage(req.file, 'video-thumbnails', track.id);
+    await supabase.from('track_videos').update({ thumbnail_url: thumbnailUrl, updated_at: new Date().toISOString() }).eq('track_id', track.id);
+    return res.json({ thumbnailUrl });
+  } catch (err) {
+    console.error('[video thumbnail upload]', err);
+    return res.status(500).json({ error: 'Could not upload thumbnail.' });
+  }
+});
+
+// DELETE /api/tracks/:trackId/video   { token }
+// Detaches the video from the track (deletes the track_videos row) and
+// removes the underlying file from Storage + video_files — unlike
+// DELETE /api/videos/:id, this IS allowed to delete an attached video,
+// since detaching is exactly the point of this route.
+app.delete('/api/tracks/:trackId/video', rateLimit, async (req, res) => {
+  const token = req.body?.token || (req.headers.authorization || '').replace('Bearer ', '');
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  try {
+    const track = await dbGetTrackById(req.params.trackId);
+    if (!track) return res.status(404).json({ error: 'Track not found.' });
+    const artist = await supabase.from('artists').select('account_id').eq('id', track.artist_id).maybeSingle();
+    if (!artist.data || artist.data.account_id !== sess.username) {
+      return res.status(403).json({ error: 'Only the artist who owns this track can remove its video.' });
+    }
+
+    const trackVideo = await dbGetTrackVideo(track.id);
+    if (!trackVideo) return res.status(404).json({ error: 'This track has no video.' });
+
+    await supabase.from('track_videos').delete().eq('id', trackVideo.id);
+    const { data: videoFile } = await supabase.from('video_files').select('storage_path').eq('id', trackVideo.video_file_id).maybeSingle();
+    if (videoFile) {
+      const { error: removeErr } = await supabase.storage.from(VIDEO_BUCKET).remove([videoFile.storage_path]);
+      if (removeErr) console.error('[track video delete] storage:', removeErr.message);
+      await supabase.from('video_files').delete().eq('id', trackVideo.video_file_id);
+    }
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('[track video detach]', err);
+    return res.status(500).json({ error: 'Could not remove video.' });
+  }
+});
+
+// GET /api/tracks/:trackId/video-stream
+// Public, mirrors GET /api/tracks/:trackId/stream exactly: the gate is
+// "is this track published and does it have a video", not ownership —
+// any visitor watching a published track's video is the intended audience,
+// same philosophy as audio streaming.
+app.get('/api/tracks/:trackId/video-stream', rateLimit, async (req, res) => {
+  try {
+    const track = await dbGetTrackById(req.params.trackId);
+    if (!track || !track.is_published) return res.status(404).json({ error: 'Track not found.' });
+
+    const trackVideo = await dbGetTrackVideo(track.id);
+    if (!trackVideo || !trackVideo.video_files) return res.status(404).json({ error: 'This track has no video.' });
+    const videoFile = trackVideo.video_files;
+    if (videoFile.upload_status !== 'ready') return res.status(404).json({ error: 'This track has no video.' });
+
+    const { data, error } = await supabase.storage
+      .from(VIDEO_BUCKET)
+      .createSignedUrl(videoFile.storage_path, SIGNED_URL_TTL_SECONDS);
+    if (error) throw new Error(error.message);
+
+    // likedByMe mirrors GET /api/discover/tracks' same token-optional
+    // single-row lookup — likes are shared between a track's audio and
+    // video (see migration comment on track_videos.like_count), so this
+    // reads tracks/track_likes directly rather than a separate video-like
+    // table.
+    const token = (req.headers.authorization || '').replace('Bearer ', '') || req.query.token;
+    const sess = token ? await dbGetSession(token) : null;
+    let likedByMe = false;
+    if (sess) {
+      const { data: likeRow } = await supabase.from('track_likes')
+        .select('username').eq('track_id', track.id).eq('username', sess.username).maybeSingle();
+      likedByMe = !!likeRow;
+    }
+
+    return res.json({
+      trackVideoId: trackVideo.id, trackId: track.id, title: track.title,
+      artistId: track.artist_id, artistName: track.artist_name,
+      thumbnailUrl: trackVideo.thumbnail_url, mimeType: videoFile.mime_type,
+      duration: videoFile.duration, width: videoFile.width, height: videoFile.height,
+      url: data.signedUrl, expiresIn: SIGNED_URL_TTL_SECONDS,
+      playCount: trackVideo.play_count, likeCount: track.like_count || 0, likedByMe,
+    });
+  } catch (err) {
+    console.error('[video stream]', err);
+    return res.status(500).json({ error: 'Could not load video.' });
+  }
+});
+
+// POST /api/tracks/:trackId/video/watch-event   { event: 'start'|'end', watchedSeconds? }
+// Logs video-specific analytics on COMPLETELY SEPARATE counters from audio
+// (track_videos.play_count/watch_start_count, video_plays — never
+// tracks.play_count/track_plays). 'start' increments watch_start_count and
+// — after a short cooldown identical in spirit to dbLogPlay's
+// PLAY_COOLDOWN_MS — also counts as a video play (play_count) and writes
+// the video_plays row. 'end' is a best-effort beacon carrying how far the
+// viewer got, used only for completion-rate math; a session that never
+// sends 'end' (closed the tab) simply has no completion data point, which
+// is honest — not backfilled with a guess.
+const recentVideoPlayKeys = new Map(); // same cooldown-key idea as recentPlayKeys, separate Map so video/audio cooldowns never interact
+const VIDEO_PLAY_COOLDOWN_MS = 30 * 1000;
+
+app.post('/api/tracks/:trackId/video/watch-event', rateLimit, async (req, res) => {
+  const { event, watchedSeconds } = req.body || {};
+  const token = (req.headers.authorization || '').replace('Bearer ', '') || req.body?.token;
+  const sess = token ? await dbGetSession(token) : null;
+  if (!['start', 'end'].includes(event)) return res.status(400).json({ error: 'Invalid event.' });
+
+  try {
+    const track = await dbGetTrackById(req.params.trackId);
+    if (!track || !track.is_published) return res.status(404).json({ error: 'Track not found.' });
+    const trackVideo = await dbGetTrackVideo(track.id);
+    if (!trackVideo) return res.status(404).json({ error: 'This track has no video.' });
+
+    if (event === 'start') {
+      await supabase.rpc('increment_video_watch_start_count', { p_track_video_id: trackVideo.id });
+
+      const listenerKey = sess?.username || req.ip || 'anon';
+      const cooldownKey = `${trackVideo.id}:${listenerKey}`;
+      const last = recentVideoPlayKeys.get(cooldownKey);
+      const withinCooldown = last && Date.now() - last < VIDEO_PLAY_COOLDOWN_MS;
+      if (!withinCooldown) {
+        recentVideoPlayKeys.set(cooldownKey, Date.now());
+        await supabase.rpc('increment_video_play_count', { p_track_video_id: trackVideo.id });
+        await supabase.from('video_plays').insert({
+          track_video_id: trackVideo.id, username: sess?.username || null,
+          video_duration: trackVideo.video_files?.duration || null,
+        });
+      }
+      return res.json({ ok: true, counted: !withinCooldown });
+    }
+
+    // event === 'end' — best-effort, update the most recent open row for
+    // this viewer rather than inserting a second row (the 'start' insert
+    // above already created the row this session belongs to).
+    const seconds = Number(watchedSeconds);
+    if (Number.isFinite(seconds) && seconds >= 0) {
+      const listenerCol = sess?.username || null;
+      let q = supabase.from('video_plays').select('id')
+        .eq('track_video_id', trackVideo.id)
+        .order('played_at', { ascending: false }).limit(1);
+      q = listenerCol ? q.eq('username', listenerCol) : q.is('username', null);
+      const { data: recentRow } = await q.maybeSingle();
+      if (recentRow) {
+        await supabase.from('video_plays').update({ watched_seconds: seconds }).eq('id', recentRow.id);
+        await supabase.from('track_videos')
+          .update({ total_watch_seconds: (trackVideo.total_watch_seconds || 0) + seconds })
+          .eq('id', trackVideo.id);
+      }
+    }
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('[video watch-event]', err);
+    return res.status(500).json({ error: 'Could not log watch event.' });
+  }
+});
+
+// GET /api/artists/:id/videos   ?sort=newest   &limit=
+// Artist page "Music Videos" section. Newest-first by default per spec.
+app.get('/api/artists/:id/videos', async (req, res) => {
+  try {
+    const artist = await resolveArtistFromParam(req.params.id);
+    if (!artist) return res.status(404).json({ error: 'Artist not found.' });
+    const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 50);
+
+    const { data, error } = await supabase
+      .from('tracks')
+      .select('id, title, is_explicit, published_at, cover_url, track_videos!inner(id, thumbnail_url, play_count, created_at, video_files(duration))')
+      .eq('artist_id', artist.id)
+      .eq('is_published', true)
+      .order('created_at', { referencedTable: 'track_videos', ascending: false })
+      .limit(limit);
+    if (error) throw new Error(error.message);
+
+    return res.json({
+      videos: (data || []).map(t => {
+        const tv = Array.isArray(t.track_videos) ? t.track_videos[0] : t.track_videos;
+        return {
+          trackId: t.id, title: t.title, isExplicit: !!t.is_explicit,
+          thumbnailUrl: tv?.thumbnail_url || t.cover_url || null,
+          playCount: tv?.play_count || 0, uploadedAt: tv?.created_at || t.published_at,
+          duration: tv?.video_files?.duration || null,
+        };
+      }),
+    });
+  } catch (err) {
+    console.error('[artist videos]', err);
+    return res.status(500).json({ error: 'Could not load music videos.' });
+  }
+});
+
+// GET /api/discover/videos   ?mode=new|trending|most_played|most_liked
+// Discovery "🎬 Music Videos" section — its own ranking surface, NEVER
+// mixed into /api/discover/tracks' audio-play-based rankings, per the
+// explicit "do not mix video rankings into track rankings" requirement.
+app.get('/api/discover/videos', async (req, res) => {
+  const mode = ['new', 'trending', 'most_played', 'most_liked'].includes(req.query.mode) ? req.query.mode : 'new';
+  const limit = Math.min(Math.max(Number(req.query.limit) || 30, 1), 100);
+  try {
+    let query = supabase
+      .from('tracks')
+      .select('id, title, artist_id, artist_name, is_explicit, like_count, track_videos!inner(id, thumbnail_url, play_count, created_at, video_files(duration))')
+      .eq('is_published', true);
+
+    if (mode === 'most_liked') {
+      query = query.order('like_count', { ascending: false });
+    } else if (mode === 'most_played' || mode === 'trending') {
+      // "Trending" has no separate 7-day video-play counter yet (that would
+      // need a video_plays time-window aggregate, parallel to
+      // play_count_7d/recomputeWeeklyPlayCounts — not built in this pass);
+      // ranking by all-time video plays for both modes today is honest
+      // about what's real, rather than faking a trending signal.
+      query = query.order('play_count', { referencedTable: 'track_videos', ascending: false });
+    } else {
+      query = query.order('created_at', { referencedTable: 'track_videos', ascending: false });
+    }
+
+    const { data, error } = await query.limit(limit);
+    if (error) throw new Error(error.message);
+
+    return res.json({
+      mode,
+      videos: (data || []).map(t => {
+        const tv = Array.isArray(t.track_videos) ? t.track_videos[0] : t.track_videos;
+        return {
+          trackId: t.id, title: t.title, artistId: t.artist_id, artistName: t.artist_name,
+          isExplicit: !!t.is_explicit, likeCount: t.like_count || 0,
+          thumbnailUrl: tv?.thumbnail_url || null, playCount: tv?.play_count || 0,
+          uploadedAt: tv?.created_at || null, duration: tv?.video_files?.duration || null,
+        };
+      }),
+    });
+  } catch (err) {
+    console.error('[discover videos]', err);
+    return res.status(500).json({ error: 'Could not load music videos.' });
   }
 });
 
@@ -5146,29 +5640,30 @@ app.get('/api/artists/:id/tracks', async (req, res) => {
     const sort  = req.query.sort === 'trending' ? 'trending' : 'plays';
     const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 50);
     const tracks = await dbGetArtistTracks(artist.id, { sort, limit });
-    const trackIds = tracks.map(t => t.id);
-    const [collabsByTrack, releasesByTrack] = await Promise.all([
-      dbGetCollaboratorsForTracks(trackIds),
-      dbGetReleasesForTracks(trackIds),
-    ]);
+    const collabsByTrack = await dbGetCollaboratorsForTracks(tracks.map(t => t.id));
+    // Batched video-attached check, same shape as the search badge above —
+    // backs the 🎬 badge on artist pages without an N+1 per track row.
+    let videoTrackIds = new Set();
+    if (tracks.length) {
+      const { data: videos } = await supabase.from('track_videos')
+        .select('track_id').in('track_id', tracks.map(t => t.id));
+      videoTrackIds = new Set((videos || []).map(v => v.track_id));
+    }
     return res.json({
-      tracks: tracks.map(t => {
-        const release = releasesByTrack.get(t.id);
-        return {
-          id: t.id, originalUrl: t.original_url, platform: t.platform,
-          title: t.title || t.original_url,
-          playCount: t.play_count, playCount7d: t.play_count_7d,
-          likeCount: t.like_count || 0,
-          lastPlayedAt: t.last_played_at,
-          coverUrl: t.cover_url || null,
-          cloudFileId: t.cloud_file_id || null,
-          publishedAt: t.published_at || null,
-          isUpload: !!t.cloud_file_id,
-          isExplicit: !!t.is_explicit,
-          collaborators: (collabsByTrack.get(t.id) || []).map(shapeCollaborator),
-          release: release ? { id: release.id, title: release.title, releaseType: release.release_type } : null,
-        };
-      }),
+      tracks: tracks.map(t => ({
+        id: t.id, originalUrl: t.original_url, platform: t.platform,
+        title: t.title || t.original_url,
+        playCount: t.play_count, playCount7d: t.play_count_7d,
+        likeCount: t.like_count || 0,
+        lastPlayedAt: t.last_played_at,
+        coverUrl: t.cover_url || null,
+        cloudFileId: t.cloud_file_id || null,
+        publishedAt: t.published_at || null,
+        isUpload: !!t.cloud_file_id,
+        isExplicit: !!t.is_explicit,
+        collaborators: (collabsByTrack.get(t.id) || []).map(shapeCollaborator),
+        hasVideo: videoTrackIds.has(t.id),
+      })),
     });
   } catch (err) {
     console.error('[artist tracks]', err);
@@ -5238,6 +5733,14 @@ app.get('/api/artists/:id/releases/:releaseId/tracks', async (req, res) => {
 
     const tracks = await dbGetReleaseTracks(req.params.releaseId);
     const collabsByTrack = await dbGetCollaboratorsForTracks(tracks.map(t => t.id));
+    // Batched video-attached check — backs the 🎬 badge on release
+    // tracklists (album/EP/single pages) per spec.
+    let videoTrackIds = new Set();
+    if (tracks.length) {
+      const { data: videos } = await supabase.from('track_videos')
+        .select('track_id').in('track_id', tracks.map(t => t.id));
+      videoTrackIds = new Set((videos || []).map(v => v.track_id));
+    }
     return res.json({
       tracks: tracks.map(t => ({
         id: t.id, originalUrl: t.original_url, platform: t.platform,
@@ -5249,6 +5752,7 @@ app.get('/api/artists/:id/releases/:releaseId/tracks', async (req, res) => {
         isUpload: !!t.cloud_file_id,
         isExplicit: !!t.is_explicit,
         collaborators: (collabsByTrack.get(t.id) || []).map(shapeCollaborator),
+        hasVideo: videoTrackIds.has(t.id),
       })),
     });
   } catch (err) {
@@ -6312,6 +6816,46 @@ app.get('/api/artists/:id/tracks/:trackId/analytics', async (req, res) => {
       .order('played_at', { ascending: false })
       .limit(10);
 
+    // Video analytics — entirely separate counters from the audio stats
+    // above (track_videos.play_count/watch_start_count/total_watch_seconds,
+    // never tracks.play_count), per the explicit requirement to keep video
+    // plays and audio plays apart. video: null when the track has no video
+    // attached, rather than a block of zeros that would misleadingly imply
+    // a video exists with no plays yet.
+    const trackVideo = await dbGetTrackVideo(track.id);
+    let video = null;
+    if (trackVideo) {
+      const duration = trackVideo.video_files?.duration || null;
+      // Completion rate = average fraction of the video watched across
+      // plays that actually reported an end-of-session duration. Plays
+      // with no 'end' beacon (closed tab, etc) are excluded from the
+      // average rather than counted as 0% — an unknown watch length isn't
+      // the same signal as "watched none of it".
+      const { data: samples } = await supabase
+        .from('video_plays')
+        .select('watched_seconds, video_duration')
+        .eq('track_video_id', trackVideo.id)
+        .not('watched_seconds', 'is', null);
+      let completionRate = null;
+      if (samples && samples.length) {
+        const fractions = samples
+          .filter(s => s.video_duration && s.video_duration > 0)
+          .map(s => Math.min(1, (s.watched_seconds || 0) / s.video_duration));
+        if (fractions.length) {
+          completionRate = fractions.reduce((sum, f) => sum + f, 0) / fractions.length;
+        }
+      }
+      video = {
+        trackVideoId: trackVideo.id,
+        thumbnailUrl: trackVideo.thumbnail_url,
+        duration,
+        videoPlays: trackVideo.play_count || 0,
+        watchStarts: trackVideo.watch_start_count || 0,
+        completionRate, // 0–1, or null if no samples yet
+        completionSamples: samples?.filter(s => s.video_duration && s.video_duration > 0).length || 0,
+      };
+    }
+
     return res.json({
       id: track.id, title: track.title,
       coverUrl: track.cover_url, isExplicit: !!track.is_explicit,
@@ -6327,126 +6871,11 @@ app.get('/api/artists/:id/tracks/:trackId/analytics', async (req, res) => {
         username: p.username || 'Anonymous listener',
         playedAt: p.played_at,
       })),
+      video,
     });
   } catch (err) {
     console.error('[track analytics]', err);
     return res.status(500).json({ error: 'Could not load track analytics.' });
-  }
-});
-
-// GET /api/artists/:id/plays-timeseries   ?range=7d|30d|90d|all   &token=
-// Owner-only. Backs the Analytics > Plays Over Time chart. Always returns a
-// daily series (zero-filled for days with no plays, via the
-// get_artist_plays_timeseries() RPC — see migration), so the frontend can
-// roll a daily series up into weekly/monthly buckets itself rather than this
-// endpoint needing separate bucket-size logic. "all" is capped at the
-// artist's first-ever play (or today if they have none yet) rather than an
-// arbitrary lookback, so the chart doesn't render years of empty zeros for
-// a brand-new artist.
-const PLAYS_TIMESERIES_RANGES = { '7d': 7, '30d': 30, '90d': 90 };
-app.get('/api/artists/:id/plays-timeseries', async (req, res) => {
-  try {
-    const artist = await resolveArtistFromParam(req.params.id);
-    if (!artist) return res.status(404).json({ error: 'Artist not found.' });
-    const token = (req.headers.authorization || '').replace('Bearer ', '') || req.query.token;
-    const sess = token ? await dbGetSession(token) : null;
-    if (!sess || artist.account_id !== sess.username) {
-      return res.status(403).json({ error: 'Only the artist who claimed this page can view analytics.' });
-    }
-
-    const range = PLAYS_TIMESERIES_RANGES[req.query.range] ? req.query.range : (req.query.range === 'all' ? 'all' : '30d');
-    const today = new Date();
-    const endDate = today.toISOString().slice(0, 10);
-    let startDate;
-    if (range === 'all') {
-      const { data: earliest } = await supabase
-        .from('track_plays')
-        .select('played_at, tracks!inner(artist_id)')
-        .eq('tracks.artist_id', artist.id)
-        .order('played_at', { ascending: true })
-        .limit(1)
-        .maybeSingle();
-      startDate = earliest?.played_at ? earliest.played_at.slice(0, 10) : endDate;
-      // Cap "all" at 366 days back even if the artist's first play is older —
-      // a multi-year zero-filled daily series is a lot of rows for a chart
-      // that's about recent trend, not full archival history.
-      const cap = new Date(today.getTime() - 366 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-      if (startDate < cap) startDate = cap;
-    } else {
-      const days = PLAYS_TIMESERIES_RANGES[range];
-      startDate = new Date(today.getTime() - (days - 1) * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-    }
-
-    const { data, error } = await supabase.rpc('get_artist_plays_timeseries', {
-      p_artist_id: artist.id, p_start: startDate, p_end: endDate,
-    });
-    if (error) throw new Error(error.message);
-
-    return res.json({
-      range,
-      series: (data || []).map(row => ({ date: row.play_date, plays: Number(row.play_count) || 0 })),
-    });
-  } catch (err) {
-    console.error('[artist plays timeseries]', err);
-    return res.status(500).json({ error: 'Could not load plays over time.' });
-  }
-});
-
-// GET /api/artists/:id/engagement   ?token=
-// Owner-only. Aggregates engagement signals the Analytics > Engagement
-// section needs: track likes already tracked via track_likes/tracks.like_count
-// (real, populated today), plus likes/comments/shares on this artist's own
-// posts (artist_update / release_announcement — the only post_type values
-// that carry artist_id, see dbCreatePost). Followers gained has no time-
-// windowed source today except artist_followers.created_at, so a 7-day
-// delta is derivable; lifetime followerCount is already on the artist
-// object and intentionally NOT repeated here. Profile visits has no
-// tracking anywhere in this schema — reported honestly as not yet
-// supported rather than a fabricated zero that looks wired up.
-app.get('/api/artists/:id/engagement', async (req, res) => {
-  try {
-    const artist = await resolveArtistFromParam(req.params.id);
-    if (!artist) return res.status(404).json({ error: 'Artist not found.' });
-    const token = (req.headers.authorization || '').replace('Bearer ', '') || req.query.token;
-    const sess = token ? await dbGetSession(token) : null;
-    if (!sess || artist.account_id !== sess.username) {
-      return res.status(403).json({ error: 'Only the artist who claimed this page can view analytics.' });
-    }
-
-    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-    const [postsResult, trackLikesResult, followersThisWeekResult] = await Promise.all([
-      supabase.from('posts').select('like_count, comment_count, share_count').eq('artist_id', artist.id),
-      supabase.from('tracks').select('like_count').eq('artist_id', artist.id),
-      supabase.from('artist_followers').select('*', { count: 'exact', head: true })
-        .eq('artist_id', artist.id).gte('created_at', sevenDaysAgo),
-    ]);
-    if (postsResult.error) console.error('[engagement posts]', postsResult.error.message);
-    if (trackLikesResult.error) console.error('[engagement track likes]', trackLikesResult.error.message);
-    if (followersThisWeekResult.error) console.error('[engagement followers]', followersThisWeekResult.error.message);
-
-    const posts = postsResult.data || [];
-    const postLikes = posts.reduce((sum, p) => sum + (Number(p.like_count) || 0), 0);
-    const commentsReceived = posts.reduce((sum, p) => sum + (Number(p.comment_count) || 0), 0);
-    const reposts = posts.reduce((sum, p) => sum + (Number(p.share_count) || 0), 0);
-    const trackLikes = (trackLikesResult.data || []).reduce((sum, t) => sum + (Number(t.like_count) || 0), 0);
-
-    return res.json({
-      likesReceived: trackLikes + postLikes,
-      commentsReceived,
-      reposts,
-      followersGained7d: followersThisWeekResult.count || 0,
-      profileVisits: null, profileVisitsSupported: false,
-      // Artist Post Engagement — likes/comments/shares specifically on this
-      // artist's own posts (artist_update / release_announcement), broken
-      // out separately from trackLikes above since "engagement on my posts"
-      // and "likes on my music" are different signals an artist would want
-      // to read independently, even though likesReceived folds both into
-      // one number for the simpler top-line stat card.
-      postEngagement: { likes: postLikes, comments: commentsReceived, shares: reposts, postCount: posts.length },
-    });
-  } catch (err) {
-    console.error('[artist engagement]', err);
-    return res.status(500).json({ error: 'Could not load engagement.' });
   }
 });
 
@@ -6548,7 +6977,7 @@ const REPORT_REASONS = [
   'harassment', 'hate_speech', 'explicit_not_marked',
   'misleading_metadata', 'other',
 ];
-const REPORT_TARGET_TYPES = ['track', 'release', 'artist', 'post', 'user'];
+const REPORT_TARGET_TYPES = ['track', 'release', 'artist', 'post', 'user', 'video'];
 
 // POST /api/reports
 app.post('/api/reports', rateLimit, async (req, res) => {
@@ -6683,6 +7112,23 @@ app.patch('/api/admin/reports/:id', requireAdmin, async (req, res) => {
       await supabase.from('artist_releases').delete().eq('id', report.target_id);
     if (action === 'remove_content' && report.target_type === 'post')
       await supabase.from('posts').delete().eq('id', report.target_id);
+    if (action === 'remove_content' && report.target_type === 'video') {
+      // report.target_id for a video report is the trackId (videos have no
+      // independent public identity — they're addressed via the track they
+      // belong to, same as how a video report gets filed in the first
+      // place from the track's report-this-video button). Detach + delete
+      // storage, but leave the track and its audio intact — a video
+      // takedown isn't a track takedown.
+      const { data: tv } = await supabase.from('track_videos').select('id, video_file_id').eq('track_id', report.target_id).maybeSingle();
+      if (tv) {
+        await supabase.from('track_videos').delete().eq('id', tv.id);
+        const { data: vf } = await supabase.from('video_files').select('storage_path').eq('id', tv.video_file_id).maybeSingle();
+        if (vf) {
+          await supabase.storage.from(VIDEO_BUCKET).remove([vf.storage_path]);
+          await supabase.from('video_files').delete().eq('id', tv.video_file_id);
+        }
+      }
+    }
     if (action === 'ban_user') {
       await supabase.from('accounts').update({ is_banned: true }).eq('username', report.target_id);
       await supabase.from('sessions').delete().eq('username', report.target_id);
