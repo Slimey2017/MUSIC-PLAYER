@@ -4976,6 +4976,19 @@ async function logPlay(item) {
         // resolves/creates the artist row on the server side whenever an
         // artist name is present.
         artist: item.artist || null,
+        // Published FREQ tracks (freqTrackId, set by resolvePublishedTrack
+        // / resolveChartTrack) carry the REAL tracks.id. originalUrl for
+        // these is a synthetic `cloud:<id>` string that does NOT match what
+        // dbPublishTrack stored at publish time (`cloud:<cloud_file_id>` —
+        // a different id) — matching by originalUrl alone silently created
+        // a duplicate, never-shown tracks row on every single play, which
+        // is why published track play counts never moved. Sending the real
+        // id lets the server update the actual row directly. Only trust
+        // item.id as a fallback when platform is 'freq' — that field means
+        // cloud_files.id on private Cloud Library items and the local
+        // filename's own id on true local files, neither of which is a
+        // tracks.id.
+        trackId: item.freqTrackId || (item.platform === 'freq' ? item.id : null) || null,
         token: AUTH.loggedIn ? AUTH.token : undefined,
       }),
     });
@@ -6285,8 +6298,13 @@ async function playEntireRelease(releaseId) {
     if (!res.ok) throw new Error(data.error || 'Could not load tracks.');
     const tracks = (data.tracks || []).filter(t => t.isUpload);
     if (!tracks.length) { showToast('No playable tracks', 'This release has no uploaded tracks yet.', 'info'); return; }
-    for (let i = 0; i < tracks.length; i++) {
-      await playPublishedTrack(tracks[i].id, i === 0 ? 'play' : 'queue');
+    // playPublishedTrack always plays immediately (it has no "queue only"
+    // mode) — calling it for every track in a loop played and instantly
+    // interrupted each prior track, so only the last one was ever actually
+    // heard. Play the first track, queue the rest.
+    await playPublishedTrack(tracks[0].id);
+    for (let i = 1; i < tracks.length; i++) {
+      await queuePublishedTrack(tracks[i].id);
     }
   } catch (err) {
     showToast('Error', err.message || 'Could not play release.', 'error');
