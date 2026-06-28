@@ -1236,7 +1236,36 @@ setInterval(() => {
 // increment-only counter would never decrease as old plays age out of the
 // window.
 
-async function dbGetOrCreateTrack(originalUrl, platform, title, artistName) {
+// Published FREQ tracks (platform:'freq'/'cloud') are looked up by their
+// real tracks.id, never by originalUrl. The frontend's `cloud:<id>` string
+// is a synthetic value built from whatever id the track-resolution endpoint
+// handed back — but dbPublishTrack stores `cloud:<cloud_file_id>` as
+// original_url, a DIFFERENT id than tracks.id. Matching on originalUrl for
+// these tracks therefore always missed the real row and silently created a
+// new phantom track per play (a second tracks row, never published, that
+// absorbed every increment while the real row's play_count sat at 0
+// forever — this is the root cause of "track plays don't increase"). A
+// known trackId always wins over any originalUrl-based lookup/creation.
+async function dbGetOrCreateTrack(originalUrl, platform, title, artistName, publishedTrackId) {
+  if (publishedTrackId) {
+    const { data: existing, error } = await supabase
+      .from('tracks').select('id, artist_id, artist_name').eq('id', publishedTrackId).maybeSingle();
+    if (error) { console.error('[db] getOrCreateTrack (by id):', error.message); return null; }
+    // No fallback to originalUrl matching here on a miss — a trackId that
+    // doesn't resolve means the track was deleted/unpublished mid-session,
+    // and silently falling back to originalUrl would recreate the exact
+    // phantom-row bug this branch exists to fix. dbLogPlay already returns
+    // null cleanly for "no track" in that case.
+    if (!existing) return null;
+    if (!existing.artist_id && artistName) {
+      const artistId = await dbResolveArtist(artistName);
+      if (artistId) {
+        await supabase.from('tracks').update({ artist_id: artistId, artist_name: artistName }).eq('id', existing.id);
+      }
+    }
+    return existing.id;
+  }
+
   // Try the read path first — this runs on every single play, so the common
   // case (track already exists) should be one SELECT, not an upsert churning
   // the row's defaults every time.
@@ -1289,8 +1318,8 @@ setInterval(() => {
   for (const [key, t] of recentPlayKeys) if (t < cutoff) recentPlayKeys.delete(key);
 }, 120_000);
 
-async function dbLogPlay(originalUrl, { platform, title, username, listenerKey, artistName }) {
-  const trackId = await dbGetOrCreateTrack(originalUrl, platform, title, artistName);
+async function dbLogPlay(originalUrl, { platform, title, username, listenerKey, artistName, publishedTrackId }) {
+  const trackId = await dbGetOrCreateTrack(originalUrl, platform, title, artistName, publishedTrackId);
   if (!trackId) return null;
 
   const cooldownKey = `${trackId}:${listenerKey || username || 'anon'}`;
@@ -3432,7 +3461,7 @@ app.get('/api/playlists/:id', async (req, res) => {
 });
 // ═══════════════════════════════════════════════════════════════════════════════
 //  COMMUNITY CHARTS — play tracking + rankings
-//  POST /api/plays                { originalUrl, platform?, title?, token? }
+//  POST /api/plays                { originalUrl, platform?, title?, token?, trackId? }
 //  GET  /api/charts/tracks         ?window=all|7d&limit=
 //
 //  Logging a play does NOT require auth — anonymous listeners count toward
@@ -3450,10 +3479,17 @@ app.get('/api/playlists/:id', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 app.post('/api/plays', rateLimit, async (req, res) => {
-  const { originalUrl, platform, title, artist, token } = req.body || {};
+  const { originalUrl, platform, title, artist, token, trackId } = req.body || {};
   if (!originalUrl || typeof originalUrl !== 'string') {
     return res.status(400).json({ error: '"originalUrl" is required.' });
   }
+  // Published FREQ tracks send their real tracks.id alongside originalUrl —
+  // see dbGetOrCreateTrack's comment for why originalUrl alone can't be
+  // trusted to identify these rows. Must be a syntactically valid uuid or
+  // we ignore it and fall back to the legacy originalUrl flow, rather than
+  // letting a malformed value reach the database as a no-op filter.
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const publishedTrackId = (typeof trackId === 'string' && UUID_RE.test(trackId)) ? trackId : null;
   try {
     const sess = token ? await dbGetSession(token) : null;
     const listenerKey = sess ? sess.username : (req.ip || req.connection.remoteAddress || 'unknown');
@@ -3462,9 +3498,15 @@ app.post('/api/plays', rateLimit, async (req, res) => {
     // the tracks row. If the caller didn't supply it (the frontend only
     // sends item.artist which is the ID3 field, not always set on cloud items),
     // we look it up from the existing tracks row so artist_id backfill never
-    // silently fails for published music.
+    // silently fails for published music. Looked up by trackId when we have
+    // one — the same originalUrl-mismatch that broke play counting would
+    // also make this lookup silently fail otherwise.
     let artistName = (typeof artist === 'string' && artist.trim()) ? artist.trim() : null;
-    if (!artistName && typeof originalUrl === 'string' && originalUrl.startsWith('cloud:')) {
+    if (!artistName && publishedTrackId) {
+      const { data: existingTrack } = await supabase
+        .from('tracks').select('artist_name').eq('id', publishedTrackId).maybeSingle();
+      if (existingTrack?.artist_name) artistName = existingTrack.artist_name;
+    } else if (!artistName && typeof originalUrl === 'string' && originalUrl.startsWith('cloud:')) {
       const { data: existingTrack } = await supabase
         .from('tracks').select('artist_name').eq('original_url', originalUrl).maybeSingle();
       if (existingTrack?.artist_name) artistName = existingTrack.artist_name;
@@ -3476,6 +3518,7 @@ app.post('/api/plays', rateLimit, async (req, res) => {
       artistName,
       username: sess ? sess.username : null,
       listenerKey,
+      publishedTrackId,
     });
     if (!result) return res.status(500).json({ error: 'Could not log play.' });
     return res.json({ counted: result.counted, playCount: result.playCount ?? null });
