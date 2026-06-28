@@ -1009,6 +1009,27 @@ async function dbGetCollaboratorsForTracks(trackIds) {
   return map;
 }
 
+// Batched track_id -> { id, title, releaseType } release lookup, same
+// one-query-for-all-ids shape as dbGetCollaboratorsForTracks above, added
+// specifically so list endpoints (Top Tracks, dashboard Tracks tab) can
+// show which release a track belongs to without an N+1 query per track.
+// A track has at most one release in this schema (artist_release_tracks
+// has no uniqueness constraint enforcing that, but nothing in the app
+// ever inserts a second row for the same track_id today).
+async function dbGetReleasesForTracks(trackIds) {
+  if (!trackIds || !trackIds.length) return new Map();
+  const { data, error } = await supabase
+    .from('artist_release_tracks')
+    .select('track_id, artist_releases(id, title, release_type)')
+    .in('track_id', trackIds);
+  if (error) { console.error('[db] getReleasesForTracks:', error.message); return new Map(); }
+  const map = new Map();
+  for (const row of data || []) {
+    if (row.artist_releases) map.set(row.track_id, row.artist_releases);
+  }
+  return map;
+}
+
 // addedByUsername is captured for audit purposes (artist_collaborations.added_by)
 // — it's always the session username of whoever called the route, which the
 // route handler has already verified owns the track/release being credited.
@@ -5125,21 +5146,29 @@ app.get('/api/artists/:id/tracks', async (req, res) => {
     const sort  = req.query.sort === 'trending' ? 'trending' : 'plays';
     const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 50);
     const tracks = await dbGetArtistTracks(artist.id, { sort, limit });
-    const collabsByTrack = await dbGetCollaboratorsForTracks(tracks.map(t => t.id));
+    const trackIds = tracks.map(t => t.id);
+    const [collabsByTrack, releasesByTrack] = await Promise.all([
+      dbGetCollaboratorsForTracks(trackIds),
+      dbGetReleasesForTracks(trackIds),
+    ]);
     return res.json({
-      tracks: tracks.map(t => ({
-        id: t.id, originalUrl: t.original_url, platform: t.platform,
-        title: t.title || t.original_url,
-        playCount: t.play_count, playCount7d: t.play_count_7d,
-        likeCount: t.like_count || 0,
-        lastPlayedAt: t.last_played_at,
-        coverUrl: t.cover_url || null,
-        cloudFileId: t.cloud_file_id || null,
-        publishedAt: t.published_at || null,
-        isUpload: !!t.cloud_file_id,
-        isExplicit: !!t.is_explicit,
-        collaborators: (collabsByTrack.get(t.id) || []).map(shapeCollaborator),
-      })),
+      tracks: tracks.map(t => {
+        const release = releasesByTrack.get(t.id);
+        return {
+          id: t.id, originalUrl: t.original_url, platform: t.platform,
+          title: t.title || t.original_url,
+          playCount: t.play_count, playCount7d: t.play_count_7d,
+          likeCount: t.like_count || 0,
+          lastPlayedAt: t.last_played_at,
+          coverUrl: t.cover_url || null,
+          cloudFileId: t.cloud_file_id || null,
+          publishedAt: t.published_at || null,
+          isUpload: !!t.cloud_file_id,
+          isExplicit: !!t.is_explicit,
+          collaborators: (collabsByTrack.get(t.id) || []).map(shapeCollaborator),
+          release: release ? { id: release.id, title: release.title, releaseType: release.release_type } : null,
+        };
+      }),
     });
   } catch (err) {
     console.error('[artist tracks]', err);
@@ -6302,6 +6331,122 @@ app.get('/api/artists/:id/tracks/:trackId/analytics', async (req, res) => {
   } catch (err) {
     console.error('[track analytics]', err);
     return res.status(500).json({ error: 'Could not load track analytics.' });
+  }
+});
+
+// GET /api/artists/:id/plays-timeseries   ?range=7d|30d|90d|all   &token=
+// Owner-only. Backs the Analytics > Plays Over Time chart. Always returns a
+// daily series (zero-filled for days with no plays, via the
+// get_artist_plays_timeseries() RPC — see migration), so the frontend can
+// roll a daily series up into weekly/monthly buckets itself rather than this
+// endpoint needing separate bucket-size logic. "all" is capped at the
+// artist's first-ever play (or today if they have none yet) rather than an
+// arbitrary lookback, so the chart doesn't render years of empty zeros for
+// a brand-new artist.
+const PLAYS_TIMESERIES_RANGES = { '7d': 7, '30d': 30, '90d': 90 };
+app.get('/api/artists/:id/plays-timeseries', async (req, res) => {
+  try {
+    const artist = await resolveArtistFromParam(req.params.id);
+    if (!artist) return res.status(404).json({ error: 'Artist not found.' });
+    const token = (req.headers.authorization || '').replace('Bearer ', '') || req.query.token;
+    const sess = token ? await dbGetSession(token) : null;
+    if (!sess || artist.account_id !== sess.username) {
+      return res.status(403).json({ error: 'Only the artist who claimed this page can view analytics.' });
+    }
+
+    const range = PLAYS_TIMESERIES_RANGES[req.query.range] ? req.query.range : (req.query.range === 'all' ? 'all' : '30d');
+    const today = new Date();
+    const endDate = today.toISOString().slice(0, 10);
+    let startDate;
+    if (range === 'all') {
+      const { data: earliest } = await supabase
+        .from('track_plays')
+        .select('played_at, tracks!inner(artist_id)')
+        .eq('tracks.artist_id', artist.id)
+        .order('played_at', { ascending: true })
+        .limit(1)
+        .maybeSingle();
+      startDate = earliest?.played_at ? earliest.played_at.slice(0, 10) : endDate;
+      // Cap "all" at 366 days back even if the artist's first play is older —
+      // a multi-year zero-filled daily series is a lot of rows for a chart
+      // that's about recent trend, not full archival history.
+      const cap = new Date(today.getTime() - 366 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+      if (startDate < cap) startDate = cap;
+    } else {
+      const days = PLAYS_TIMESERIES_RANGES[range];
+      startDate = new Date(today.getTime() - (days - 1) * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    }
+
+    const { data, error } = await supabase.rpc('get_artist_plays_timeseries', {
+      p_artist_id: artist.id, p_start: startDate, p_end: endDate,
+    });
+    if (error) throw new Error(error.message);
+
+    return res.json({
+      range,
+      series: (data || []).map(row => ({ date: row.play_date, plays: Number(row.play_count) || 0 })),
+    });
+  } catch (err) {
+    console.error('[artist plays timeseries]', err);
+    return res.status(500).json({ error: 'Could not load plays over time.' });
+  }
+});
+
+// GET /api/artists/:id/engagement   ?token=
+// Owner-only. Aggregates engagement signals the Analytics > Engagement
+// section needs: track likes already tracked via track_likes/tracks.like_count
+// (real, populated today), plus likes/comments/shares on this artist's own
+// posts (artist_update / release_announcement — the only post_type values
+// that carry artist_id, see dbCreatePost). Followers gained has no time-
+// windowed source today except artist_followers.created_at, so a 7-day
+// delta is derivable; lifetime followerCount is already on the artist
+// object and intentionally NOT repeated here. Profile visits has no
+// tracking anywhere in this schema — reported honestly as not yet
+// supported rather than a fabricated zero that looks wired up.
+app.get('/api/artists/:id/engagement', async (req, res) => {
+  try {
+    const artist = await resolveArtistFromParam(req.params.id);
+    if (!artist) return res.status(404).json({ error: 'Artist not found.' });
+    const token = (req.headers.authorization || '').replace('Bearer ', '') || req.query.token;
+    const sess = token ? await dbGetSession(token) : null;
+    if (!sess || artist.account_id !== sess.username) {
+      return res.status(403).json({ error: 'Only the artist who claimed this page can view analytics.' });
+    }
+
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const [postsResult, trackLikesResult, followersThisWeekResult] = await Promise.all([
+      supabase.from('posts').select('like_count, comment_count, share_count').eq('artist_id', artist.id),
+      supabase.from('tracks').select('like_count').eq('artist_id', artist.id),
+      supabase.from('artist_followers').select('*', { count: 'exact', head: true })
+        .eq('artist_id', artist.id).gte('created_at', sevenDaysAgo),
+    ]);
+    if (postsResult.error) console.error('[engagement posts]', postsResult.error.message);
+    if (trackLikesResult.error) console.error('[engagement track likes]', trackLikesResult.error.message);
+    if (followersThisWeekResult.error) console.error('[engagement followers]', followersThisWeekResult.error.message);
+
+    const posts = postsResult.data || [];
+    const postLikes = posts.reduce((sum, p) => sum + (Number(p.like_count) || 0), 0);
+    const commentsReceived = posts.reduce((sum, p) => sum + (Number(p.comment_count) || 0), 0);
+    const reposts = posts.reduce((sum, p) => sum + (Number(p.share_count) || 0), 0);
+    const trackLikes = (trackLikesResult.data || []).reduce((sum, t) => sum + (Number(t.like_count) || 0), 0);
+
+    return res.json({
+      likesReceived: trackLikes + postLikes,
+      commentsReceived,
+      reposts,
+      followersGained7d: followersThisWeekResult.count || 0,
+      profileVisits: null, profileVisitsSupported: false,
+      // Artist Post Engagement — likes/comments/shares specifically on this
+      // artist's own posts (artist_update / release_announcement), broken
+      // out separately from trackLikes above since "engagement on my posts"
+      // and "likes on my music" are different signals an artist would want
+      // to read independently, even though likesReceived folds both into
+      // one number for the simpler top-line stat card.
+      postEngagement: { likes: postLikes, comments: commentsReceived, shares: reposts, postCount: posts.length },
+    });
+  } catch (err) {
+    console.error('[artist engagement]', err);
+    return res.status(500).json({ error: 'Could not load engagement.' });
   }
 });
 
