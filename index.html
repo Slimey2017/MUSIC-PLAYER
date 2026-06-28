@@ -1492,6 +1492,128 @@ textarea.support-field { height:90px;resize:vertical; }
   .dash-main-body { padding:14px 16px; }
 }
 
+/* ─── Analytics Dashboard v5 — sub-tabs, chart, insights cards ──────────
+   The Analytics pane (#dashSectionAnalytics) hosts its own secondary tab
+   strip rather than six new top-level sidebar items — Overview/Plays/
+   Tracks/Releases/Audience/Activity/Engagement are all facets of one
+   "Analytics" concept, not separate dashboard areas, so they nest under
+   the existing Analytics nav entry instead of competing with Publish/
+   Releases/Tracks/Posts/Settings for sidebar space. */
+.analytics-subtabs {
+  display:flex;gap:4px;overflow-x:auto;margin-bottom:16px;border-bottom:1px solid var(--border);
+  scrollbar-width:none;
+}
+.analytics-subtabs::-webkit-scrollbar { display:none; }
+.analytics-subtab-btn {
+  flex:0 0 auto;background:none;border:none;border-bottom:2px solid transparent;
+  color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.46rem;
+  letter-spacing:0.04em;text-transform:uppercase;padding:8px 12px;cursor:pointer;
+  white-space:nowrap;transition:color 0.15s,border-color 0.15s;
+}
+.analytics-subtab-btn:hover { color:var(--text-main); }
+.analytics-subtab-btn.active { color:var(--accent);border-bottom-color:var(--accent); }
+.analytics-pane { display:none; }
+.analytics-pane.active { display:block; }
+
+/* Plays Over Time chart */
+.analytics-chart-card {
+  background:var(--surface3);border:1px solid var(--border);border-radius:var(--radius);
+  padding:16px;margin-bottom:18px;
+}
+.analytics-chart-toolbar {
+  display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:14px;
+}
+.analytics-range-group {
+  display:flex;gap:4px;background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--radius);padding:2px;
+}
+.analytics-range-btn {
+  background:none;border:none;color:var(--text-muted);font-family:'Space Mono',monospace;
+  font-size:0.42rem;letter-spacing:0.04em;text-transform:uppercase;padding:5px 10px;
+  border-radius:3px;cursor:pointer;transition:color 0.15s,background 0.15s;
+}
+.analytics-range-btn:hover { color:var(--text-main); }
+.analytics-range-btn.active { background:var(--accent);color:var(--bg); }
+.analytics-granularity-group { display:flex;gap:4px; }
+.analytics-chart-total {
+  font-family:'Unbounded',sans-serif;font-weight:700;font-size:0.8rem;color:var(--text-main);
+}
+.analytics-chart-total-label {
+  font-size:0.4rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em;margin-top:2px;
+}
+.analytics-chart-svg-wrap { width:100%;overflow:hidden;position:relative; }
+.analytics-chart-empty {
+  text-align:center;padding:40px 8px;color:var(--text-muted);font-size:0.5rem;opacity:0.7;
+}
+.analytics-chart-point { cursor:pointer; }
+.analytics-chart-tooltip {
+  position:absolute;pointer-events:none;background:var(--surface);border:1px solid var(--accent);
+  border-radius:3px;padding:5px 8px;font-size:0.42rem;color:var(--text-main);
+  font-family:'Space Mono',monospace;white-space:nowrap;z-index:10;display:none;
+}
+
+/* Top Tracks list */
+.analytics-track-row {
+  display:flex;align-items:center;gap:10px;padding:9px 4px;border-bottom:1px solid var(--border);
+}
+.analytics-track-row:last-child { border-bottom:none; }
+.analytics-track-rank {
+  width:18px;flex:0 0 auto;text-align:right;font-family:'Unbounded',sans-serif;font-weight:700;
+  font-size:0.5rem;color:var(--text-dim);
+}
+.analytics-track-art {
+  width:38px;height:38px;border-radius:4px;background:var(--surface) center/cover no-repeat;
+  flex:0 0 auto;display:flex;align-items:center;justify-content:center;color:var(--text-muted);
+  font-size:0.9rem;opacity:0.8;
+}
+.analytics-track-info { flex:1;min-width:0; }
+.analytics-track-title {
+  font-size:0.5rem;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.analytics-track-sub { font-size:0.4rem;color:var(--text-muted);margin-top:2px; }
+.analytics-track-metrics { flex:0 0 auto;display:flex;gap:14px;text-align:right; }
+.analytics-track-metric-value { font-size:0.5rem;color:var(--text-main);font-family:'Unbounded',sans-serif;font-weight:700; }
+.analytics-track-metric-label { font-size:0.34rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em;margin-top:1px; }
+
+/* Release Performance cards */
+.analytics-release-grid {
+  display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;
+}
+.analytics-release-card {
+  display:flex;gap:10px;background:var(--surface3);border:1px solid var(--border);
+  border-radius:var(--radius);padding:10px;
+}
+.analytics-release-art {
+  width:52px;height:52px;border-radius:4px;background:var(--surface) center/cover no-repeat;
+  flex:0 0 auto;display:flex;align-items:center;justify-content:center;color:var(--text-muted);font-size:1.1rem;opacity:0.8;
+}
+.analytics-release-info { flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center; }
+.analytics-release-title {
+  font-family:'Unbounded',sans-serif;font-weight:700;font-size:0.5rem;color:var(--text-main);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:4px;
+}
+.analytics-release-stats { display:flex;gap:10px;font-size:0.4rem;color:var(--text-muted); }
+.analytics-release-stats b { color:var(--accent3);font-weight:700; }
+
+/* Activity Feed */
+.analytics-activity-row {
+  display:flex;align-items:flex-start;gap:8px;padding:8px 4px;border-bottom:1px solid var(--border);font-size:0.46rem;
+}
+.analytics-activity-row:last-child { border-bottom:none; }
+.analytics-activity-icon {
+  width:20px;height:20px;border-radius:50%;background:var(--surface);border:1px solid var(--border);
+  flex:0 0 auto;display:flex;align-items:center;justify-content:center;font-size:0.42rem;color:var(--accent3);
+}
+.analytics-activity-text { flex:1;color:var(--text-dim);line-height:1.5; }
+.analytics-activity-text b { color:var(--text-main);font-weight:600; }
+.analytics-activity-time { flex:0 0 auto;font-size:0.38rem;color:var(--text-muted);white-space:nowrap; }
+
+@media (max-width:480px) {
+  .analytics-chart-toolbar { flex-direction:column;align-items:flex-start; }
+  .analytics-release-grid { grid-template-columns:1fr; }
+  .analytics-track-metrics { gap:10px; }
+}
+
 /* ─── Equalizer Presets Gallery ─────────────────────────────────── */
 .eq-preset-gallery {
   display:grid;grid-template-columns:repeat(auto-fill,minmax(80px,1fr));gap:5px;
@@ -3545,12 +3667,99 @@ body.oled-mode {
           <div id="dashPostsList" style="display:flex;flex-direction:column;gap:8px;"></div>
         </div>
 
-        <!-- Analytics: the full stats breakdown, same numbers as Overview's
-             top cards but with the complete set (chart rank, likes, etc),
-             same data source as the old Stats tab. -->
+        <!-- Analytics: full artist insights dashboard — Overview, Plays
+             Over Time, Top Tracks, Release Performance, Audience, Activity,
+             Engagement. Each sub-tab lazy-loads its own data on first visit
+             (see analyticsSubtabsLoaded in setAnalyticsSubtab), mirroring
+             the same lazy-per-section pattern setDashSection already uses
+             for the top-level nav. -->
         <div id="dashSectionAnalytics" class="dash-section" style="display:none;">
-          <div class="dash-section-label">Performance</div>
-          <div id="dashStatsList" class="dash-stat-grid"></div>
+          <div class="analytics-subtabs">
+            <button class="analytics-subtab-btn active" data-analytics-tab="overview" onclick="setAnalyticsSubtab('overview')">Overview</button>
+            <button class="analytics-subtab-btn" data-analytics-tab="plays" onclick="setAnalyticsSubtab('plays')">Plays Over Time</button>
+            <button class="analytics-subtab-btn" data-analytics-tab="toptracks" onclick="setAnalyticsSubtab('toptracks')">Top Tracks</button>
+            <button class="analytics-subtab-btn" data-analytics-tab="releases" onclick="setAnalyticsSubtab('releases')">Releases</button>
+            <button class="analytics-subtab-btn" data-analytics-tab="audience" onclick="setAnalyticsSubtab('audience')">Audience</button>
+            <button class="analytics-subtab-btn" data-analytics-tab="activity" onclick="setAnalyticsSubtab('activity')">Activity</button>
+            <button class="analytics-subtab-btn" data-analytics-tab="engagement" onclick="setAnalyticsSubtab('engagement')">Engagement</button>
+          </div>
+
+          <!-- Overview: the original stat cards, untouched. -->
+          <div id="analyticsPaneOverview" class="analytics-pane active">
+            <div class="dash-section-label">Performance</div>
+            <div id="dashStatsList" class="dash-stat-grid"></div>
+          </div>
+
+          <!-- Plays Over Time: primary visual element of the dashboard.
+               Daily series from the server, rolled up to weekly/monthly
+               client-side so one fetch per range covers all granularities. -->
+          <div id="analyticsPanePlays" class="analytics-pane">
+            <div class="analytics-chart-card">
+              <div class="analytics-chart-toolbar">
+                <div>
+                  <div class="analytics-chart-total" id="analyticsChartTotal">—</div>
+                  <div class="analytics-chart-total-label" id="analyticsChartTotalLabel">Plays</div>
+                </div>
+                <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+                  <div class="analytics-granularity-group" id="analyticsGranularityGroup">
+                    <button class="analytics-range-btn active" data-granularity="daily" onclick="setAnalyticsGranularity('daily')">Daily</button>
+                    <button class="analytics-range-btn" data-granularity="weekly" onclick="setAnalyticsGranularity('weekly')">Weekly</button>
+                    <button class="analytics-range-btn" data-granularity="monthly" onclick="setAnalyticsGranularity('monthly')">Monthly</button>
+                  </div>
+                  <div class="analytics-range-group" id="analyticsRangeGroup">
+                    <button class="analytics-range-btn active" data-range="7d" onclick="setAnalyticsRange('7d')">7D</button>
+                    <button class="analytics-range-btn" data-range="30d" onclick="setAnalyticsRange('30d')">30D</button>
+                    <button class="analytics-range-btn" data-range="90d" onclick="setAnalyticsRange('90d')">90D</button>
+                    <button class="analytics-range-btn" data-range="all" onclick="setAnalyticsRange('all')">All Time</button>
+                  </div>
+                </div>
+              </div>
+              <div class="analytics-chart-svg-wrap" id="analyticsChartWrap">
+                <div class="analytics-chart-empty">Loading…</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Top Tracks: best-performing tracks, sorted by plays. Reuses
+               GET /api/artists/:id/tracks?sort=plays (the same endpoint the
+               public profile's discography section already calls). -->
+          <div id="analyticsPaneTopTracks" class="analytics-pane">
+            <div class="dash-section-label">Top Tracks</div>
+            <div id="analyticsTopTracksList" class="dash-card"></div>
+          </div>
+
+          <!-- Release Performance: per-release plays/likes/track count,
+               reuses GET /api/artists/:id/releases. -->
+          <div id="analyticsPaneReleases" class="analytics-pane">
+            <div class="dash-section-label">Release Performance</div>
+            <div id="analyticsReleasesGrid" class="analytics-release-grid"></div>
+          </div>
+
+          <!-- Audience: listener insights. Geography/returning-vs-new are
+               not tracked anywhere in this schema yet, so this is honest
+               about what's real (monthly listeners, already on Overview)
+               vs. not yet supported, rather than fabricating numbers. -->
+          <div id="analyticsPaneAudience" class="analytics-pane">
+            <div class="dash-section-label">Audience</div>
+            <div class="dash-stat-grid" id="analyticsAudienceStatGrid" style="margin-bottom:14px;"></div>
+            <div class="empty-panel" style="font-size:0.46rem;">No audience data available yet.<br/>Listener geography, country/city breakdown, and returning vs. new listeners are planned — this section will populate automatically once that tracking ships.</div>
+          </div>
+
+          <!-- Activity: recent events referencing this artist, reuses
+               GET /api/artists/:id/activity (newest first, already paginated
+               server-side). -->
+          <div id="analyticsPaneActivity" class="analytics-pane">
+            <div class="dash-section-label">Recent Activity</div>
+            <div id="analyticsActivityList" class="dash-card"></div>
+          </div>
+
+          <!-- Engagement: likes/comments/reposts/followers gained, backed by
+               GET /api/artists/:id/engagement. Profile visits has no
+               tracking source in this schema, surfaced honestly below. -->
+          <div id="analyticsPaneEngagement" class="analytics-pane">
+            <div class="dash-section-label">Engagement</div>
+            <div id="analyticsEngagementStatGrid" class="dash-stat-grid"></div>
+          </div>
         </div>
 
         <!-- Settings: genre + social links, backed by the same
@@ -6496,6 +6705,7 @@ function openArtistDashboardModal() {
 function closeArtistDashboardModal() {
   $('artistDashboardOverlay')?.classList.remove('open');
   dashSectionsLoaded.clear();
+  analyticsSubtabsLoaded.clear();
 }
 
 // Lazy-loads each section's data on first visit per modal-open (not cached
@@ -7684,7 +7894,399 @@ function loadDashStats() {
   `).join('');
 }
 
-// ── Posts tab ────────────────────────────────────────────────────────────
+// ── Analytics sub-tabs ───────────────────────────────────────────────────
+// Overview (above) loads immediately since setDashSection already calls
+// loadDashStats for the 'analytics' section. Everything below is its own
+// lazily-loaded facet, tracked separately from dashSectionsLoaded since
+// switching analytics sub-tabs shouldn't require leaving and re-entering
+// the Analytics nav item.
+let analyticsSubtabsLoaded = new Set();
+let analyticsPlaysRange = '30d';
+let analyticsPlaysGranularity = 'daily';
+let analyticsPlaysSeriesCache = null; // raw daily series from the server for the current range, re-rolled client-side per granularity
+
+// Explicit tab-id -> pane-id map rather than string-casing the tab name,
+// since "toptracks" has no natural capitalization split into "TopTracks".
+const ANALYTICS_PANE_IDS = {
+  overview: 'analyticsPaneOverview', plays: 'analyticsPanePlays',
+  toptracks: 'analyticsPaneTopTracks', releases: 'analyticsPaneReleases',
+  audience: 'analyticsPaneAudience', activity: 'analyticsPaneActivity',
+  engagement: 'analyticsPaneEngagement',
+};
+
+function setAnalyticsSubtab(tab) {
+  document.querySelectorAll('.analytics-subtab-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.analyticsTab === tab);
+  });
+  document.querySelectorAll('.analytics-pane').forEach(pane => pane.classList.remove('active'));
+  const pane = $(ANALYTICS_PANE_IDS[tab] || '');
+  if (pane) pane.classList.add('active');
+
+  if (analyticsSubtabsLoaded.has(tab)) return;
+  analyticsSubtabsLoaded.add(tab);
+  if (tab === 'plays')       loadAnalyticsPlays();
+  if (tab === 'toptracks')   loadAnalyticsTopTracks();
+  if (tab === 'releases')    loadAnalyticsReleases();
+  if (tab === 'audience')    loadAnalyticsAudience();
+  if (tab === 'activity')    loadAnalyticsActivity();
+  if (tab === 'engagement')  loadAnalyticsEngagement();
+}
+
+// ── Plays Over Time ──────────────────────────────────────────────────────
+async function loadAnalyticsPlays() {
+  const wrap = $('analyticsChartWrap');
+  if (!wrap || !viewedArtist) return;
+  wrap.innerHTML = '<div class="analytics-chart-empty">Loading…</div>';
+  try {
+    const params = new URLSearchParams({ range: analyticsPlaysRange, token: AUTH.token || '' });
+    const res = await fetch(`${ARTISTS_BASE}/${encodeURIComponent(viewedArtist.id)}/plays-timeseries?${params}`);
+    const data = await res.json();
+    if (!res.ok) {
+      if (res.status === 401) { handleTokenExpiry(); return; }
+      throw new Error(data.error || 'Could not load plays over time.');
+    }
+    analyticsPlaysSeriesCache = data.series || [];
+    renderAnalyticsChart();
+  } catch (err) {
+    wrap.innerHTML = `<div class="analytics-chart-empty">${escapeHtml(err.message || 'Could not load plays over time.')}</div>`;
+    console.error('[loadAnalyticsPlays]', err);
+  }
+}
+
+function setAnalyticsRange(range) {
+  if (range === analyticsPlaysRange) return;
+  analyticsPlaysRange = range;
+  document.querySelectorAll('#analyticsRangeGroup .analytics-range-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.range === range);
+  });
+  loadAnalyticsPlays();
+}
+
+function setAnalyticsGranularity(granularity) {
+  if (granularity === analyticsPlaysGranularity) return;
+  analyticsPlaysGranularity = granularity;
+  document.querySelectorAll('#analyticsGranularityGroup .analytics-range-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.granularity === granularity);
+  });
+  renderAnalyticsChart();
+}
+
+// Rolls the always-daily series from the server up into weekly or monthly
+// buckets for display. Weekly buckets are calendar weeks starting Monday;
+// monthly buckets are calendar months — both computed client-side so a
+// single daily fetch per range serves all three granularity toggles
+// without extra round-trips.
+function rollUpPlaysSeries(series, granularity) {
+  if (granularity === 'daily' || !series.length) return series;
+  const buckets = new Map(); // bucketKey -> { label, plays, sortKey }
+  for (const point of series) {
+    const d = new Date(point.date + 'T00:00:00Z');
+    let key, label, sortKey;
+    if (granularity === 'weekly') {
+      const dow = (d.getUTCDay() + 6) % 7; // Monday=0
+      const monday = new Date(d); monday.setUTCDate(d.getUTCDate() - dow);
+      key = monday.toISOString().slice(0, 10);
+      label = monday.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+      sortKey = key;
+    } else { // monthly
+      key = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+      label = d.toLocaleDateString(undefined, { month: 'short', year: 'numeric' });
+      sortKey = key;
+    }
+    if (!buckets.has(key)) buckets.set(key, { label, plays: 0, sortKey });
+    buckets.get(key).plays += point.plays;
+  }
+  return [...buckets.values()].sort((a, b) => a.sortKey < b.sortKey ? -1 : 1)
+    .map(b => ({ date: b.label, plays: b.plays }));
+}
+
+// Lightweight inline SVG line chart — no charting library, consistent with
+// FREQ's single-file/minimal-dependency philosophy elsewhere in the app.
+// Renders as an area+line chart with hoverable points; CSS vars drive all
+// color so it follows whichever theme is active.
+function renderAnalyticsChart() {
+  const wrap = $('analyticsChartWrap');
+  if (!wrap) return;
+  const raw = analyticsPlaysSeriesCache || [];
+  const series = rollUpPlaysSeries(raw, analyticsPlaysGranularity);
+  const total = raw.reduce((sum, p) => sum + p.plays, 0);
+  $('analyticsChartTotal').textContent = formatCompactCount(total);
+  $('analyticsChartTotalLabel').textContent = `Plays · ${ANALYTICS_RANGE_LABELS[analyticsPlaysRange] || ''}`;
+
+  if (!series.length || total === 0) {
+    wrap.innerHTML = '<div class="analytics-chart-empty">No plays in this period yet.</div>';
+    return;
+  }
+
+  const W = 700, H = 220, padL = 36, padR = 12, padT = 16, padB = 28;
+  const innerW = W - padL - padR, innerH = H - padT - padB;
+  const maxPlays = Math.max(...series.map(p => p.plays), 1);
+  const stepX = series.length > 1 ? innerW / (series.length - 1) : 0;
+  const yFor = v => padT + innerH - (v / maxPlays) * innerH;
+  const xFor = i => padL + stepX * i;
+
+  const linePoints = series.map((p, i) => `${xFor(i)},${yFor(p.plays)}`).join(' ');
+  const areaPoints = `${padL},${padT + innerH} ${linePoints} ${xFor(series.length - 1)},${padT + innerH}`;
+
+  // Y-axis gridlines at 0/50%/100% of max, with compact labels.
+  const gridLines = [0, 0.5, 1].map(frac => {
+    const y = padT + innerH - frac * innerH;
+    const val = formatCompactCount(Math.round(maxPlays * frac));
+    return `
+      <line x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}" stroke="var(--border)" stroke-width="1" />
+      <text x="${padL - 6}" y="${y + 3}" text-anchor="end" font-size="9" fill="var(--text-muted)" font-family="'Space Mono',monospace">${val}</text>
+    `;
+  }).join('');
+
+  // X-axis labels: show a sparse subset so labels don't collide on long ranges.
+  const labelEvery = Math.max(1, Math.ceil(series.length / 7));
+  const xLabels = series.map((p, i) => {
+    if (i % labelEvery !== 0 && i !== series.length - 1) return '';
+    const label = analyticsPlaysGranularity === 'daily'
+      ? new Date(p.date + 'T00:00:00Z').toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+      : p.date;
+    return `<text x="${xFor(i)}" y="${H - 8}" text-anchor="middle" font-size="9" fill="var(--text-muted)" font-family="'Space Mono',monospace">${escapeHtml(label)}</text>`;
+  }).join('');
+
+  const points = series.map((p, i) => `
+    <circle class="analytics-chart-point" cx="${xFor(i)}" cy="${yFor(p.plays)}" r="3.5"
+      fill="var(--accent)" stroke="var(--bg)" stroke-width="1"
+      onmouseenter="showAnalyticsChartTooltip(event, ${JSON.stringify(p.date)}, ${p.plays})"
+      onmouseleave="hideAnalyticsChartTooltip()" />
+  `).join('');
+
+  wrap.innerHTML = `
+    <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block;" preserveAspectRatio="xMidYMid meet">
+      <defs>
+        <linearGradient id="analyticsAreaFill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="var(--accent)" stop-opacity="0.25" />
+          <stop offset="100%" stop-color="var(--accent)" stop-opacity="0" />
+        </linearGradient>
+      </defs>
+      ${gridLines}
+      <polygon points="${areaPoints}" fill="url(#analyticsAreaFill)" />
+      <polyline points="${linePoints}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" />
+      ${points}
+      ${xLabels}
+    </svg>
+    <div class="analytics-chart-tooltip" id="analyticsChartTooltip"></div>
+  `;
+}
+
+const ANALYTICS_RANGE_LABELS = { '7d': 'Last 7 Days', '30d': 'Last 30 Days', '90d': 'Last 90 Days', all: 'All Time' };
+
+function showAnalyticsChartTooltip(evt, dateLabel, plays) {
+  const tip = $('analyticsChartTooltip');
+  const wrap = $('analyticsChartWrap');
+  if (!tip || !wrap) return;
+  const wrapRect = wrap.getBoundingClientRect();
+  const label = analyticsPlaysGranularity === 'daily'
+    ? new Date(dateLabel + 'T00:00:00Z').toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+    : dateLabel;
+  tip.textContent = `${label}: ${formatCompactCount(plays)} play${plays === 1 ? '' : 's'}`;
+  tip.style.left = `${evt.clientX - wrapRect.left + 10}px`;
+  tip.style.top = `${evt.clientY - wrapRect.top - 28}px`;
+  tip.style.display = 'block';
+}
+function hideAnalyticsChartTooltip() {
+  const tip = $('analyticsChartTooltip');
+  if (tip) tip.style.display = 'none';
+}
+
+// ── Top Tracks ───────────────────────────────────────────────────────────
+async function loadAnalyticsTopTracks() {
+  const list = $('analyticsTopTracksList');
+  if (!list || !viewedArtist) return;
+  list.innerHTML = '<div class="empty-panel" style="font-size:0.46rem;">Loading…</div>';
+  try {
+    const res = await fetch(`${ARTISTS_BASE}/${encodeURIComponent(viewedArtist.id)}/tracks?sort=plays&limit=50`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not load top tracks.');
+    const tracks = data.tracks || [];
+    if (!tracks.length) {
+      list.innerHTML = '<div class="empty-panel" style="font-size:0.46rem;">No published tracks yet — publish a track to start seeing performance data.</div>';
+      return;
+    }
+    list.innerHTML = tracks.map((t, i) => `
+      <div class="analytics-track-row">
+        <div class="analytics-track-rank">${i + 1}</div>
+        <div class="analytics-track-art" style="${t.coverUrl ? `background-image:url('${escapeHtml(t.coverUrl)}');` : ''}">${!t.coverUrl ? '♪' : ''}</div>
+        <div class="analytics-track-info">
+          <div class="analytics-track-title">${escapeHtml(t.title)}${t.isExplicit ? ' <span class="explicit-badge">E</span>' : ''}</div>
+          <div class="analytics-track-sub">${t.release ? escapeHtml(t.release.title) : 'Standalone track'}</div>
+        </div>
+        <div class="analytics-track-metrics">
+          <div>
+            <div class="analytics-track-metric-value">${formatCompactCount(t.playCount || 0)}</div>
+            <div class="analytics-track-metric-label">Plays</div>
+          </div>
+          <div>
+            <div class="analytics-track-metric-value">${formatCompactCount(t.likeCount || 0)}</div>
+            <div class="analytics-track-metric-label">Likes</div>
+          </div>
+        </div>
+      </div>
+    `).join('');
+  } catch (err) {
+    list.innerHTML = `<div class="empty-panel" style="font-size:0.46rem;">${escapeHtml(err.message || 'Could not load top tracks.')}</div>`;
+    console.error('[loadAnalyticsTopTracks]', err);
+  }
+}
+
+// ── Release Performance ──────────────────────────────────────────────────
+async function loadAnalyticsReleases() {
+  const grid = $('analyticsReleasesGrid');
+  if (!grid || !viewedArtist) return;
+  grid.innerHTML = '<div class="empty-panel" style="font-size:0.46rem;">Loading…</div>';
+  try {
+    const params = new URLSearchParams({ token: AUTH.token || '' });
+    const res = await fetch(`${ARTISTS_BASE}/${encodeURIComponent(viewedArtist.id)}/releases?${params}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not load releases.');
+    const releases = (data.releases || []).slice().sort((a, b) => (b.totalPlays || 0) - (a.totalPlays || 0));
+    if (!releases.length) {
+      grid.innerHTML = '<div class="empty-panel" style="font-size:0.46rem;">No releases yet — create an album, EP, or single to see performance here.</div>';
+      return;
+    }
+    grid.innerHTML = releases.map(r => `
+      <div class="analytics-release-card">
+        <div class="analytics-release-art" style="${r.coverUrl ? `background-image:url('${escapeHtml(r.coverUrl)}');` : ''}">${!r.coverUrl ? '◫' : ''}</div>
+        <div class="analytics-release-info">
+          <div class="analytics-release-title">${escapeHtml(r.title)}${r.isExplicit ? ' <span class="explicit-badge">E</span>' : ''}</div>
+          <div class="analytics-release-stats">
+            <span><b>${formatCompactCount(r.totalPlays || 0)}</b> Plays</span>
+            <span><b>${formatCompactCount(r.totalLikes || 0)}</b> Likes</span>
+            <span>${r.trackCount || 0} track${r.trackCount === 1 ? '' : 's'}</span>
+          </div>
+        </div>
+      </div>
+    `).join('');
+  } catch (err) {
+    grid.innerHTML = `<div class="empty-panel" style="font-size:0.46rem;">${escapeHtml(err.message || 'Could not load releases.')}</div>`;
+    console.error('[loadAnalyticsReleases]', err);
+  }
+}
+
+// ── Audience ─────────────────────────────────────────────────────────────
+// Monthly Listeners and Followers are real numbers already on viewedArtist
+// — shown here too since "Audience" is exactly where someone would look
+// for them, even though they're not new data. Geography/returning-vs-new
+// have no tracking source in this schema (see server.js comments on the
+// engagement/plays-timeseries endpoints), so that part of the pane is an
+// honest placeholder rather than fabricated rows.
+function loadAnalyticsAudience() {
+  const grid = $('analyticsAudienceStatGrid');
+  if (!grid || !viewedArtist) return;
+  const s = viewedArtist.stats || {};
+  grid.innerHTML = [
+    ['Monthly Listeners', formatCompactCount(s.monthlyListeners ?? 0)],
+    ['Followers', formatCompactCount(viewedArtist.followerCount ?? 0)],
+  ].map(([label, val]) => `
+    <div class="dash-stat-card">
+      <div class="dash-stat-value">${val}</div>
+      <div class="dash-stat-label">${label}</div>
+    </div>
+  `).join('');
+}
+
+// ── Activity Feed ────────────────────────────────────────────────────────
+// Reuses GET /api/artists/:id/activity, the same endpoint already backing
+// nothing else in the UI today — this is its first surfaced consumer.
+// Event types currently written with meta.artistId are limited to
+// artist_followed, artist_release, and track_published (see
+// dbWriteArtistActivity call sites in server.js); plays/likes/comments/
+// playlist-adds don't tag artistId yet, so they won't appear here until
+// that's wired up server-side. Rendered generically by event_type so any
+// future event type shows *something* sensible without a frontend change.
+const ANALYTICS_ACTIVITY_ICONS = { artist_followed: '♥', artist_release: '◫', track_published: '↑' };
+function renderAnalyticsActivityRow(e) {
+  const icon = ANALYTICS_ACTIVITY_ICONS[e.type] || '•';
+  let text;
+  switch (e.type) {
+    case 'artist_followed':
+      text = `<b>${escapeHtml(e.payload?.follower || 'Someone')}</b> followed you`;
+      break;
+    case 'artist_release':
+      text = `New release <b>${escapeHtml(e.payload?.releaseTitle || '')}</b> went live`;
+      break;
+    case 'track_published':
+      text = `Track <b>${escapeHtml(e.payload?.trackTitle || '')}</b> was published`;
+      break;
+    default:
+      text = escapeHtml(e.type.replace(/_/g, ' '));
+  }
+  const when = e.createdAt ? formatJoinDate(e.createdAt) : '';
+  return `
+    <div class="analytics-activity-row">
+      <div class="analytics-activity-icon">${icon}</div>
+      <div class="analytics-activity-text">${text}</div>
+      <div class="analytics-activity-time">${when}</div>
+    </div>
+  `;
+}
+
+async function loadAnalyticsActivity() {
+  const list = $('analyticsActivityList');
+  if (!list || !viewedArtist) return;
+  list.innerHTML = '<div class="empty-panel" style="font-size:0.46rem;">Loading…</div>';
+  try {
+    const res = await fetch(`${ARTISTS_BASE}/${encodeURIComponent(viewedArtist.id)}/activity?limit=30`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not load activity.');
+    const events = data.events || [];
+    if (!events.length) {
+      list.innerHTML = '<div class="empty-panel" style="font-size:0.46rem;">No recent activity.</div>';
+      return;
+    }
+    list.innerHTML = events.map(renderAnalyticsActivityRow).join('');
+  } catch (err) {
+    list.innerHTML = `<div class="empty-panel" style="font-size:0.46rem;">${escapeHtml(err.message || 'Could not load activity.')}</div>`;
+    console.error('[loadAnalyticsActivity]', err);
+  }
+}
+
+// ── Engagement ───────────────────────────────────────────────────────────
+async function loadAnalyticsEngagement() {
+  const grid = $('analyticsEngagementStatGrid');
+  if (!grid || !viewedArtist) return;
+  grid.innerHTML = '<div class="empty-panel" style="font-size:0.46rem;">Loading…</div>';
+  try {
+    const params = new URLSearchParams({ token: AUTH.token || '' });
+    const res = await fetch(`${ARTISTS_BASE}/${encodeURIComponent(viewedArtist.id)}/engagement?${params}`);
+    const data = await res.json();
+    if (!res.ok) {
+      if (res.status === 401) { handleTokenExpiry(); return; }
+      throw new Error(data.error || 'Could not load engagement.');
+    }
+    const pe = data.postEngagement || { likes: 0, comments: 0, shares: 0, postCount: 0 };
+    // "Artist Post Engagement" is its own card per spec, distinct from the
+    // track-level Likes Received above it — it's likes+comments+shares
+    // specifically on this artist's own posts (artist_update /
+    // release_announcement). Shown as "—" rather than "0" when the artist
+    // has never posted, since 0 engagement on 0 posts isn't a real signal.
+    const postEngagementVal = pe.postCount > 0
+      ? formatCompactCount(pe.likes + pe.comments + pe.shares)
+      : '—';
+    grid.innerHTML = [
+      ['Likes Received', formatCompactCount(data.likesReceived ?? 0)],
+      ['Comments Received', formatCompactCount(data.commentsReceived ?? 0)],
+      ['Shares / Reposts', formatCompactCount(data.reposts ?? 0)],
+      ['Artist Post Engagement', postEngagementVal],
+      ['Followers Gained (7d)', formatCompactCount(data.followersGained7d ?? 0)],
+      ['Profile Visits', data.profileVisitsSupported ? formatCompactCount(data.profileVisits ?? 0) : 'Not tracked yet'],
+    ].map(([label, val]) => `
+      <div class="dash-stat-card">
+        <div class="dash-stat-value" style="${(label === 'Profile Visits' && !data.profileVisitsSupported) || (label === 'Artist Post Engagement' && pe.postCount === 0) ? 'font-size:0.6rem;color:var(--text-muted);' : ''}">${val}</div>
+        <div class="dash-stat-label">${label}</div>
+      </div>
+    `).join('');
+  } catch (err) {
+    grid.innerHTML = `<div class="empty-panel" style="font-size:0.46rem;">${escapeHtml(err.message || 'Could not load engagement.')}</div>`;
+    console.error('[loadAnalyticsEngagement]', err);
+  }
+}
+
+
 // Minimal composer for artist-authored update posts — reuses the same
 // POST /api/posts route as the main feed composer, just with artistId set
 // (ownership-checked server-side, see [posts create] in server.js) and
