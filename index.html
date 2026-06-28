@@ -1174,6 +1174,91 @@ textarea.support-field { height:90px;resize:vertical; }
   text-align:center;padding:32px;color:var(--text-muted);font-size:0.6rem;
 }
 
+/* ─── Music Video Player ──────────────────────────────────────────────────
+   FREQ-owned player UI wrapping a plain <video> element with native
+   controls disabled — per spec, no browser-default video chrome. Sits
+   inside .lyrics-overlay.above-dash (same family as Publish/Analytics/etc)
+   but gets its own wider panel class since a 16:9 video needs far more
+   width than the ~400px text modals. */
+.video-player-panel {
+  background:var(--surface2);border:1px solid var(--border);border-radius:10px;
+  padding:16px;max-width:860px;width:94%;max-height:92vh;overflow-y:auto;
+  font-family:'Space Mono',monospace;scrollbar-width:thin;scrollbar-color:var(--border) transparent;
+}
+.video-player-stage {
+  position:relative;width:100%;aspect-ratio:16/9;background:#000;
+  border-radius:var(--radius);overflow:hidden;margin-bottom:10px;
+}
+.video-player-stage video {
+  width:100%;height:100%;object-fit:contain;background:#000;display:block;
+}
+.video-player-stage .video-player-poster {
+  position:absolute;inset:0;background:var(--surface3) center/cover no-repeat;
+  display:flex;align-items:center;justify-content:center;cursor:pointer;
+}
+.video-player-stage .video-player-poster-play {
+  width:56px;height:56px;border-radius:50%;background:rgba(0,0,0,0.55);
+  border:2px solid #fff;color:#fff;display:flex;align-items:center;justify-content:center;
+  font-size:1.1rem;
+}
+.video-player-loading {
+  position:absolute;inset:0;display:none;align-items:center;justify-content:center;
+  color:var(--text-muted);font-size:0.5rem;background:rgba(0,0,0,0.4);pointer-events:none;
+}
+.video-player-controls {
+  position:absolute;left:0;right:0;bottom:0;padding:8px 10px 7px;
+  background:linear-gradient(to top, rgba(0,0,0,0.85), rgba(0,0,0,0));
+  display:flex;flex-direction:column;gap:5px;opacity:1;transition:opacity 0.2s;
+}
+.video-player-stage.controls-hidden .video-player-controls { opacity:0;pointer-events:none; }
+.video-player-seekbar {
+  position:relative;height:4px;background:rgba(255,255,255,0.25);border-radius:2px;cursor:pointer;
+}
+.video-player-seekbar-fill {
+  position:absolute;left:0;top:0;height:100%;background:var(--accent);border-radius:2px;width:0%;
+}
+.video-player-seekbar-handle {
+  position:absolute;top:50%;width:9px;height:9px;border-radius:50%;background:var(--accent);
+  transform:translate(-50%,-50%);left:0%;
+}
+.video-player-controls-row {
+  display:flex;align-items:center;gap:10px;
+}
+.video-player-btn {
+  background:none;border:none;color:#fff;cursor:pointer;font-size:0.85rem;
+  padding:2px 4px;display:flex;align-items:center;line-height:1;
+}
+.video-player-btn:hover { color:var(--accent); }
+.video-player-time {
+  font-size:0.4rem;color:#fff;white-space:nowrap;min-width:62px;
+}
+.video-player-volume {
+  width:50px;accent-color:var(--accent);
+}
+.video-player-spacer { flex:1; }
+.video-player-mode-tabs {
+  display:flex;gap:4px;margin-bottom:10px;
+}
+.video-player-mode-btn {
+  flex:1;background:none;border:1px solid var(--border);color:var(--text-muted);
+  font-family:'Space Mono',monospace;font-size:0.46rem;letter-spacing:0.04em;
+  text-transform:uppercase;padding:8px;border-radius:var(--radius);cursor:pointer;
+  transition:color 0.15s,border-color 0.15s;
+}
+.video-player-mode-btn.active { color:var(--accent3);border-color:var(--accent3); }
+.video-player-meta-row {
+  display:flex;align-items:center;justify-content:space-between;gap:10px;
+}
+.video-player-stats {
+  font-size:0.42rem;color:var(--text-muted);
+}
+
+@media (max-width:480px) {
+  .video-player-panel { padding:10px; max-width:100%; }
+  .video-player-time { display:none; }
+  .video-player-volume { display:none; }
+}
+
 /* Profile / Artist page media — shared by userProfileOverlay and artistProfileOverlay */
 .profile-cover {
   width:100%;height:120px;border-radius:8px;background:var(--surface3);
@@ -1490,128 +1575,6 @@ textarea.support-field { height:90px;resize:vertical; }
   .dash-nav-btn.active { border-left-color:transparent;border-bottom-color:var(--accent); }
   .dash-main-header { padding:14px 16px; }
   .dash-main-body { padding:14px 16px; }
-}
-
-/* ─── Analytics Dashboard v5 — sub-tabs, chart, insights cards ──────────
-   The Analytics pane (#dashSectionAnalytics) hosts its own secondary tab
-   strip rather than six new top-level sidebar items — Overview/Plays/
-   Tracks/Releases/Audience/Activity/Engagement are all facets of one
-   "Analytics" concept, not separate dashboard areas, so they nest under
-   the existing Analytics nav entry instead of competing with Publish/
-   Releases/Tracks/Posts/Settings for sidebar space. */
-.analytics-subtabs {
-  display:flex;gap:4px;overflow-x:auto;margin-bottom:16px;border-bottom:1px solid var(--border);
-  scrollbar-width:none;
-}
-.analytics-subtabs::-webkit-scrollbar { display:none; }
-.analytics-subtab-btn {
-  flex:0 0 auto;background:none;border:none;border-bottom:2px solid transparent;
-  color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.46rem;
-  letter-spacing:0.04em;text-transform:uppercase;padding:8px 12px;cursor:pointer;
-  white-space:nowrap;transition:color 0.15s,border-color 0.15s;
-}
-.analytics-subtab-btn:hover { color:var(--text-main); }
-.analytics-subtab-btn.active { color:var(--accent);border-bottom-color:var(--accent); }
-.analytics-pane { display:none; }
-.analytics-pane.active { display:block; }
-
-/* Plays Over Time chart */
-.analytics-chart-card {
-  background:var(--surface3);border:1px solid var(--border);border-radius:var(--radius);
-  padding:16px;margin-bottom:18px;
-}
-.analytics-chart-toolbar {
-  display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:14px;
-}
-.analytics-range-group {
-  display:flex;gap:4px;background:var(--surface);border:1px solid var(--border);
-  border-radius:var(--radius);padding:2px;
-}
-.analytics-range-btn {
-  background:none;border:none;color:var(--text-muted);font-family:'Space Mono',monospace;
-  font-size:0.42rem;letter-spacing:0.04em;text-transform:uppercase;padding:5px 10px;
-  border-radius:3px;cursor:pointer;transition:color 0.15s,background 0.15s;
-}
-.analytics-range-btn:hover { color:var(--text-main); }
-.analytics-range-btn.active { background:var(--accent);color:var(--bg); }
-.analytics-granularity-group { display:flex;gap:4px; }
-.analytics-chart-total {
-  font-family:'Unbounded',sans-serif;font-weight:700;font-size:0.8rem;color:var(--text-main);
-}
-.analytics-chart-total-label {
-  font-size:0.4rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em;margin-top:2px;
-}
-.analytics-chart-svg-wrap { width:100%;overflow:hidden;position:relative; }
-.analytics-chart-empty {
-  text-align:center;padding:40px 8px;color:var(--text-muted);font-size:0.5rem;opacity:0.7;
-}
-.analytics-chart-point { cursor:pointer; }
-.analytics-chart-tooltip {
-  position:absolute;pointer-events:none;background:var(--surface);border:1px solid var(--accent);
-  border-radius:3px;padding:5px 8px;font-size:0.42rem;color:var(--text-main);
-  font-family:'Space Mono',monospace;white-space:nowrap;z-index:10;display:none;
-}
-
-/* Top Tracks list */
-.analytics-track-row {
-  display:flex;align-items:center;gap:10px;padding:9px 4px;border-bottom:1px solid var(--border);
-}
-.analytics-track-row:last-child { border-bottom:none; }
-.analytics-track-rank {
-  width:18px;flex:0 0 auto;text-align:right;font-family:'Unbounded',sans-serif;font-weight:700;
-  font-size:0.5rem;color:var(--text-dim);
-}
-.analytics-track-art {
-  width:38px;height:38px;border-radius:4px;background:var(--surface) center/cover no-repeat;
-  flex:0 0 auto;display:flex;align-items:center;justify-content:center;color:var(--text-muted);
-  font-size:0.9rem;opacity:0.8;
-}
-.analytics-track-info { flex:1;min-width:0; }
-.analytics-track-title {
-  font-size:0.5rem;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
-}
-.analytics-track-sub { font-size:0.4rem;color:var(--text-muted);margin-top:2px; }
-.analytics-track-metrics { flex:0 0 auto;display:flex;gap:14px;text-align:right; }
-.analytics-track-metric-value { font-size:0.5rem;color:var(--text-main);font-family:'Unbounded',sans-serif;font-weight:700; }
-.analytics-track-metric-label { font-size:0.34rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em;margin-top:1px; }
-
-/* Release Performance cards */
-.analytics-release-grid {
-  display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;
-}
-.analytics-release-card {
-  display:flex;gap:10px;background:var(--surface3);border:1px solid var(--border);
-  border-radius:var(--radius);padding:10px;
-}
-.analytics-release-art {
-  width:52px;height:52px;border-radius:4px;background:var(--surface) center/cover no-repeat;
-  flex:0 0 auto;display:flex;align-items:center;justify-content:center;color:var(--text-muted);font-size:1.1rem;opacity:0.8;
-}
-.analytics-release-info { flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center; }
-.analytics-release-title {
-  font-family:'Unbounded',sans-serif;font-weight:700;font-size:0.5rem;color:var(--text-main);
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:4px;
-}
-.analytics-release-stats { display:flex;gap:10px;font-size:0.4rem;color:var(--text-muted); }
-.analytics-release-stats b { color:var(--accent3);font-weight:700; }
-
-/* Activity Feed */
-.analytics-activity-row {
-  display:flex;align-items:flex-start;gap:8px;padding:8px 4px;border-bottom:1px solid var(--border);font-size:0.46rem;
-}
-.analytics-activity-row:last-child { border-bottom:none; }
-.analytics-activity-icon {
-  width:20px;height:20px;border-radius:50%;background:var(--surface);border:1px solid var(--border);
-  flex:0 0 auto;display:flex;align-items:center;justify-content:center;font-size:0.42rem;color:var(--accent3);
-}
-.analytics-activity-text { flex:1;color:var(--text-dim);line-height:1.5; }
-.analytics-activity-text b { color:var(--text-main);font-weight:600; }
-.analytics-activity-time { flex:0 0 auto;font-size:0.38rem;color:var(--text-muted);white-space:nowrap; }
-
-@media (max-width:480px) {
-  .analytics-chart-toolbar { flex-direction:column;align-items:flex-start; }
-  .analytics-release-grid { grid-template-columns:1fr; }
-  .analytics-track-metrics { gap:10px; }
 }
 
 /* ─── Equalizer Presets Gallery ─────────────────────────────────── */
@@ -3308,6 +3271,32 @@ body.oled-mode {
         Explicit Content
       </span>
     </label>
+
+    <!-- Music Video (Optional) — uploads straight to Supabase Storage via a
+         signed upload URL (see publishVideoFileInput's change handler);
+         the Node server never buffers these bytes. videoFileId is attached
+         to the track via POST /api/tracks/:trackId/video right after
+         publish succeeds, since the track doesn't have an id until then. -->
+    <div style="border:1px dashed var(--border);border-radius:var(--radius);padding:9px 10px;margin-bottom:10px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+        <span style="font-size:0.46rem;color:var(--text-dim);">🎬 Music Video <span style="color:var(--text-muted);">(optional)</span></span>
+        <button type="button" id="publishVideoClearBtn" onclick="clearPublishVideoSelection()" style="display:none;background:none;border:none;color:var(--text-muted);font-size:0.42rem;cursor:pointer;text-decoration:underline;">Remove</button>
+      </div>
+      <div id="publishVideoIdleState">
+        <button type="button" onclick="$('publishVideoFileInput')?.click()" style="width:100%;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.46rem;padding:8px;border-radius:var(--radius);cursor:pointer;text-transform:uppercase;letter-spacing:0.04em;">+ Add Music Video</button>
+        <div style="font-size:0.38rem;color:var(--text-muted);margin-top:4px;">MP4, WebM, or MOV · up to 500MB</div>
+      </div>
+      <input type="file" id="publishVideoFileInput" accept="video/mp4,video/webm,video/quicktime" style="display:none;" />
+      <div id="publishVideoProgressWrap" style="display:none;">
+        <div style="font-size:0.44rem;color:var(--text-muted);margin-bottom:3px;display:flex;justify-content:space-between;">
+          <span id="publishVideoStatus">Uploading…</span>
+          <span id="publishVideoPercent"></span>
+        </div>
+        <div class="cloud-upload-progress"><div class="cloud-upload-bar" id="publishVideoBar"></div></div>
+      </div>
+      <div id="publishVideoReadyState" style="display:none;font-size:0.46rem;color:var(--accent3);">✓ <span id="publishVideoReadyName"></span> ready to attach</div>
+    </div>
+
     <div id="publishTrackStatus" style="font-size:0.42rem;color:var(--text-muted);margin-bottom:10px;min-height:1.2em;"></div>
     <button id="publishTrackSubmitBtn" style="width:100%;background:var(--accent);color:var(--bg);border:none;font-family:'Unbounded',sans-serif;font-weight:700;font-size:0.52rem;padding:10px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.05em;text-transform:uppercase;margin-bottom:8px;">Publish</button>
     <button class="support-close-btn" onclick="closePublishTrackModal()">Cancel</button>
@@ -3324,6 +3313,60 @@ body.oled-mode {
     <div id="trackAnalyticsSubtitle" style="font-size:0.46rem;color:var(--text-dim);margin-bottom:14px;"></div>
     <div id="trackAnalyticsBody">
       <div class="empty-panel" style="font-size:0.46rem;">Loading…</div>
+    </div>
+  </div>
+</div>
+
+<!-- Music Video Player — FREQ-owned controls over a plain <video> element
+     (native controls disabled). Opened via openVideoPlayer(trackId, title).
+     The "Play Audio" tab hands off to the existing global queue/player
+     (playPublishedTrack) and closes this overlay — video playback never
+     touches PlaybackManager/state.queue, by design, since this is a
+     page-local viewing mode, not a queueable item. -->
+<div class="lyrics-overlay above-dash" id="videoPlayerOverlay">
+  <div class="video-player-panel">
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:10px;">
+      <div>
+        <div class="lyrics-title" style="font-size:0.65rem;margin-bottom:2px;" id="videoPlayerTitle">—</div>
+        <div style="font-size:0.44rem;color:var(--text-dim);" id="videoPlayerArtist"></div>
+      </div>
+      <button onclick="closeVideoPlayer()" style="background:none;border:none;color:var(--text-muted);font-size:1.1rem;cursor:pointer;line-height:1;">✕</button>
+    </div>
+
+    <div class="video-player-mode-tabs">
+      <button class="video-player-mode-btn active" id="videoPlayerModeVideoBtn" onclick="setVideoPlayerMode('video')">🎬 Watch Video</button>
+      <button class="video-player-mode-btn" id="videoPlayerModeAudioBtn" onclick="setVideoPlayerMode('audio')">▶ Play Audio</button>
+    </div>
+
+    <div class="video-player-stage" id="videoPlayerStage">
+      <video id="videoPlayerEl" playsinline></video>
+      <div class="video-player-poster" id="videoPlayerPoster">
+        <div class="video-player-poster-play">▶</div>
+      </div>
+      <div class="video-player-loading" id="videoPlayerLoading">Loading…</div>
+
+      <div class="video-player-controls" id="videoPlayerControls">
+        <div class="video-player-seekbar" id="videoPlayerSeekbar">
+          <div class="video-player-seekbar-fill" id="videoPlayerSeekFill"></div>
+          <div class="video-player-seekbar-handle" id="videoPlayerSeekHandle"></div>
+        </div>
+        <div class="video-player-controls-row">
+          <button class="video-player-btn" id="videoPlayerPlayBtn" onclick="toggleVideoPlayback()" title="Play/Pause">▶</button>
+          <span class="video-player-time"><span id="videoPlayerCurrentTime">0:00</span> / <span id="videoPlayerDuration">0:00</span></span>
+          <div class="video-player-spacer"></div>
+          <input type="range" class="video-player-volume" id="videoPlayerVolume" min="0" max="1" step="0.01" value="1" title="Volume" />
+          <button class="video-player-btn" id="videoPlayerMuteBtn" onclick="toggleVideoMute()" title="Mute">🔊</button>
+          <button class="video-player-btn" onclick="toggleVideoFullscreen()" title="Fullscreen">⛶</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="video-player-meta-row">
+      <div class="video-player-stats" id="videoPlayerStats">—</div>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <button id="videoPlayerLikeBtn" onclick="toggleVideoPlayerLike()" style="background:none;border:none;color:var(--text-muted);font-size:0.6rem;cursor:pointer;" title="Like">♥</button>
+        <button onclick="openReportModal('video', _videoPlayerTrackId, _videoPlayerTitle)" style="background:none;border:none;color:var(--text-muted);font-size:0.5rem;cursor:pointer;opacity:0.7;" title="Report">⚑</button>
+      </div>
     </div>
   </div>
 </div>
@@ -3667,99 +3710,12 @@ body.oled-mode {
           <div id="dashPostsList" style="display:flex;flex-direction:column;gap:8px;"></div>
         </div>
 
-        <!-- Analytics: full artist insights dashboard — Overview, Plays
-             Over Time, Top Tracks, Release Performance, Audience, Activity,
-             Engagement. Each sub-tab lazy-loads its own data on first visit
-             (see analyticsSubtabsLoaded in setAnalyticsSubtab), mirroring
-             the same lazy-per-section pattern setDashSection already uses
-             for the top-level nav. -->
+        <!-- Analytics: the full stats breakdown, same numbers as Overview's
+             top cards but with the complete set (chart rank, likes, etc),
+             same data source as the old Stats tab. -->
         <div id="dashSectionAnalytics" class="dash-section" style="display:none;">
-          <div class="analytics-subtabs">
-            <button class="analytics-subtab-btn active" data-analytics-tab="overview" onclick="setAnalyticsSubtab('overview')">Overview</button>
-            <button class="analytics-subtab-btn" data-analytics-tab="plays" onclick="setAnalyticsSubtab('plays')">Plays Over Time</button>
-            <button class="analytics-subtab-btn" data-analytics-tab="toptracks" onclick="setAnalyticsSubtab('toptracks')">Top Tracks</button>
-            <button class="analytics-subtab-btn" data-analytics-tab="releases" onclick="setAnalyticsSubtab('releases')">Releases</button>
-            <button class="analytics-subtab-btn" data-analytics-tab="audience" onclick="setAnalyticsSubtab('audience')">Audience</button>
-            <button class="analytics-subtab-btn" data-analytics-tab="activity" onclick="setAnalyticsSubtab('activity')">Activity</button>
-            <button class="analytics-subtab-btn" data-analytics-tab="engagement" onclick="setAnalyticsSubtab('engagement')">Engagement</button>
-          </div>
-
-          <!-- Overview: the original stat cards, untouched. -->
-          <div id="analyticsPaneOverview" class="analytics-pane active">
-            <div class="dash-section-label">Performance</div>
-            <div id="dashStatsList" class="dash-stat-grid"></div>
-          </div>
-
-          <!-- Plays Over Time: primary visual element of the dashboard.
-               Daily series from the server, rolled up to weekly/monthly
-               client-side so one fetch per range covers all granularities. -->
-          <div id="analyticsPanePlays" class="analytics-pane">
-            <div class="analytics-chart-card">
-              <div class="analytics-chart-toolbar">
-                <div>
-                  <div class="analytics-chart-total" id="analyticsChartTotal">—</div>
-                  <div class="analytics-chart-total-label" id="analyticsChartTotalLabel">Plays</div>
-                </div>
-                <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
-                  <div class="analytics-granularity-group" id="analyticsGranularityGroup">
-                    <button class="analytics-range-btn active" data-granularity="daily" onclick="setAnalyticsGranularity('daily')">Daily</button>
-                    <button class="analytics-range-btn" data-granularity="weekly" onclick="setAnalyticsGranularity('weekly')">Weekly</button>
-                    <button class="analytics-range-btn" data-granularity="monthly" onclick="setAnalyticsGranularity('monthly')">Monthly</button>
-                  </div>
-                  <div class="analytics-range-group" id="analyticsRangeGroup">
-                    <button class="analytics-range-btn active" data-range="7d" onclick="setAnalyticsRange('7d')">7D</button>
-                    <button class="analytics-range-btn" data-range="30d" onclick="setAnalyticsRange('30d')">30D</button>
-                    <button class="analytics-range-btn" data-range="90d" onclick="setAnalyticsRange('90d')">90D</button>
-                    <button class="analytics-range-btn" data-range="all" onclick="setAnalyticsRange('all')">All Time</button>
-                  </div>
-                </div>
-              </div>
-              <div class="analytics-chart-svg-wrap" id="analyticsChartWrap">
-                <div class="analytics-chart-empty">Loading…</div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Top Tracks: best-performing tracks, sorted by plays. Reuses
-               GET /api/artists/:id/tracks?sort=plays (the same endpoint the
-               public profile's discography section already calls). -->
-          <div id="analyticsPaneTopTracks" class="analytics-pane">
-            <div class="dash-section-label">Top Tracks</div>
-            <div id="analyticsTopTracksList" class="dash-card"></div>
-          </div>
-
-          <!-- Release Performance: per-release plays/likes/track count,
-               reuses GET /api/artists/:id/releases. -->
-          <div id="analyticsPaneReleases" class="analytics-pane">
-            <div class="dash-section-label">Release Performance</div>
-            <div id="analyticsReleasesGrid" class="analytics-release-grid"></div>
-          </div>
-
-          <!-- Audience: listener insights. Geography/returning-vs-new are
-               not tracked anywhere in this schema yet, so this is honest
-               about what's real (monthly listeners, already on Overview)
-               vs. not yet supported, rather than fabricating numbers. -->
-          <div id="analyticsPaneAudience" class="analytics-pane">
-            <div class="dash-section-label">Audience</div>
-            <div class="dash-stat-grid" id="analyticsAudienceStatGrid" style="margin-bottom:14px;"></div>
-            <div class="empty-panel" style="font-size:0.46rem;">No audience data available yet.<br/>Listener geography, country/city breakdown, and returning vs. new listeners are planned — this section will populate automatically once that tracking ships.</div>
-          </div>
-
-          <!-- Activity: recent events referencing this artist, reuses
-               GET /api/artists/:id/activity (newest first, already paginated
-               server-side). -->
-          <div id="analyticsPaneActivity" class="analytics-pane">
-            <div class="dash-section-label">Recent Activity</div>
-            <div id="analyticsActivityList" class="dash-card"></div>
-          </div>
-
-          <!-- Engagement: likes/comments/reposts/followers gained, backed by
-               GET /api/artists/:id/engagement. Profile visits has no
-               tracking source in this schema, surfaced honestly below. -->
-          <div id="analyticsPaneEngagement" class="analytics-pane">
-            <div class="dash-section-label">Engagement</div>
-            <div id="analyticsEngagementStatGrid" class="dash-stat-grid"></div>
-          </div>
+          <div class="dash-section-label">Performance</div>
+          <div id="dashStatsList" class="dash-stat-grid"></div>
         </div>
 
         <!-- Settings: genre + social links, backed by the same
@@ -6208,13 +6164,17 @@ async function loadArtistTopTracks(artistId) {
     if (!tracks.length) { list.innerHTML = ''; return; }
     list.innerHTML = tracks.map((t, i) => {
       const credits = formatCollaboratorCredits(t.collaborators);
+      const watchVideoBtn = t.hasVideo
+        ? `<button onclick="event.stopPropagation(); openVideoPlayer('${t.id}', ${JSON.stringify(t.title || '')}, ${JSON.stringify(viewedArtist?.name || '')})" style="background:none;border:1px solid var(--accent3);color:var(--accent3);font-family:'Space Mono',monospace;font-size:0.42rem;padding:4px 8px;border-radius:var(--radius);cursor:pointer;flex-shrink:0;letter-spacing:0.04em;text-transform:uppercase;" title="Watch Video">🎬 Video</button>`
+        : '';
       return `
       <div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border);">
         <div style="width:16px;flex-shrink:0;text-align:right;font-size:0.46rem;color:var(--text-dim);">${i + 1}</div>
         <div style="flex:1;min-width:0;cursor:pointer;" onclick="playPublishedTrack('${t.id}')">
-          <div style="font-size:0.55rem;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(t.title)}${t.isExplicit ? ' <span class="explicit-badge">E</span>' : ''}</div>
+          <div style="font-size:0.55rem;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(t.title)}${t.isExplicit ? ' <span class="explicit-badge">E</span>' : ''}${t.hasVideo ? ' 🎬' : ''}</div>
           <div style="font-size:0.42rem;color:var(--text-muted);">${formatCompactCount(t.playCount || 0)} play${t.playCount === 1 ? '' : 's'}${credits ? ' · ' + credits : ''}</div>
         </div>
+        ${watchVideoBtn}
         <button onclick="event.stopPropagation(); toggleTrackLyricsSection('${t.id}')" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.42rem;padding:4px 8px;border-radius:var(--radius);cursor:pointer;flex-shrink:0;letter-spacing:0.04em;text-transform:uppercase;" title="Lyrics">Lyrics</button>
         <button onclick="event.stopPropagation(); queuePublishedTrack('${t.id}')" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.42rem;padding:4px 8px;border-radius:var(--radius);cursor:pointer;flex-shrink:0;letter-spacing:0.04em;text-transform:uppercase;" title="Add to queue">+ Queue</button>
         ${AUTH.loggedIn ? `<button onclick="${escapeHtml(`event.stopPropagation();openReportModal('track','${t.id}',${JSON.stringify(t.title || '')})`)}" style="background:none;border:none;color:var(--text-muted);font-size:0.5rem;cursor:pointer;flex-shrink:0;padding:2px 4px;opacity:0.6;" title="Report">⚑</button>` : ''}
@@ -6705,7 +6665,6 @@ function openArtistDashboardModal() {
 function closeArtistDashboardModal() {
   $('artistDashboardOverlay')?.classList.remove('open');
   dashSectionsLoaded.clear();
-  analyticsSubtabsLoaded.clear();
 }
 
 // Lazy-loads each section's data on first visit per modal-open (not cached
@@ -6806,6 +6765,7 @@ async function openPublishTrackModal(cloudFileId) {
   $('publishCoverPreviewHint').style.display = 'block';
   $('publishTrackStatus').textContent = '';
   $('publishTrackSourceFilename').textContent = '';
+  resetPublishVideoSelection();
 
   // Populate the release dropdown from the cached releases list — refresh
   // first in case a release was created since the dashboard last loaded.
@@ -6820,6 +6780,7 @@ function closePublishTrackModal() {
   $('publishTrackOverlay')?.classList.remove('open');
   publishingCloudFileId = null;
   publishingCoverUrl = null;
+  resetPublishVideoSelection();
 }
 
 $('publishCoverPreviewWrap')?.addEventListener('click', () => $('publishCoverFileInput')?.click());
@@ -6840,6 +6801,135 @@ $('publishCoverFileInput')?.addEventListener('change', async function() {
     $('publishCoverPreviewHint').style.display = 'none';
   } catch (err) {
     showToast('Upload Error', err.message || 'Could not upload cover art.', 'error');
+  }
+});
+
+// ── Music Video upload (direct-to-storage) ──────────────────────────────
+// Three steps, none of which ever sends video bytes through our own Node
+// server (see the upload-url/confirm route comments in server.js):
+//   1. POST /api/videos/upload-url  → pending video_files row + signed PUT url
+//   2. XHR PUT straight to that signed url (gives us upload progress, which
+//      fetch() cannot report for request bodies)
+//   3. POST /api/videos/:id/confirm → flips the row to 'ready', records
+//      duration/dimensions read client-side from the file itself
+// publishVideoFileId is null until step 3 succeeds; the submit handler
+// below only attaches a video to the track if this is set.
+let publishVideoFileId = null;
+const PUBLISH_VIDEO_MAX_BYTES = 500 * 1048576; // keep in sync with VIDEO_MAX_BYTES in server.js
+const PUBLISH_VIDEO_MIME_TYPES = ['video/mp4', 'video/webm', 'video/quicktime'];
+
+function resetPublishVideoSelection() {
+  publishVideoFileId = null;
+  $('publishVideoIdleState').style.display = '';
+  $('publishVideoProgressWrap').style.display = 'none';
+  $('publishVideoReadyState').style.display = 'none';
+  $('publishVideoClearBtn').style.display = 'none';
+  $('publishVideoBar').style.width = '0%';
+}
+function clearPublishVideoSelection() {
+  // Best-effort cleanup of the orphaned video_files row — if this fails
+  // (network blip), it's harmless dead weight server-side, not a user-
+  // visible problem, since it was never attached to anything.
+  if (publishVideoFileId) {
+    fetch(`/api/videos/${encodeURIComponent(publishVideoFileId)}`, {
+      method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: AUTH.token }),
+    }).catch(() => {});
+  }
+  resetPublishVideoSelection();
+}
+
+// Reads duration/width/height directly from the video file via a detached
+// <video> element — same "read metadata client-side before upload" idea as
+// extractID3Meta for audio, just using the browser's native video decoder
+// instead of a JS ID3 parser.
+function extractVideoMeta(file) {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file);
+    const v = document.createElement('video');
+    v.preload = 'metadata';
+    const cleanup = () => URL.revokeObjectURL(url);
+    v.onloadedmetadata = () => {
+      const meta = { duration: v.duration || null, width: v.videoWidth || null, height: v.videoHeight || null };
+      cleanup();
+      resolve(meta);
+    };
+    v.onerror = () => { cleanup(); resolve({ duration: null, width: null, height: null }); };
+    v.src = url;
+  });
+}
+
+function uploadVideoToSignedUrlXHR(signedUrl, file, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.upload.addEventListener('progress', e => {
+      if (e.lengthComputable) onProgress(e.loaded / e.total);
+    });
+    xhr.addEventListener('load', () => {
+      if (xhr.status >= 200 && xhr.status < 300) resolve();
+      else reject(new Error(`Video upload failed (${xhr.status}).`));
+    });
+    xhr.addEventListener('error', () => reject(new Error('Network error during video upload.')));
+    xhr.open('PUT', signedUrl);
+    xhr.setRequestHeader('Content-Type', file.type || 'video/mp4');
+    xhr.send(file);
+  });
+}
+
+$('publishVideoFileInput')?.addEventListener('change', async function() {
+  const file = this.files?.[0]; this.value = '';
+  if (!file) return;
+  if (!PUBLISH_VIDEO_MIME_TYPES.includes(file.type)) {
+    showToast('Unsupported Format', 'Upload MP4, WebM, or MOV.', 'error');
+    return;
+  }
+  if (file.size > PUBLISH_VIDEO_MAX_BYTES) {
+    showToast('File Too Large', `Video exceeds the ${PUBLISH_VIDEO_MAX_BYTES / 1048576}MB limit.`, 'error');
+    return;
+  }
+
+  $('publishVideoIdleState').style.display = 'none';
+  $('publishVideoProgressWrap').style.display = '';
+  $('publishVideoStatus').textContent = 'Starting upload…';
+  $('publishVideoBar').style.width = '0%';
+
+  try {
+    // Step 1 — pending row + signed upload URL
+    const urlRes = await fetch('/api/videos/upload-url', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: AUTH.token, filename: file.name, mimeType: file.type, size: file.size }),
+    });
+    const urlData = await urlRes.json();
+    if (!urlRes.ok) {
+      if (urlRes.status === 401) { handleTokenExpiry(); return; }
+      throw new Error(urlData.error || 'Could not start video upload.');
+    }
+
+    // Step 2 — direct PUT to Supabase Storage, bytes never touch our server
+    $('publishVideoStatus').textContent = 'Uploading…';
+    await uploadVideoToSignedUrlXHR(urlData.uploadUrl, file, frac => {
+      $('publishVideoBar').style.width = Math.round(frac * 100) + '%';
+      $('publishVideoPercent').textContent = Math.round(frac * 100) + '%';
+    });
+
+    // Step 3 — confirm, with metadata read from the file itself
+    $('publishVideoStatus').textContent = 'Finishing up…';
+    const meta = await extractVideoMeta(file);
+    const confirmRes = await fetch(`/api/videos/${encodeURIComponent(urlData.videoFileId)}/confirm`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: AUTH.token, duration: meta.duration, width: meta.width, height: meta.height }),
+    });
+    const confirmData = await confirmRes.json();
+    if (!confirmRes.ok) throw new Error(confirmData.error || 'Could not finish video upload.');
+
+    publishVideoFileId = confirmData.id;
+    $('publishVideoProgressWrap').style.display = 'none';
+    $('publishVideoReadyState').style.display = '';
+    $('publishVideoReadyName').textContent = file.name.length > 30 ? file.name.slice(0, 27) + '…' : file.name;
+    $('publishVideoClearBtn').style.display = '';
+  } catch (err) {
+    showToast('Video Upload Error', err.message || 'Could not upload video.', 'error');
+    resetPublishVideoSelection();
   }
 });
 
@@ -6865,6 +6955,27 @@ $('publishTrackSubmitBtn')?.addEventListener('click', async () => {
       if (res.status === 401) { handleTokenExpiry(); return; }
       throw new Error(data.error || 'Could not publish track.');
     }
+
+    // Attach the already-uploaded video (if any) now that the track has an
+    // id — this is a best-effort second call; if it fails, the track is
+    // still published successfully and the artist can attach the video
+    // afterward via the Tracks tab, so a video-attach failure must never
+    // be reported as a publish failure.
+    if (publishVideoFileId) {
+      try {
+        const videoRes = await fetch(`${TRACKS_BASE}/${encodeURIComponent(data.id)}/video`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: AUTH.token, videoFileId: publishVideoFileId, thumbnailUrl: publishingCoverUrl || data.coverUrl || undefined }),
+        });
+        if (!videoRes.ok) {
+          const videoErr = await videoRes.json().catch(() => ({}));
+          showToast('Video Not Attached', videoErr.error || 'Track published, but the video could not be attached. Try again from the Tracks tab.', 'error');
+        }
+      } catch (_) {
+        showToast('Video Not Attached', 'Track published, but the video could not be attached. Try again from the Tracks tab.', 'error');
+      }
+    }
+
     showToast('Published', `"${data.title}" is now live.`, 'success');
     closePublishTrackModal();
     loadDashPublishable();
@@ -7495,11 +7606,42 @@ async function openTrackAnalyticsModal(trackId, trackTitle) {
           </div>`).join('')
       : '<div style="font-size:0.44rem;color:var(--text-muted);padding:6px 0;">No plays logged yet.</div>';
 
+    // Video analytics block — only rendered when the track actually has a
+    // video attached, and built entirely from data.video's SEPARATE
+    // counters (never reusing totalPlays/totalPlays7d above), per the
+    // explicit "do not merge video plays into audio plays" requirement.
+    // Matches the spec's own display example shape: Track Plays / Video
+    // Plays shown side by side, not combined into one number.
+    const videoHtml = data.video ? `
+      <div style="margin:14px 0;padding-top:12px;border-top:1px solid var(--border);">
+        <div style="font-size:0.4rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:8px;">🎬 Video Analytics</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
+          <div style="background:var(--surface2);border-radius:var(--radius);padding:10px;text-align:center;">
+            <div style="font-family:'Unbounded',sans-serif;font-size:0.85rem;font-weight:700;color:var(--accent3);">${formatCompactCount(data.video.videoPlays)}</div>
+            <div style="font-size:0.4rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;margin-top:2px;">Video Plays</div>
+          </div>
+          <div style="background:var(--surface2);border-radius:var(--radius);padding:10px;text-align:center;">
+            <div style="font-family:'Unbounded',sans-serif;font-size:0.85rem;font-weight:700;color:var(--text-main);">${data.video.completionRate != null ? Math.round(data.video.completionRate * 100) + '%' : '—'}</div>
+            <div style="font-size:0.4rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;margin-top:2px;">Completion Rate</div>
+            ${data.video.completionRate == null ? '<div style="font-size:0.36rem;color:var(--text-muted);opacity:0.7;margin-top:1px;">No completed views yet</div>' : ''}
+          </div>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:0.42rem;color:var(--text-dim);">
+          <span>Watch starts: ${formatCompactCount(data.video.watchStarts)}</span>
+          <span>Duration: ${data.video.duration ? formatDuration(data.video.duration) : '—'}</span>
+        </div>
+      </div>
+    ` : `
+      <div style="margin:14px 0;padding-top:12px;border-top:1px solid var(--border);font-size:0.44rem;color:var(--text-muted);">
+        No music video attached to this track yet.
+      </div>
+    `;
+
     $('trackAnalyticsBody').innerHTML = `
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px;">
         <div style="background:var(--surface2);border-radius:var(--radius);padding:10px;text-align:center;">
           <div style="font-family:'Unbounded',sans-serif;font-size:0.85rem;font-weight:700;color:var(--accent3);">${formatCompactCount(data.totalPlays)}</div>
-          <div style="font-size:0.4rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;margin-top:2px;">Total Plays</div>
+          <div style="font-size:0.4rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;margin-top:2px;">Track Plays</div>
         </div>
         <div style="background:var(--surface2);border-radius:var(--radius);padding:10px;text-align:center;">
           <div style="font-family:'Unbounded',sans-serif;font-size:0.85rem;font-weight:700;color:var(--accent);">${formatCompactCount(data.totalPlays7d)}</div>
@@ -7515,6 +7657,7 @@ async function openTrackAnalyticsModal(trackId, trackTitle) {
           <div style="font-size:0.36rem;color:var(--text-muted);opacity:0.7;margin-top:1px;">Not yet supported</div>
         </div>
       </div>
+      ${videoHtml}
       <div style="margin-bottom:10px;">
         <div style="font-size:0.4rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:3px;">Release</div>
         <div style="font-size:0.48rem;color:var(--text-main);">${releaseHtml}</div>
@@ -7531,15 +7674,239 @@ async function openTrackAnalyticsModal(trackId, trackTitle) {
   }
 }
 
+// ── Music Video Player ───────────────────────────────────────────────────
+// FREQ-owned controls over a plain <video> element (native controls
+// disabled via the absence of the `controls` attribute in markup — see
+// videoPlayerOverlay). Deliberately NOT wired into PlaybackManager or
+// state.queue: this is a page-local "watching" mode opened from a track
+// row, not a queueable item, so switching to it never disturbs whatever
+// is already playing in the global audio player. Switching to the "Play
+// Audio" tab inside this overlay is the one place these two systems
+// touch, and even then it's a clean hand-off (pause video, close this
+// overlay, call the existing playPublishedTrack) rather than a merge.
+let _videoPlayerTrackId = null;
+let _videoPlayerTitle = '';
+let _videoPlayerLikeCount = 0;
+let _videoPlayerLikedByMe = false;
+let _videoWatchStartSent = false;   // has this open/play session already counted as a watch-start?
+let _videoControlsHideTimer = null;
+let _videoSeekDragging = false;
+
+function $videoEl() { return $('videoPlayerEl'); }
+
+async function openVideoPlayer(trackId, trackTitle, artistName, artistId) {
+  _videoPlayerTrackId = trackId;
+  _videoPlayerTitle = trackTitle || '';
+  _videoWatchStartSent = false;
+
+  $('videoPlayerTitle').textContent = trackTitle || 'Music Video';
+  $('videoPlayerArtist').textContent = artistName || '';
+  $('videoPlayerStats').textContent = 'Loading…';
+  $('videoPlayerPoster').style.display = 'flex';
+  $('videoPlayerLoading').style.display = 'none';
+  $videoEl().removeAttribute('src');
+  setVideoPlayerMode('video');
+  $('videoPlayerOverlay')?.classList.add('open');
+  playSfx('click');
+
+  try {
+    const params = new URLSearchParams(AUTH.loggedIn ? { token: AUTH.token } : {});
+    const res = await fetch(`${TRACKS_BASE}/${encodeURIComponent(trackId)}/video-stream?${params}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not load video.');
+
+    $videoEl().src = data.url;
+    $videoEl().poster = data.thumbnailUrl || '';
+    if (data.thumbnailUrl) $('videoPlayerPoster').style.backgroundImage = `url('${data.thumbnailUrl}')`;
+    $('videoPlayerArtist').textContent = artistName || data.artistName || '';
+    _videoPlayerLikeCount = data.likeCount || 0;
+    _videoPlayerLikedByMe = !!data.likedByMe;
+    updateVideoPlayerLikeBtn();
+    $('videoPlayerStats').textContent = `${formatCompactCount(data.playCount || 0)} video play${data.playCount === 1 ? '' : 's'}${data.duration ? ' · ' + formatDuration(data.duration) : ''}`;
+    $('videoPlayerDuration').textContent = data.duration ? formatDuration(data.duration) : '0:00';
+  } catch (err) {
+    $('videoPlayerStats').textContent = '';
+    showToast('Video Error', err.message || 'Could not load video.', 'error');
+    closeVideoPlayer();
+  }
+}
+
+function closeVideoPlayer() {
+  const v = $videoEl();
+  // Fire a best-effort 'end' watch event with however much was watched
+  // before the viewer closed the player — this is the main place an 'end'
+  // beacon gets sent for a normal "watched some, then closed it" session.
+  if (_videoPlayerTrackId && v && v.currentTime > 0) {
+    sendVideoWatchEvent('end', v.currentTime);
+  }
+  v?.pause();
+  v?.removeAttribute('src');
+  v?.load();
+  $('videoPlayerOverlay')?.classList.remove('open');
+  _videoPlayerTrackId = null;
+}
+
+// Mode switch: 'video' shows this overlay's own player; 'audio' hands off
+// to the existing global queue/player and closes this overlay entirely —
+// it does NOT keep both visible/active at once, avoiding any double-audio
+// or competing-playback confusion.
+function setVideoPlayerMode(mode) {
+  $('videoPlayerModeVideoBtn').classList.toggle('active', mode === 'video');
+  $('videoPlayerModeAudioBtn').classList.toggle('active', mode === 'audio');
+  if (mode === 'audio') {
+    const trackId = _videoPlayerTrackId;
+    closeVideoPlayer();
+    if (trackId) playPublishedTrack(trackId);
+  }
+}
+
+function toggleVideoPlayback() {
+  const v = $videoEl();
+  if (!v.src) return;
+  if (v.paused) { v.play().catch(() => {}); } else { v.pause(); }
+}
+
+$videoEl()?.addEventListener('play', () => {
+  $('videoPlayerPlayBtn').textContent = '⏸';
+  $('videoPlayerPoster').style.display = 'none';
+  if (!_videoWatchStartSent) {
+    _videoWatchStartSent = true;
+    sendVideoWatchEvent('start');
+  }
+});
+$videoEl()?.addEventListener('pause', () => { $('videoPlayerPlayBtn').textContent = '▶'; });
+$videoEl()?.addEventListener('waiting', () => { $('videoPlayerLoading').style.display = 'flex'; });
+$videoEl()?.addEventListener('playing', () => { $('videoPlayerLoading').style.display = 'none'; });
+$videoEl()?.addEventListener('ended', () => {
+  $('videoPlayerPlayBtn').textContent = '▶';
+  $('videoPlayerPoster').style.display = 'flex';
+  // A finished video is by definition a 100%-watched session — send the
+  // real duration as watchedSeconds rather than whatever currentTime
+  // happens to read at the 'ended' instant (some browsers report it as 0).
+  const v = $videoEl();
+  if (v.duration) sendVideoWatchEvent('end', v.duration);
+});
+$videoEl()?.addEventListener('timeupdate', () => {
+  const v = $videoEl();
+  if (!v.duration || _videoSeekDragging) return;
+  const frac = v.currentTime / v.duration;
+  $('videoPlayerSeekFill').style.width = (frac * 100) + '%';
+  $('videoPlayerSeekHandle').style.left = (frac * 100) + '%';
+  $('videoPlayerCurrentTime').textContent = formatDuration(v.currentTime);
+});
+$videoEl()?.addEventListener('loadedmetadata', () => {
+  $('videoPlayerDuration').textContent = formatDuration($videoEl().duration || 0);
+});
+$('videoPlayerPoster')?.addEventListener('click', toggleVideoPlayback);
+
+// Seekbar — click-to-seek and drag-to-scrub, same pointer-events pattern
+// as a typical custom range control (pointerdown starts the drag,
+// pointermove while dragging updates both the visual fill AND v.currentTime
+// live, pointerup commits and resumes the timeupdate-driven fill).
+function seekFromPointerEvent(e) {
+  const bar = $('videoPlayerSeekbar');
+  const v = $videoEl();
+  if (!v.duration) return;
+  const rect = bar.getBoundingClientRect();
+  const frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+  v.currentTime = frac * v.duration;
+  $('videoPlayerSeekFill').style.width = (frac * 100) + '%';
+  $('videoPlayerSeekHandle').style.left = (frac * 100) + '%';
+  $('videoPlayerCurrentTime').textContent = formatDuration(v.currentTime);
+}
+$('videoPlayerSeekbar')?.addEventListener('pointerdown', e => {
+  _videoSeekDragging = true;
+  seekFromPointerEvent(e);
+  const onMove = me => seekFromPointerEvent(me);
+  const onUp = () => {
+    _videoSeekDragging = false;
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', onUp);
+  };
+  window.addEventListener('pointermove', onMove);
+  window.addEventListener('pointerup', onUp);
+});
+
+$('videoPlayerVolume')?.addEventListener('input', function() {
+  const v = $videoEl();
+  v.volume = Number(this.value);
+  v.muted = v.volume === 0;
+  $('videoPlayerMuteBtn').textContent = v.muted ? '🔇' : '🔊';
+});
+function toggleVideoMute() {
+  const v = $videoEl();
+  v.muted = !v.muted;
+  $('videoPlayerMuteBtn').textContent = v.muted ? '🔇' : '🔊';
+  if (!v.muted && v.volume === 0) { v.volume = 1; $('videoPlayerVolume').value = '1'; }
+}
+function toggleVideoFullscreen() {
+  const stage = $('videoPlayerStage');
+  if (!document.fullscreenElement) stage.requestFullscreen?.().catch(() => {});
+  else document.exitFullscreen?.().catch(() => {});
+}
+
+// Auto-hide controls over the video after a few seconds of no pointer
+// movement, same idea as every other video platform's "controls fade
+// during playback" affordance — but only while actually playing; paused
+// always shows controls so there's never a moment the player looks dead.
+$('videoPlayerStage')?.addEventListener('pointermove', () => {
+  const stage = $('videoPlayerStage');
+  stage.classList.remove('controls-hidden');
+  clearTimeout(_videoControlsHideTimer);
+  _videoControlsHideTimer = setTimeout(() => {
+    if (!$videoEl().paused) stage.classList.add('controls-hidden');
+  }, 2500);
+});
+
+// No autoplay with sound — browsers enforce this anyway via autoplay
+// policy, but this is belt-and-suspenders: the <video> element has no
+// `autoplay` attribute in markup at all, and JS never calls .play() on
+// open, only in response to the explicit poster-click/play-button.
+
+function sendVideoWatchEvent(event, watchedSeconds) {
+  if (!_videoPlayerTrackId) return;
+  // Best-effort, fire-and-forget — exactly like logPlay for audio. Never
+  // surfaced to the viewer if it fails; analytics shouldn't be able to
+  // break playback.
+  fetch(`${TRACKS_BASE}/${encodeURIComponent(_videoPlayerTrackId)}/video/watch-event`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ event, watchedSeconds, token: AUTH.loggedIn ? AUTH.token : undefined }),
+  }).catch(() => {});
+}
+
+function updateVideoPlayerLikeBtn() {
+  const btn = $('videoPlayerLikeBtn');
+  if (btn) btn.style.color = _videoPlayerLikedByMe ? 'var(--accent2)' : 'var(--text-muted)';
+}
+async function toggleVideoPlayerLike() {
+  if (!AUTH.loggedIn) { showToast('Sign in required', 'Please sign in to like tracks.', 'error'); return; }
+  if (!_videoPlayerTrackId) return;
+  const wasLiked = _videoPlayerLikedByMe;
+  const method = wasLiked ? 'DELETE' : 'POST';
+  try {
+    const res = await fetch(`${TRACKS_BASE}/${encodeURIComponent(_videoPlayerTrackId)}/like`, {
+      method, headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: AUTH.token }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not update like.');
+    _videoPlayerLikedByMe = !wasLiked;
+    _videoPlayerLikeCount = data.likeCount;
+    updateVideoPlayerLikeBtn();
+  } catch (err) {
+    showToast('Like failed', err.message, 'error');
+  }
+}
+
 // ── Report modal ─────────────────────────────────────────────────────────────
-// Generic across all 5 reportable target types. Mirrors the
+// Generic across all 6 reportable target types. Mirrors the
 // collaborator-modal pattern: one small state object + one set of handlers
 // serving every caller, rather than a bespoke modal per content type.
 //
-// targetType must be one of: 'artist' | 'track' | 'release' | 'post' | 'user'
+// targetType must be one of: 'artist' | 'track' | 'release' | 'post' | 'user' | 'video'
 // — these strings are sent verbatim to POST /api/reports and must match
 // both that route's REPORT_TARGET_TYPES allow-list and the `reports` table's
-// CHECK constraint in Supabase. Do not introduce a 6th type or rename one of
+// CHECK constraint in Supabase. Do not introduce a 7th type or rename one of
 // these without updating both places.
 let reportTarget = { type: null, id: null, title: null };
 let reportFounderAcknowledged = false;
@@ -7574,7 +7941,7 @@ function openReportModal(targetType, targetId, targetTitle) {
   reportTarget = { type: targetType, id: String(targetId), title: targetTitle || '' };
   reportFounderAcknowledged = false;
 
-  const labels = { artist: 'Artist', track: 'Track', release: 'Release', post: 'Post', user: 'User' };
+  const labels = { artist: 'Artist', track: 'Track', release: 'Release', post: 'Post', user: 'User', video: 'Music Video' };
   $('reportSubtitle').textContent = `${labels[targetType] || 'Content'}: ${reportTarget.title || reportTarget.id}`;
   $('reportFounderWarning').style.display = 'none';
   $('reportMainContent').style.display = '';
@@ -7894,399 +8261,7 @@ function loadDashStats() {
   `).join('');
 }
 
-// ── Analytics sub-tabs ───────────────────────────────────────────────────
-// Overview (above) loads immediately since setDashSection already calls
-// loadDashStats for the 'analytics' section. Everything below is its own
-// lazily-loaded facet, tracked separately from dashSectionsLoaded since
-// switching analytics sub-tabs shouldn't require leaving and re-entering
-// the Analytics nav item.
-let analyticsSubtabsLoaded = new Set();
-let analyticsPlaysRange = '30d';
-let analyticsPlaysGranularity = 'daily';
-let analyticsPlaysSeriesCache = null; // raw daily series from the server for the current range, re-rolled client-side per granularity
-
-// Explicit tab-id -> pane-id map rather than string-casing the tab name,
-// since "toptracks" has no natural capitalization split into "TopTracks".
-const ANALYTICS_PANE_IDS = {
-  overview: 'analyticsPaneOverview', plays: 'analyticsPanePlays',
-  toptracks: 'analyticsPaneTopTracks', releases: 'analyticsPaneReleases',
-  audience: 'analyticsPaneAudience', activity: 'analyticsPaneActivity',
-  engagement: 'analyticsPaneEngagement',
-};
-
-function setAnalyticsSubtab(tab) {
-  document.querySelectorAll('.analytics-subtab-btn').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.analyticsTab === tab);
-  });
-  document.querySelectorAll('.analytics-pane').forEach(pane => pane.classList.remove('active'));
-  const pane = $(ANALYTICS_PANE_IDS[tab] || '');
-  if (pane) pane.classList.add('active');
-
-  if (analyticsSubtabsLoaded.has(tab)) return;
-  analyticsSubtabsLoaded.add(tab);
-  if (tab === 'plays')       loadAnalyticsPlays();
-  if (tab === 'toptracks')   loadAnalyticsTopTracks();
-  if (tab === 'releases')    loadAnalyticsReleases();
-  if (tab === 'audience')    loadAnalyticsAudience();
-  if (tab === 'activity')    loadAnalyticsActivity();
-  if (tab === 'engagement')  loadAnalyticsEngagement();
-}
-
-// ── Plays Over Time ──────────────────────────────────────────────────────
-async function loadAnalyticsPlays() {
-  const wrap = $('analyticsChartWrap');
-  if (!wrap || !viewedArtist) return;
-  wrap.innerHTML = '<div class="analytics-chart-empty">Loading…</div>';
-  try {
-    const params = new URLSearchParams({ range: analyticsPlaysRange, token: AUTH.token || '' });
-    const res = await fetch(`${ARTISTS_BASE}/${encodeURIComponent(viewedArtist.id)}/plays-timeseries?${params}`);
-    const data = await res.json();
-    if (!res.ok) {
-      if (res.status === 401) { handleTokenExpiry(); return; }
-      throw new Error(data.error || 'Could not load plays over time.');
-    }
-    analyticsPlaysSeriesCache = data.series || [];
-    renderAnalyticsChart();
-  } catch (err) {
-    wrap.innerHTML = `<div class="analytics-chart-empty">${escapeHtml(err.message || 'Could not load plays over time.')}</div>`;
-    console.error('[loadAnalyticsPlays]', err);
-  }
-}
-
-function setAnalyticsRange(range) {
-  if (range === analyticsPlaysRange) return;
-  analyticsPlaysRange = range;
-  document.querySelectorAll('#analyticsRangeGroup .analytics-range-btn').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.range === range);
-  });
-  loadAnalyticsPlays();
-}
-
-function setAnalyticsGranularity(granularity) {
-  if (granularity === analyticsPlaysGranularity) return;
-  analyticsPlaysGranularity = granularity;
-  document.querySelectorAll('#analyticsGranularityGroup .analytics-range-btn').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.granularity === granularity);
-  });
-  renderAnalyticsChart();
-}
-
-// Rolls the always-daily series from the server up into weekly or monthly
-// buckets for display. Weekly buckets are calendar weeks starting Monday;
-// monthly buckets are calendar months — both computed client-side so a
-// single daily fetch per range serves all three granularity toggles
-// without extra round-trips.
-function rollUpPlaysSeries(series, granularity) {
-  if (granularity === 'daily' || !series.length) return series;
-  const buckets = new Map(); // bucketKey -> { label, plays, sortKey }
-  for (const point of series) {
-    const d = new Date(point.date + 'T00:00:00Z');
-    let key, label, sortKey;
-    if (granularity === 'weekly') {
-      const dow = (d.getUTCDay() + 6) % 7; // Monday=0
-      const monday = new Date(d); monday.setUTCDate(d.getUTCDate() - dow);
-      key = monday.toISOString().slice(0, 10);
-      label = monday.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-      sortKey = key;
-    } else { // monthly
-      key = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
-      label = d.toLocaleDateString(undefined, { month: 'short', year: 'numeric' });
-      sortKey = key;
-    }
-    if (!buckets.has(key)) buckets.set(key, { label, plays: 0, sortKey });
-    buckets.get(key).plays += point.plays;
-  }
-  return [...buckets.values()].sort((a, b) => a.sortKey < b.sortKey ? -1 : 1)
-    .map(b => ({ date: b.label, plays: b.plays }));
-}
-
-// Lightweight inline SVG line chart — no charting library, consistent with
-// FREQ's single-file/minimal-dependency philosophy elsewhere in the app.
-// Renders as an area+line chart with hoverable points; CSS vars drive all
-// color so it follows whichever theme is active.
-function renderAnalyticsChart() {
-  const wrap = $('analyticsChartWrap');
-  if (!wrap) return;
-  const raw = analyticsPlaysSeriesCache || [];
-  const series = rollUpPlaysSeries(raw, analyticsPlaysGranularity);
-  const total = raw.reduce((sum, p) => sum + p.plays, 0);
-  $('analyticsChartTotal').textContent = formatCompactCount(total);
-  $('analyticsChartTotalLabel').textContent = `Plays · ${ANALYTICS_RANGE_LABELS[analyticsPlaysRange] || ''}`;
-
-  if (!series.length || total === 0) {
-    wrap.innerHTML = '<div class="analytics-chart-empty">No plays in this period yet.</div>';
-    return;
-  }
-
-  const W = 700, H = 220, padL = 36, padR = 12, padT = 16, padB = 28;
-  const innerW = W - padL - padR, innerH = H - padT - padB;
-  const maxPlays = Math.max(...series.map(p => p.plays), 1);
-  const stepX = series.length > 1 ? innerW / (series.length - 1) : 0;
-  const yFor = v => padT + innerH - (v / maxPlays) * innerH;
-  const xFor = i => padL + stepX * i;
-
-  const linePoints = series.map((p, i) => `${xFor(i)},${yFor(p.plays)}`).join(' ');
-  const areaPoints = `${padL},${padT + innerH} ${linePoints} ${xFor(series.length - 1)},${padT + innerH}`;
-
-  // Y-axis gridlines at 0/50%/100% of max, with compact labels.
-  const gridLines = [0, 0.5, 1].map(frac => {
-    const y = padT + innerH - frac * innerH;
-    const val = formatCompactCount(Math.round(maxPlays * frac));
-    return `
-      <line x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}" stroke="var(--border)" stroke-width="1" />
-      <text x="${padL - 6}" y="${y + 3}" text-anchor="end" font-size="9" fill="var(--text-muted)" font-family="'Space Mono',monospace">${val}</text>
-    `;
-  }).join('');
-
-  // X-axis labels: show a sparse subset so labels don't collide on long ranges.
-  const labelEvery = Math.max(1, Math.ceil(series.length / 7));
-  const xLabels = series.map((p, i) => {
-    if (i % labelEvery !== 0 && i !== series.length - 1) return '';
-    const label = analyticsPlaysGranularity === 'daily'
-      ? new Date(p.date + 'T00:00:00Z').toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-      : p.date;
-    return `<text x="${xFor(i)}" y="${H - 8}" text-anchor="middle" font-size="9" fill="var(--text-muted)" font-family="'Space Mono',monospace">${escapeHtml(label)}</text>`;
-  }).join('');
-
-  const points = series.map((p, i) => `
-    <circle class="analytics-chart-point" cx="${xFor(i)}" cy="${yFor(p.plays)}" r="3.5"
-      fill="var(--accent)" stroke="var(--bg)" stroke-width="1"
-      onmouseenter="showAnalyticsChartTooltip(event, ${JSON.stringify(p.date)}, ${p.plays})"
-      onmouseleave="hideAnalyticsChartTooltip()" />
-  `).join('');
-
-  wrap.innerHTML = `
-    <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block;" preserveAspectRatio="xMidYMid meet">
-      <defs>
-        <linearGradient id="analyticsAreaFill" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stop-color="var(--accent)" stop-opacity="0.25" />
-          <stop offset="100%" stop-color="var(--accent)" stop-opacity="0" />
-        </linearGradient>
-      </defs>
-      ${gridLines}
-      <polygon points="${areaPoints}" fill="url(#analyticsAreaFill)" />
-      <polyline points="${linePoints}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" />
-      ${points}
-      ${xLabels}
-    </svg>
-    <div class="analytics-chart-tooltip" id="analyticsChartTooltip"></div>
-  `;
-}
-
-const ANALYTICS_RANGE_LABELS = { '7d': 'Last 7 Days', '30d': 'Last 30 Days', '90d': 'Last 90 Days', all: 'All Time' };
-
-function showAnalyticsChartTooltip(evt, dateLabel, plays) {
-  const tip = $('analyticsChartTooltip');
-  const wrap = $('analyticsChartWrap');
-  if (!tip || !wrap) return;
-  const wrapRect = wrap.getBoundingClientRect();
-  const label = analyticsPlaysGranularity === 'daily'
-    ? new Date(dateLabel + 'T00:00:00Z').toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
-    : dateLabel;
-  tip.textContent = `${label}: ${formatCompactCount(plays)} play${plays === 1 ? '' : 's'}`;
-  tip.style.left = `${evt.clientX - wrapRect.left + 10}px`;
-  tip.style.top = `${evt.clientY - wrapRect.top - 28}px`;
-  tip.style.display = 'block';
-}
-function hideAnalyticsChartTooltip() {
-  const tip = $('analyticsChartTooltip');
-  if (tip) tip.style.display = 'none';
-}
-
-// ── Top Tracks ───────────────────────────────────────────────────────────
-async function loadAnalyticsTopTracks() {
-  const list = $('analyticsTopTracksList');
-  if (!list || !viewedArtist) return;
-  list.innerHTML = '<div class="empty-panel" style="font-size:0.46rem;">Loading…</div>';
-  try {
-    const res = await fetch(`${ARTISTS_BASE}/${encodeURIComponent(viewedArtist.id)}/tracks?sort=plays&limit=50`);
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Could not load top tracks.');
-    const tracks = data.tracks || [];
-    if (!tracks.length) {
-      list.innerHTML = '<div class="empty-panel" style="font-size:0.46rem;">No published tracks yet — publish a track to start seeing performance data.</div>';
-      return;
-    }
-    list.innerHTML = tracks.map((t, i) => `
-      <div class="analytics-track-row">
-        <div class="analytics-track-rank">${i + 1}</div>
-        <div class="analytics-track-art" style="${t.coverUrl ? `background-image:url('${escapeHtml(t.coverUrl)}');` : ''}">${!t.coverUrl ? '♪' : ''}</div>
-        <div class="analytics-track-info">
-          <div class="analytics-track-title">${escapeHtml(t.title)}${t.isExplicit ? ' <span class="explicit-badge">E</span>' : ''}</div>
-          <div class="analytics-track-sub">${t.release ? escapeHtml(t.release.title) : 'Standalone track'}</div>
-        </div>
-        <div class="analytics-track-metrics">
-          <div>
-            <div class="analytics-track-metric-value">${formatCompactCount(t.playCount || 0)}</div>
-            <div class="analytics-track-metric-label">Plays</div>
-          </div>
-          <div>
-            <div class="analytics-track-metric-value">${formatCompactCount(t.likeCount || 0)}</div>
-            <div class="analytics-track-metric-label">Likes</div>
-          </div>
-        </div>
-      </div>
-    `).join('');
-  } catch (err) {
-    list.innerHTML = `<div class="empty-panel" style="font-size:0.46rem;">${escapeHtml(err.message || 'Could not load top tracks.')}</div>`;
-    console.error('[loadAnalyticsTopTracks]', err);
-  }
-}
-
-// ── Release Performance ──────────────────────────────────────────────────
-async function loadAnalyticsReleases() {
-  const grid = $('analyticsReleasesGrid');
-  if (!grid || !viewedArtist) return;
-  grid.innerHTML = '<div class="empty-panel" style="font-size:0.46rem;">Loading…</div>';
-  try {
-    const params = new URLSearchParams({ token: AUTH.token || '' });
-    const res = await fetch(`${ARTISTS_BASE}/${encodeURIComponent(viewedArtist.id)}/releases?${params}`);
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Could not load releases.');
-    const releases = (data.releases || []).slice().sort((a, b) => (b.totalPlays || 0) - (a.totalPlays || 0));
-    if (!releases.length) {
-      grid.innerHTML = '<div class="empty-panel" style="font-size:0.46rem;">No releases yet — create an album, EP, or single to see performance here.</div>';
-      return;
-    }
-    grid.innerHTML = releases.map(r => `
-      <div class="analytics-release-card">
-        <div class="analytics-release-art" style="${r.coverUrl ? `background-image:url('${escapeHtml(r.coverUrl)}');` : ''}">${!r.coverUrl ? '◫' : ''}</div>
-        <div class="analytics-release-info">
-          <div class="analytics-release-title">${escapeHtml(r.title)}${r.isExplicit ? ' <span class="explicit-badge">E</span>' : ''}</div>
-          <div class="analytics-release-stats">
-            <span><b>${formatCompactCount(r.totalPlays || 0)}</b> Plays</span>
-            <span><b>${formatCompactCount(r.totalLikes || 0)}</b> Likes</span>
-            <span>${r.trackCount || 0} track${r.trackCount === 1 ? '' : 's'}</span>
-          </div>
-        </div>
-      </div>
-    `).join('');
-  } catch (err) {
-    grid.innerHTML = `<div class="empty-panel" style="font-size:0.46rem;">${escapeHtml(err.message || 'Could not load releases.')}</div>`;
-    console.error('[loadAnalyticsReleases]', err);
-  }
-}
-
-// ── Audience ─────────────────────────────────────────────────────────────
-// Monthly Listeners and Followers are real numbers already on viewedArtist
-// — shown here too since "Audience" is exactly where someone would look
-// for them, even though they're not new data. Geography/returning-vs-new
-// have no tracking source in this schema (see server.js comments on the
-// engagement/plays-timeseries endpoints), so that part of the pane is an
-// honest placeholder rather than fabricated rows.
-function loadAnalyticsAudience() {
-  const grid = $('analyticsAudienceStatGrid');
-  if (!grid || !viewedArtist) return;
-  const s = viewedArtist.stats || {};
-  grid.innerHTML = [
-    ['Monthly Listeners', formatCompactCount(s.monthlyListeners ?? 0)],
-    ['Followers', formatCompactCount(viewedArtist.followerCount ?? 0)],
-  ].map(([label, val]) => `
-    <div class="dash-stat-card">
-      <div class="dash-stat-value">${val}</div>
-      <div class="dash-stat-label">${label}</div>
-    </div>
-  `).join('');
-}
-
-// ── Activity Feed ────────────────────────────────────────────────────────
-// Reuses GET /api/artists/:id/activity, the same endpoint already backing
-// nothing else in the UI today — this is its first surfaced consumer.
-// Event types currently written with meta.artistId are limited to
-// artist_followed, artist_release, and track_published (see
-// dbWriteArtistActivity call sites in server.js); plays/likes/comments/
-// playlist-adds don't tag artistId yet, so they won't appear here until
-// that's wired up server-side. Rendered generically by event_type so any
-// future event type shows *something* sensible without a frontend change.
-const ANALYTICS_ACTIVITY_ICONS = { artist_followed: '♥', artist_release: '◫', track_published: '↑' };
-function renderAnalyticsActivityRow(e) {
-  const icon = ANALYTICS_ACTIVITY_ICONS[e.type] || '•';
-  let text;
-  switch (e.type) {
-    case 'artist_followed':
-      text = `<b>${escapeHtml(e.payload?.follower || 'Someone')}</b> followed you`;
-      break;
-    case 'artist_release':
-      text = `New release <b>${escapeHtml(e.payload?.releaseTitle || '')}</b> went live`;
-      break;
-    case 'track_published':
-      text = `Track <b>${escapeHtml(e.payload?.trackTitle || '')}</b> was published`;
-      break;
-    default:
-      text = escapeHtml(e.type.replace(/_/g, ' '));
-  }
-  const when = e.createdAt ? formatJoinDate(e.createdAt) : '';
-  return `
-    <div class="analytics-activity-row">
-      <div class="analytics-activity-icon">${icon}</div>
-      <div class="analytics-activity-text">${text}</div>
-      <div class="analytics-activity-time">${when}</div>
-    </div>
-  `;
-}
-
-async function loadAnalyticsActivity() {
-  const list = $('analyticsActivityList');
-  if (!list || !viewedArtist) return;
-  list.innerHTML = '<div class="empty-panel" style="font-size:0.46rem;">Loading…</div>';
-  try {
-    const res = await fetch(`${ARTISTS_BASE}/${encodeURIComponent(viewedArtist.id)}/activity?limit=30`);
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Could not load activity.');
-    const events = data.events || [];
-    if (!events.length) {
-      list.innerHTML = '<div class="empty-panel" style="font-size:0.46rem;">No recent activity.</div>';
-      return;
-    }
-    list.innerHTML = events.map(renderAnalyticsActivityRow).join('');
-  } catch (err) {
-    list.innerHTML = `<div class="empty-panel" style="font-size:0.46rem;">${escapeHtml(err.message || 'Could not load activity.')}</div>`;
-    console.error('[loadAnalyticsActivity]', err);
-  }
-}
-
-// ── Engagement ───────────────────────────────────────────────────────────
-async function loadAnalyticsEngagement() {
-  const grid = $('analyticsEngagementStatGrid');
-  if (!grid || !viewedArtist) return;
-  grid.innerHTML = '<div class="empty-panel" style="font-size:0.46rem;">Loading…</div>';
-  try {
-    const params = new URLSearchParams({ token: AUTH.token || '' });
-    const res = await fetch(`${ARTISTS_BASE}/${encodeURIComponent(viewedArtist.id)}/engagement?${params}`);
-    const data = await res.json();
-    if (!res.ok) {
-      if (res.status === 401) { handleTokenExpiry(); return; }
-      throw new Error(data.error || 'Could not load engagement.');
-    }
-    const pe = data.postEngagement || { likes: 0, comments: 0, shares: 0, postCount: 0 };
-    // "Artist Post Engagement" is its own card per spec, distinct from the
-    // track-level Likes Received above it — it's likes+comments+shares
-    // specifically on this artist's own posts (artist_update /
-    // release_announcement). Shown as "—" rather than "0" when the artist
-    // has never posted, since 0 engagement on 0 posts isn't a real signal.
-    const postEngagementVal = pe.postCount > 0
-      ? formatCompactCount(pe.likes + pe.comments + pe.shares)
-      : '—';
-    grid.innerHTML = [
-      ['Likes Received', formatCompactCount(data.likesReceived ?? 0)],
-      ['Comments Received', formatCompactCount(data.commentsReceived ?? 0)],
-      ['Shares / Reposts', formatCompactCount(data.reposts ?? 0)],
-      ['Artist Post Engagement', postEngagementVal],
-      ['Followers Gained (7d)', formatCompactCount(data.followersGained7d ?? 0)],
-      ['Profile Visits', data.profileVisitsSupported ? formatCompactCount(data.profileVisits ?? 0) : 'Not tracked yet'],
-    ].map(([label, val]) => `
-      <div class="dash-stat-card">
-        <div class="dash-stat-value" style="${(label === 'Profile Visits' && !data.profileVisitsSupported) || (label === 'Artist Post Engagement' && pe.postCount === 0) ? 'font-size:0.6rem;color:var(--text-muted);' : ''}">${val}</div>
-        <div class="dash-stat-label">${label}</div>
-      </div>
-    `).join('');
-  } catch (err) {
-    grid.innerHTML = `<div class="empty-panel" style="font-size:0.46rem;">${escapeHtml(err.message || 'Could not load engagement.')}</div>`;
-    console.error('[loadAnalyticsEngagement]', err);
-  }
-}
-
-
+// ── Posts tab ────────────────────────────────────────────────────────────
 // Minimal composer for artist-authored update posts — reuses the same
 // POST /api/posts route as the main feed composer, just with artistId set
 // (ownership-checked server-side, see [posts create] in server.js) and
@@ -13943,6 +13918,12 @@ document.addEventListener('keydown', e => {
   const el = $(id);
   if (!el) return;
   el.addEventListener('click', e => { if (e.target === el) el.classList.remove('open'); });
+});
+// videoPlayerOverlay gets its own handler (not the generic loop above)
+// since closing it needs closeVideoPlayer()'s cleanup — pausing the
+// element and flushing a final watch-end event — not just hiding the class.
+$('videoPlayerOverlay')?.addEventListener('click', e => {
+  if (e.target === $('videoPlayerOverlay')) closeVideoPlayer();
 });
 
 // ─── Initial route: shared /u/:username and /artist/:slug links ──────────────
