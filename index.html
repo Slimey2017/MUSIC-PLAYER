@@ -1253,6 +1253,34 @@ textarea.support-field { height:90px;resize:vertical; }
   font-size:0.42rem;color:var(--text-muted);
 }
 
+/* Artist page Music Videos grid — thumbnail/title/play-count/upload-date
+   cards, same auto-fill grid shape as .release-grid above so the two
+   sections feel like siblings rather than two different design languages. */
+.artist-videos-grid {
+  display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(140px,1fr));
+  gap:12px;
+  margin-top:4px;
+}
+.artist-video-card { cursor:pointer; }
+.artist-video-thumb {
+  width:100%;aspect-ratio:16/9;border-radius:var(--radius);
+  background:var(--surface3) center/cover no-repeat;position:relative;
+  display:flex;align-items:center;justify-content:center;overflow:hidden;
+}
+.artist-video-thumb::after {
+  content:'▶';position:absolute;width:26px;height:26px;border-radius:50%;
+  background:rgba(0,0,0,0.55);color:#fff;display:flex;align-items:center;
+  justify-content:center;font-size:0.55rem;opacity:0;transition:opacity 0.15s;
+}
+.artist-video-card:hover .artist-video-thumb::after { opacity:1; }
+.artist-video-title {
+  font-size:0.48rem;color:var(--text-main);margin-top:6px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.artist-video-meta { font-size:0.38rem;color:var(--text-muted);margin-top:2px; }
+@media (max-width:480px) { .artist-videos-grid { grid-template-columns:repeat(2,1fr);gap:8px; } }
+
 @media (max-width:480px) {
   .video-player-panel { padding:10px; max-width:100%; }
   .video-player-time { display:none; }
@@ -3207,6 +3235,15 @@ body.oled-mode {
         <div id="artistProfileTracksList"></div>
       </div>
 
+      <!-- Music Videos — thumbnail/title/play-count/upload-date grid, newest
+           first per spec. Hidden entirely when the artist has no videos,
+           same show/hide-on-empty pattern as every other profile section
+           here (Tracks/Releases wraps above/below). -->
+      <div id="artistProfileVideosWrap" style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px;display:none;">
+        <div style="font-size:0.46rem;color:var(--text-dim);letter-spacing:0.05em;text-transform:uppercase;margin-bottom:8px;">🎬 Music Videos</div>
+        <div id="artistProfileVideosList" class="artist-videos-grid"></div>
+      </div>
+
       <div id="artistProfileReleasesWrap" style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px;display:none;">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:6px;">
           <div style="font-size:0.46rem;color:var(--text-dim);letter-spacing:0.05em;text-transform:uppercase;">Discography</div>
@@ -3861,6 +3898,7 @@ body.oled-mode {
       <button id="discoverTabPosts" onclick="setDiscoverTab('posts')" class="discover-tab-btn" style="flex:1;min-width:80px;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.44rem;letter-spacing:0.05em;text-transform:uppercase;padding:7px 4px;border-radius:var(--radius);cursor:pointer;transition:color 0.15s,border-color 0.15s;">📰 Posts</button>
       <button id="discoverTabPlaylists" onclick="setDiscoverTab('playlists')" class="discover-tab-btn" style="flex:1;min-width:80px;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.44rem;letter-spacing:0.05em;text-transform:uppercase;padding:7px 4px;border-radius:var(--radius);cursor:pointer;transition:color 0.15s,border-color 0.15s;">⊞ Playlists</button>
       <button id="discoverTabPeople" onclick="setDiscoverTab('people')" class="discover-tab-btn" style="flex:1;min-width:80px;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.44rem;letter-spacing:0.05em;text-transform:uppercase;padding:7px 4px;border-radius:var(--radius);cursor:pointer;transition:color 0.15s,border-color 0.15s;">⊕ People</button>
+      <button id="discoverTabVideos" onclick="setDiscoverTab('videos')" class="discover-tab-btn" style="flex:1;min-width:80px;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.44rem;letter-spacing:0.05em;text-transform:uppercase;padding:7px 4px;border-radius:var(--radius);cursor:pointer;transition:color 0.15s,border-color 0.15s;">🎬 Videos</button>
     </div>
 
     <!-- Charts sub-view (was "Tracks" — this is play-ranked charts data, renamed for clarity) -->
@@ -3931,6 +3969,21 @@ body.oled-mode {
         Public profiles, ranked by followers.
       </div>
       <div id="discoverPeopleList" style="max-height:380px;overflow-y:auto;"><div class="empty-panel">Loading…</div></div>
+    </div>
+
+    <!-- 🎬 Music Videos sub-view — its own ranking surface (New/Trending/
+         Most Played/Most Liked), backed by GET /api/discover/videos and
+         NEVER mixed into the Charts pane's audio-play rankings above, per
+         the explicit "do not mix video rankings into track rankings"
+         requirement. -->
+    <div id="discoverPaneVideos" class="discover-pane" style="display:none;">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px;">
+        <button id="discoverVideosNew" onclick="setDiscoverVideosMode('new')" style="background:none;border:1px solid var(--accent3);color:var(--accent3);font-family:'Space Mono',monospace;font-size:0.4rem;letter-spacing:0.05em;text-transform:uppercase;padding:5px 4px;border-radius:var(--radius);cursor:pointer;">New Videos</button>
+        <button id="discoverVideosTrending" onclick="setDiscoverVideosMode('trending')" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.4rem;letter-spacing:0.05em;text-transform:uppercase;padding:5px 4px;border-radius:var(--radius);cursor:pointer;">Trending</button>
+        <button id="discoverVideosMostPlayed" onclick="setDiscoverVideosMode('most_played')" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.4rem;letter-spacing:0.05em;text-transform:uppercase;padding:5px 4px;border-radius:var(--radius);cursor:pointer;">Most Played</button>
+        <button id="discoverVideosMostLiked" onclick="setDiscoverVideosMode('most_liked')" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.4rem;letter-spacing:0.05em;text-transform:uppercase;padding:5px 4px;border-radius:var(--radius);cursor:pointer;">Most Liked</button>
+      </div>
+      <div id="discoverVideosList" class="artist-videos-grid" style="max-height:380px;overflow-y:auto;"><div class="empty-panel">Loading…</div></div>
     </div>
 
     <button class="support-close-btn" onclick="closeDiscoverOverlay()" style="margin-top:16px;">Close</button>
@@ -5301,10 +5354,13 @@ let discoverPlaylistsLoaded = false;
 let discoverPeopleLoaded    = false;
 let discoverArtistsLoaded   = false;
 let discoverPostsLoaded     = false;
+let discoverVideosLoaded    = false;
 let discoverArtistsSort     = 'trending'; // 'trending' | 'new' | 'search'
 let discoverArtistsSearchTimer = null;
 let discoverTracksData    = []; // separate cache from chartsTracks — same shape, different lifecycle/UI
 let discoverPostsCursor   = null;
+let discoverVideosMode    = 'new'; // 'new' | 'trending' | 'most_played' | 'most_liked' — own ranking surface, never mixed into discoverTracksData
+let discoverVideosData    = [];
 
 // Track Finder state
 let trackFinderSort         = 'plays';
@@ -5322,7 +5378,7 @@ function closeDiscoverOverlay() {
 }
 
 // Pane name → tab id suffix mapping
-const DISCOVER_PANES = ['Tracks', 'Finder', 'Artists', 'Posts', 'Playlists', 'People'];
+const DISCOVER_PANES = ['Tracks', 'Finder', 'Artists', 'Posts', 'Playlists', 'People', 'Videos'];
 
 function setDiscoverTab(tab) {
   if (discoverTab === tab) return;
@@ -5343,6 +5399,7 @@ function setDiscoverTab(tab) {
   if (tab === 'posts'     && !discoverPostsLoaded)     loadDiscoverPosts(false);
   if (tab === 'playlists' && !discoverPlaylistsLoaded) loadDiscoverPlaylists();
   if (tab === 'people'    && !discoverPeopleLoaded)    loadDiscoverPeople();
+  if (tab === 'videos'    && !discoverVideosLoaded)    loadDiscoverVideos();
 }
 
 function setDiscoverTracksWindow(win) {
@@ -5361,6 +5418,55 @@ function setDiscoverPlaylistsSort(sort) {
   if (likesBtn)  { likesBtn.style.color = sort === 'likes' ? 'var(--accent3)' : 'var(--text-muted)'; likesBtn.style.borderColor = sort === 'likes' ? 'var(--accent3)' : 'var(--border)'; }
   if (recentBtn) { recentBtn.style.color = sort === 'recent' ? 'var(--accent3)' : 'var(--text-muted)'; recentBtn.style.borderColor = sort === 'recent' ? 'var(--accent3)' : 'var(--border)'; }
   loadDiscoverPlaylists();
+}
+
+// ── Discovery: Music Videos sub-view ────────────────────────────────────
+// Four ranking modes, all backed by GET /api/discover/videos — its own
+// surface, deliberately never blended with discoverTracksData's audio-play
+// rankings above.
+const DISCOVER_VIDEOS_MODE_BTN_IDS = {
+  new: 'discoverVideosNew', trending: 'discoverVideosTrending',
+  most_played: 'discoverVideosMostPlayed', most_liked: 'discoverVideosMostLiked',
+};
+function setDiscoverVideosMode(mode) {
+  if (discoverVideosMode === mode) return;
+  discoverVideosMode = mode;
+  Object.entries(DISCOVER_VIDEOS_MODE_BTN_IDS).forEach(([m, id]) => {
+    const btn = $(id);
+    if (!btn) return;
+    btn.style.color = m === mode ? 'var(--accent3)' : 'var(--text-muted)';
+    btn.style.borderColor = m === mode ? 'var(--accent3)' : 'var(--border)';
+  });
+  loadDiscoverVideos();
+}
+
+async function loadDiscoverVideos() {
+  discoverVideosLoaded = true;
+  const list = $('discoverVideosList');
+  if (!list) return;
+  list.innerHTML = '<div class="empty-panel">Loading…</div>';
+  try {
+    const params = new URLSearchParams({ mode: discoverVideosMode, limit: 30 });
+    const res = await fetch(`/api/discover/videos?${params}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not load music videos.');
+    const videos = data.videos || [];
+    discoverVideosData = videos;
+    if (!videos.length) {
+      list.innerHTML = '<div class="empty-panel">No music videos yet.</div>';
+      return;
+    }
+    list.innerHTML = videos.map(v => `
+      <div class="artist-video-card" onclick="openVideoPlayer('${escapeHtml(v.trackId)}', ${JSON.stringify(v.title || '')}, ${JSON.stringify(v.artistName || '')})">
+        <div class="artist-video-thumb" style="${v.thumbnailUrl ? `background-image:url('${escapeHtml(v.thumbnailUrl)}')` : ''}"></div>
+        <div class="artist-video-title">${escapeHtml(v.title || 'Untitled')}${v.isExplicit ? ' <span class="explicit-badge">E</span>' : ''}</div>
+        <div class="artist-video-meta">${escapeHtml(v.artistName || '—')} · ${formatCompactCount(v.playCount || 0)} play${v.playCount === 1 ? '' : 's'}</div>
+      </div>
+    `).join('');
+  } catch (err) {
+    list.innerHTML = `<div class="empty-panel">${escapeHtml(err.message || 'Could not load music videos.')}</div>`;
+    console.error('[loadDiscoverVideos]', err);
+  }
 }
 
 // ── Artists sub-view ────────────────────────────────────────────────────────
@@ -5627,15 +5733,20 @@ async function loadTrackFinder() {
     }
     list.innerHTML = tracks.map((t, i) => {
       const explicitBadge = t.isExplicit ? ' <span class="explicit-badge">E</span>' : '';
+      const videoBadge = t.hasVideo ? ' <span style="color:var(--accent3);font-size:0.4rem;" title="Video Available">🎬</span>' : '';
       const likeBtn = AUTH.loggedIn
         ? `<button onclick="event.stopPropagation(); trackFinderLike(${i})" class="track-finder-like-btn" id="tfLikeBtn_${t.id}" title="Like" style="background:none;border:none;color:${t.likedByMe ? 'var(--accent2)' : 'var(--text-muted)'};font-size:0.6rem;cursor:pointer;flex-shrink:0;padding:2px 4px;">♥</button>`
+        : '';
+      const watchVideoBtn = t.hasVideo
+        ? `<button onclick="event.stopPropagation(); openVideoPlayer('${t.id}', ${JSON.stringify(t.title || '')}, ${JSON.stringify(t.artistName || '')})" style="background:none;border:1px solid var(--accent3);color:var(--accent3);font-family:'Space Mono',monospace;font-size:0.4rem;padding:4px 8px;border-radius:var(--radius);cursor:pointer;flex-shrink:0;text-transform:uppercase;" title="Watch Video">🎬</button>`
         : '';
       return `
         <div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border);">
           <div style="flex:1;min-width:0;cursor:pointer;" onclick="trackFinderPlay(${i})">
-            <div style="font-size:0.55rem;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(t.title || 'Untitled')}${explicitBadge}</div>
+            <div style="font-size:0.55rem;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(t.title || 'Untitled')}${explicitBadge}${videoBadge}</div>
             <div style="font-size:0.42rem;color:var(--text-muted);">${escapeHtml(t.artistName || '—')} · ${t.playCount || 0} play${(t.playCount||0)===1?'':'s'}${t.likeCount ? ` · ♥ ${t.likeCount}` : ''}</div>
           </div>
+          ${watchVideoBtn}
           <button onclick="event.stopPropagation(); trackFinderQueue(${i})" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.4rem;padding:4px 8px;border-radius:var(--radius);cursor:pointer;flex-shrink:0;text-transform:uppercase;" title="Add to queue">+ Queue</button>
           ${likeBtn}
         </div>
@@ -6030,6 +6141,7 @@ async function openArtistProfile(idOrSlug) {
 
     loadArtistTopTracks(data.id); // fire-and-forget, same non-blocking pattern as loadProfilePublicPlaylists
     loadArtistReleases(data.id); // fire-and-forget, same pattern
+    loadArtistVideos(data.id); // fire-and-forget, same pattern — Music Videos section
   } catch (err) {
     $('artistProfileLoading').style.display = 'none';
     $('artistProfileError').style.display   = 'block';
@@ -6184,6 +6296,35 @@ async function loadArtistTopTracks(artistId) {
   } catch (err) {
     wrap.style.display = 'none';
     console.error('[loadArtistTopTracks]', err);
+  }
+}
+
+// ── Artist Profile: Music Videos section ─────────────────────────────────
+// GET /api/artists/:id/videos — newest first by default (server-side
+// order), thumbnail/title/play-count/upload-date per spec. Hidden entirely
+// when the artist has no videos, same show/hide-on-empty pattern as
+// Tracks/Releases above.
+async function loadArtistVideos(artistId) {
+  const wrap = $('artistProfileVideosWrap');
+  const list = $('artistProfileVideosList');
+  if (!wrap || !list) return;
+  try {
+    const res = await fetch(`${ARTISTS_BASE}/${encodeURIComponent(artistId)}/videos?limit=20`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not load music videos.');
+    const videos = data.videos || [];
+    wrap.style.display = videos.length ? '' : 'none';
+    if (!videos.length) { list.innerHTML = ''; return; }
+    list.innerHTML = videos.map(v => `
+      <div class="artist-video-card" onclick="openVideoPlayer('${escapeHtml(v.trackId)}', ${JSON.stringify(v.title || '')}, ${JSON.stringify(viewedArtist?.name || '')})">
+        <div class="artist-video-thumb" style="${v.thumbnailUrl ? `background-image:url('${escapeHtml(v.thumbnailUrl)}')` : ''}"></div>
+        <div class="artist-video-title">${escapeHtml(v.title || 'Untitled')}${v.isExplicit ? ' <span class="explicit-badge">E</span>' : ''}</div>
+        <div class="artist-video-meta">${formatCompactCount(v.playCount || 0)} play${v.playCount === 1 ? '' : 's'}${v.uploadedAt ? ' · ' + formatJoinDate(v.uploadedAt) : ''}</div>
+      </div>
+    `).join('');
+  } catch (err) {
+    wrap.style.display = 'none';
+    console.error('[loadArtistVideos]', err);
   }
 }
 
@@ -6426,14 +6567,18 @@ async function toggleReleaseCard(releaseId) {
       ? tracks.map((t, i) => {
           const credits = formatCollaboratorCredits(t.collaborators);
           const artStyle = t.coverUrl ? `background-image:url('${escapeHtml(t.coverUrl)}')` : '';
+          const videoBtn = t.hasVideo
+            ? `<button onclick="event.stopPropagation(); openVideoPlayer('${escapeHtml(t.id)}', ${JSON.stringify(t.title || '')}, ${JSON.stringify(t.artistName || '')})" style="background:none;border:1px solid var(--accent3);color:var(--accent3);font-family:'Space Mono',monospace;font-size:0.4rem;padding:3px 7px;border-radius:var(--radius);cursor:pointer;flex-shrink:0;" title="Watch Video">🎬</button>`
+            : '';
           return `
           <div class="release-track-row" onclick="playPublishedTrack('${escapeHtml(t.id)}')">
             <div class="release-track-num">${i + 1}</div>
             <div class="release-track-art" style="${artStyle}"></div>
             <div class="release-track-info">
-              <div class="release-track-title">${escapeHtml(t.title || t.originalUrl || '')}${t.isExplicit ? ' <span class="explicit-badge">E</span>' : ''}</div>
+              <div class="release-track-title">${escapeHtml(t.title || t.originalUrl || '')}${t.isExplicit ? ' <span class="explicit-badge">E</span>' : ''}${t.hasVideo ? ' 🎬' : ''}</div>
               ${credits ? `<div class="release-track-credits">${credits}</div>` : ''}
             </div>
+            ${videoBtn}
           </div>`;
         }).join('')
       : `<div style="font-size:0.44rem;color:var(--text-muted);padding:6px 0;">No tracks in this release yet.</div>`;
@@ -6982,6 +7127,7 @@ $('publishTrackSubmitBtn')?.addEventListener('click', async () => {
     loadDashTracks();
     loadDashReleases();
     loadArtistTopTracks(viewedArtist.id);
+    loadArtistVideos(viewedArtist.id); // refresh in case a video was attached during this publish
     // Roll straight into Credits so featured artists / collaborators can be
     // added in the same flow as publishing, instead of requiring the user
     // to find the track again afterward and click "Credits" separately.
