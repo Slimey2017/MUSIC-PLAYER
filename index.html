@@ -978,6 +978,15 @@ textarea.support-field { height:90px;resize:vertical; }
   letter-spacing:0.08em;text-transform:uppercase;font-weight:700;
   border:1px solid;
 }
+.about-link-row { display:flex;gap:8px; }
+.about-link-btn {
+  flex:1;display:block;text-align:center;text-decoration:none;
+  background:var(--surface3);color:var(--text-dim);
+  border:1px solid var(--border);border-radius:var(--radius);padding:8px;
+  font-family:'Space Mono',monospace;font-size:0.5rem;cursor:pointer;
+  letter-spacing:0.08em;text-transform:uppercase;transition:all 0.15s;
+}
+.about-link-btn:hover { border-color:var(--accent3);color:var(--accent3); }
 
 /* ─── Cloud Files ────────────────────────────────────────────────── */
 .cloud-file-item {
@@ -2855,6 +2864,14 @@ body.oled-mode {
         <span class="about-badge chip-lf">Last.fm</span>
         <span class="about-badge chip-lc">Local Files</span>
         <span class="about-badge chip-lc" style="color:#4ade80;border-color:rgba(74,222,128,0.3);background:rgba(74,222,128,0.06);">Cloud Files</span>
+      </div>
+    </div>
+
+    <div class="about-section">
+      <div style="font-size:0.5rem;color:var(--text-dim);margin-bottom:8px;letter-spacing:0.1em;text-transform:uppercase;">Legal</div>
+      <div class="about-link-row">
+        <a class="about-link-btn" href="https://music-player-0v87.onrender.com/freq-tos.html" target="_blank" rel="noopener">Terms of Service</a>
+        <a class="about-link-btn" href="https://music-player-0v87.onrender.com/freq-privacy.html" target="_blank" rel="noopener">Privacy Policy</a>
       </div>
     </div>
 
