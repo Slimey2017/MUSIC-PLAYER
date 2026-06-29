@@ -5457,7 +5457,7 @@ async function loadDiscoverVideos() {
       return;
     }
     list.innerHTML = videos.map(v => `
-      <div class="artist-video-card" onclick="openVideoPlayer('${escapeHtml(v.trackId)}', ${JSON.stringify(v.title || '')}, ${JSON.stringify(v.artistName || '')})">
+      <div class="artist-video-card" onclick="${escapeHtml(`openVideoPlayer('${v.trackId}', ${JSON.stringify(v.title || '')}, ${JSON.stringify(v.artistName || '')})`)}">
         <div class="artist-video-thumb" style="${v.thumbnailUrl ? `background-image:url('${escapeHtml(v.thumbnailUrl)}')` : ''}"></div>
         <div class="artist-video-title">${escapeHtml(v.title || 'Untitled')}${v.isExplicit ? ' <span class="explicit-badge">E</span>' : ''}</div>
         <div class="artist-video-meta">${escapeHtml(v.artistName || '—')} · ${formatCompactCount(v.playCount || 0)} play${v.playCount === 1 ? '' : 's'}</div>
@@ -5738,7 +5738,7 @@ async function loadTrackFinder() {
         ? `<button onclick="event.stopPropagation(); trackFinderLike(${i})" class="track-finder-like-btn" id="tfLikeBtn_${t.id}" title="Like" style="background:none;border:none;color:${t.likedByMe ? 'var(--accent2)' : 'var(--text-muted)'};font-size:0.6rem;cursor:pointer;flex-shrink:0;padding:2px 4px;">♥</button>`
         : '';
       const watchVideoBtn = t.hasVideo
-        ? `<button onclick="event.stopPropagation(); openVideoPlayer('${t.id}', ${JSON.stringify(t.title || '')}, ${JSON.stringify(t.artistName || '')})" style="background:none;border:1px solid var(--accent3);color:var(--accent3);font-family:'Space Mono',monospace;font-size:0.4rem;padding:4px 8px;border-radius:var(--radius);cursor:pointer;flex-shrink:0;text-transform:uppercase;" title="Watch Video">🎬</button>`
+        ? `<button onclick="${escapeHtml(`event.stopPropagation(); openVideoPlayer('${t.id}', ${JSON.stringify(t.title || '')}, ${JSON.stringify(t.artistName || '')})`)}" style="background:none;border:1px solid var(--accent3);color:var(--accent3);font-family:'Space Mono',monospace;font-size:0.4rem;padding:4px 8px;border-radius:var(--radius);cursor:pointer;flex-shrink:0;text-transform:uppercase;" title="Watch Video">🎬</button>`
         : '';
       return `
         <div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border);">
@@ -6277,7 +6277,7 @@ async function loadArtistTopTracks(artistId) {
     list.innerHTML = tracks.map((t, i) => {
       const credits = formatCollaboratorCredits(t.collaborators);
       const watchVideoBtn = t.hasVideo
-        ? `<button onclick="event.stopPropagation(); openVideoPlayer('${t.id}', ${JSON.stringify(t.title || '')}, ${JSON.stringify(viewedArtist?.name || '')})" style="background:none;border:1px solid var(--accent3);color:var(--accent3);font-family:'Space Mono',monospace;font-size:0.42rem;padding:4px 8px;border-radius:var(--radius);cursor:pointer;flex-shrink:0;letter-spacing:0.04em;text-transform:uppercase;" title="Watch Video">🎬 Video</button>`
+        ? `<button onclick="${escapeHtml(`event.stopPropagation(); openVideoPlayer('${t.id}', ${JSON.stringify(t.title || '')}, ${JSON.stringify(viewedArtist?.name || '')})`)}" style="background:none;border:1px solid var(--accent3);color:var(--accent3);font-family:'Space Mono',monospace;font-size:0.42rem;padding:4px 8px;border-radius:var(--radius);cursor:pointer;flex-shrink:0;letter-spacing:0.04em;text-transform:uppercase;" title="Watch Video">🎬 Video</button>`
         : '';
       return `
       <div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border);">
@@ -6316,7 +6316,7 @@ async function loadArtistVideos(artistId) {
     wrap.style.display = videos.length ? '' : 'none';
     if (!videos.length) { list.innerHTML = ''; return; }
     list.innerHTML = videos.map(v => `
-      <div class="artist-video-card" onclick="openVideoPlayer('${escapeHtml(v.trackId)}', ${JSON.stringify(v.title || '')}, ${JSON.stringify(viewedArtist?.name || '')})">
+      <div class="artist-video-card" onclick="${escapeHtml(`openVideoPlayer('${v.trackId}', ${JSON.stringify(v.title || '')}, ${JSON.stringify(viewedArtist?.name || '')})`)}">
         <div class="artist-video-thumb" style="${v.thumbnailUrl ? `background-image:url('${escapeHtml(v.thumbnailUrl)}')` : ''}"></div>
         <div class="artist-video-title">${escapeHtml(v.title || 'Untitled')}${v.isExplicit ? ' <span class="explicit-badge">E</span>' : ''}</div>
         <div class="artist-video-meta">${formatCompactCount(v.playCount || 0)} play${v.playCount === 1 ? '' : 's'}${v.uploadedAt ? ' · ' + formatJoinDate(v.uploadedAt) : ''}</div>
@@ -6568,7 +6568,7 @@ async function toggleReleaseCard(releaseId) {
           const credits = formatCollaboratorCredits(t.collaborators);
           const artStyle = t.coverUrl ? `background-image:url('${escapeHtml(t.coverUrl)}')` : '';
           const videoBtn = t.hasVideo
-            ? `<button onclick="event.stopPropagation(); openVideoPlayer('${escapeHtml(t.id)}', ${JSON.stringify(t.title || '')}, ${JSON.stringify(t.artistName || '')})" style="background:none;border:1px solid var(--accent3);color:var(--accent3);font-family:'Space Mono',monospace;font-size:0.4rem;padding:3px 7px;border-radius:var(--radius);cursor:pointer;flex-shrink:0;" title="Watch Video">🎬</button>`
+            ? `<button onclick="${escapeHtml(`event.stopPropagation(); openVideoPlayer('${t.id}', ${JSON.stringify(t.title || '')}, ${JSON.stringify(t.artistName || '')})`)}" style="background:none;border:1px solid var(--accent3);color:var(--accent3);font-family:'Space Mono',monospace;font-size:0.4rem;padding:3px 7px;border-radius:var(--radius);cursor:pointer;flex-shrink:0;" title="Watch Video">🎬</button>`
             : '';
           return `
           <div class="release-track-row" onclick="playPublishedTrack('${escapeHtml(t.id)}')">
