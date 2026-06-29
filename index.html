@@ -2628,8 +2628,16 @@ body.oled-mode {
       <div class="local-title" id="localTitle">Unknown Track</div>
       <div class="local-meta" id="localMeta">Local File</div>
 
-      <!-- Hidden native audio (for playback engine) -->
-      <audio id="localAudio" style="display:none;" preload="auto"></audio>
+      <!-- Hidden native audio (for playback engine).
+           controlsList/disablePictureInPicture/disableRemotePlayback +
+           oncontextmenu are casual-download deterrents only (no native
+           controls are ever shown anyway, since FREQ uses a fully custom
+           player bar) — NOT real protection. A determined user can always
+           capture anything that plays in a browser; this just removes the
+           obvious right-click → Save As / PiP / Cast affordances. -->
+      <audio id="localAudio" style="display:none;" preload="auto"
+        controlsList="nodownload noremoteplayback" disablePictureInPicture
+        disableRemotePlayback oncontextmenu="return false;"></audio>
 
       <!-- Custom Player Bar -->
       <div class="freq-player-bar" id="freqPlayerBar">
@@ -3392,8 +3400,16 @@ body.oled-mode {
       <button class="video-player-mode-btn" id="videoPlayerModeAudioBtn" onclick="setVideoPlayerMode('audio')">▶ Play Audio</button>
     </div>
 
-    <div class="video-player-stage" id="videoPlayerStage">
-      <video id="videoPlayerEl" playsinline></video>
+    <!-- controlsList/disablePictureInPicture/disableRemotePlayback +
+         oncontextmenu on both the stage and the <video> itself are casual-
+         download deterrents only (right-click → Save As, PiP, Cast) — NOT
+         real protection. Native controls are already off; this just closes
+         the obvious affordances. A determined user can always capture
+         anything that plays in a browser. -->
+    <div class="video-player-stage" id="videoPlayerStage" oncontextmenu="return false;">
+      <video id="videoPlayerEl" playsinline
+        controlsList="nodownload noremoteplayback" disablePictureInPicture
+        disableRemotePlayback oncontextmenu="return false;"></video>
       <div class="video-player-poster" id="videoPlayerPoster">
         <div class="video-player-poster-play">▶</div>
       </div>
