@@ -1,0 +1,8 @@
+User-agent: *
+Allow: /
+Disallow: /admin
+Disallow: /dashboard
+Disallow: /settings
+Disallow: /profile/edit
+
+Sitemap: https://music-player-0v87.onrender.com/sitemap.xml
