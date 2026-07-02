@@ -75,7 +75,7 @@ const fs       = require('fs');
 const multer   = require('multer');
 // node-fetch not needed — Node v18+ has native fetch built in
 const { createClient } = require('@supabase/supabase-js');
-const Anthropic         = require('@anthropic-ai/sdk');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 // ─── Supabase client (server-side only — uses service role key) ───────────────
 const supabase = createClient(
@@ -83,12 +83,10 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_KEY
 );
 
-// ─── Anthropic client (server-side only — powers DJ BOOM) ─────────────────────
+// ─── Google Gemini client (server-side only — powers DJ BOOM) ──────────────────
 // GEMINI_API_KEY lives in Render's env vars, same as SUPABASE_SERVICE_KEY.
 // If it's missing, DJ BOOM routes fail gracefully rather than crashing boot.
-const { GoogleGenerativeAI } = require("@google/generative-ai");
-
-const genAI = process.env.GEMINI_API_KEY
+const gemini = process.env.GEMINI_API_KEY
   ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
   : null;
 
@@ -2846,7 +2844,7 @@ app.post('/api/auth/signin', rateLimit, async (req, res) => {
 });
 
 // ─── DJ BOOM (Premium AI assistant) ────────────────────────────────────────
-// Server-side only — the Anthropic key never touches the client. Gated by
+// Server-side only — the Gemini key never touches the client. Gated by
 // requirePremium so a non-Premium account gets a clean 403 with the same
 // upsell copy the frontend already shows when the panel is blurred, rather
 // than the request silently doing nothing.
@@ -2882,7 +2880,7 @@ setInterval(() => {
 }, 300_000);
 
 app.post('/api/djboom/chat', requirePremium, djBoomRateLimit, async (req, res) => {
-  if (!anthropic) {
+  if (!gemini) {
     console.error('[djboom] GEMINI_API_KEY not configured');
     return res.status(503).json({ error: 'DJ BOOM is temporarily unavailable.' });
   }
@@ -2901,39 +2899,21 @@ app.post('/api/djboom/chat', requirePremium, djBoomRateLimit, async (req, res) =
     return res.status(400).json({ error: 'No valid messages provided.' });
   }
 
-try {
-  const model = genAI.getGenerativeModel({
-    model: "gemini-2.5-flash"
-  });
-
-  const prompt = [
-    {
-      role: "user",
-      parts: [
-        {
-          text:
-            DJ_BOOM_SYSTEM_PROMPT +
-            "\n\nConversation:\n" +
-            cleaned
-              .map(msg => `${msg.role}: ${msg.content}`)
-              .join("\n")
-        }
-      ]
-    }
-  ];
-
-  const result = await model.generateContent(prompt);
-  const text = result.response.text();
-
-  return res.json({ reply: text });
-
-} catch (err) {
-  console.error("[djboom] Gemini API error:", err?.message || err);
-  return res.status(502).json({
-    error: "DJ BOOM is temporarily unavailable."
-  });
-}
-
+  try {
+    const model = gemini.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    const completion = await model.generateContent({
+      contents: cleaned,
+      generationConfig: {
+        maxOutputTokens: 1024,
+      },
+      systemInstruction: DJ_BOOM_SYSTEM_PROMPT,
+    });
+    const text = completion.response.text() || '';
+    return res.json({ reply: text });
+  } catch (err) {
+    console.error('[djboom] Gemini API error:', err?.message || err);
+    return res.status(502).json({ error: 'DJ BOOM is temporarily unavailable.' });
+  }
 });
 
 app.post('/api/auth/token-refresh', async (req, res) => {
