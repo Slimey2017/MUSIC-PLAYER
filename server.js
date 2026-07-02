@@ -2897,48 +2897,38 @@ app.post('/api/djboom/chat', requirePremium, djBoomRateLimit, async (req, res) =
     .filter(m => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')
     .map(m => ({ role: m.role, content: m.content.slice(0, 8000) }));
 app.post('/api/djboom/chat', requirePremium, djBoomRateLimit, async (req, res) => {
-  
   if (!geminiClient) {
-    return res.status(503).json({ error: 'DJ BOOM is unavailable.' });
+    console.error('[djboom] Gemini_API_KEY not configured');
+    return res.status(503).json({ error: 'DJ BOOM is temporarily unavailable.' });
   }
+
+  const { messages } = req.body;
+
+  // 1. Validate the input
+  if (!Array.isArray(messages) || !messages.length) {
+    return res.status(400).json({ error: '"messages" must be a non-empty array.' });
+  }
+  if (messages.length > 40) {
+    return res.status(400).json({ error: 'Conversation is too long for a single request.' });
+  }
+
+  // 2. Prepare the prompt (Gemini prefers a single string or history object)
+  // We take the last message as the new input for simplicity
+  const lastMessage = messages[messages.length - 1].content;
 
   try {
     const model = geminiClient.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-    // This await is now safe because it's inside the async function above
-    const result = await model.generateContent(req.body.message);
+    // 3. Generate response
+    const result = await model.generateContent(lastMessage);
     const response = await result.response;
     const text = response.text();
 
     res.json({ reply: text });
+
   } catch (error) {
     console.error('Gemini API Error:', error);
     res.status(500).json({ error: 'Failed to generate response' });
-  }
-});;
-
-app.post('/api/auth/token-refresh', async (req, res) => {
-  const { token } = req.body;
-  const sess = await dbGetSession(token);
-  if (!sess) return res.status(401).json({ error: 'Invalid or expired token.' });
-  const expiresAt = Date.now() + TOKEN_TTL;
-  await dbRefreshSession(token, expiresAt);
-  return res.json({ ok: true, expiresAt });
-});
-
-app.post('/api/auth/sync', async (req, res) => {
-  const { token, playlists } = req.body;
-  const sess = await dbGetSession(token);
-  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
-  if (!Array.isArray(playlists)) return res.status(400).json({ error: '"playlists" must be an array.' });
-  if (JSON.stringify(playlists).length > 2_000_000)
-    return res.status(413).json({ error: 'Playlist data exceeds 2 MB limit.' });
-  try {
-    await dbSetPlaylists(sess.username, playlists);
-    return res.json({ ok: true, synced: playlists.length, syncedAt: Date.now() });
-  } catch (err) {
-    console.error('[sync]', err);
-    return res.status(500).json({ error: 'Sync failed.' });
   }
 });
 
