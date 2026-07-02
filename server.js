@@ -2901,9 +2901,17 @@ app.post('/api/djboom/chat', requirePremium, djBoomRateLimit, async (req, res) =
 
   try {
     const model = gemini.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    // Convert Anthropic-style messages to Gemini format
+    const contents = cleaned.map(message => ({
+      role: message.role,
+      parts: [
+        {
+          text: message.content
+        }
+      ]
+    }));
     const completion = await model.generateContent({
-      const chat = model.startChat({   systemInstruction: DJ_BOOM_SYSTEM_PROMPT, });  const result = await chat.sendMessage(   cleaned.map(m => `${m.role}: ${m.content}`).join("
-") );
+      contents,
       generationConfig: {
         maxOutputTokens: 1024,
       },
