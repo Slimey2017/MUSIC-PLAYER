@@ -2877,13 +2877,15 @@ setInterval(() => {
     if (!fresh.length) djBoomRateLimitHits.delete(key); else djBoomRateLimitHits.set(key, fresh);
   }
 }, 300_000);
-
 app.post('/api/djboom/chat', requirePremium, djBoomRateLimit, async (req, res) => {
-  if (!Gemini) {
+ if (!geminiClient) { 
     console.error('[djboom] Gemini_API_KEY not configured');
     return res.status(503).json({ error: 'DJ BOOM is temporarily unavailable.' });
   }
 
+  // Ensure you also update any usage of the client inside this block:
+  // const result = await geminiClient.generateContent(...); 
+});
   const { messages } = req.body;
   if (!Array.isArray(messages) || !messages.length) {
     return res.status(400).json({ error: '"messages" must be a non-empty array.' });
