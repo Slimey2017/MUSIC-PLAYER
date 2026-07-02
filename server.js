@@ -2896,26 +2896,26 @@ app.post('/api/djboom/chat', requirePremium, djBoomRateLimit, async (req, res) =
   const cleaned = messages
     .filter(m => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')
     .map(m => ({ role: m.role, content: m.content.slice(0, 8000) }));
+app.post('/api/djboom/chat', requirePremium, djBoomRateLimit, async (req, res) => {
+  
   if (!geminiClient) {
     return res.status(503).json({ error: 'DJ BOOM is unavailable.' });
   }
 
   try {
-    // 1. Get the model
     const model = geminiClient.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-    // 2. Use generateContent instead of .messages.create
+    // This await is now safe because it's inside the async function above
     const result = await model.generateContent(req.body.message);
     const response = await result.response;
     const text = response.text();
 
     res.json({ reply: text });
-
   } catch (error) {
     console.error('Gemini API Error:', error);
     res.status(500).json({ error: 'Failed to generate response' });
   }
-});
+});;
 
 app.post('/api/auth/token-refresh', async (req, res) => {
   const { token } = req.body;
