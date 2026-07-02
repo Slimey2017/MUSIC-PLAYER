@@ -2896,22 +2896,24 @@ app.post('/api/djboom/chat', requirePremium, djBoomRateLimit, async (req, res) =
   const cleaned = messages
     .filter(m => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')
     .map(m => ({ role: m.role, content: m.content.slice(0, 8000) }));
-  if (!cleaned.length) {
-    return res.status(400).json({ error: 'No valid messages provided.' });
+  if (!geminiClient) {
+    return res.status(503).json({ error: 'DJ BOOM is unavailable.' });
   }
 
   try {
-    const completion = await Gemini.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 1024,
-      system: DJ_BOOM_SYSTEM_PROMPT,
-      messages: cleaned,
-    });
-    const text = completion.content.find(b => b.type === 'text')?.text || '';
-    return res.json({ reply: text });
-  } catch (err) {
-    console.error('[djboom] Gemini API error:', err?.message || err);
-    return res.status(502).json({ error: 'DJ BOOM is temporarily unavailable.' });
+    // 1. Get the model
+    const model = geminiClient.getGenerativeModel({ model: "gemini-1.5-flash" });
+
+    // 2. Use generateContent instead of .messages.create
+    const result = await model.generateContent(req.body.message);
+    const response = await result.response;
+    const text = response.text();
+
+    res.json({ reply: text });
+
+  } catch (error) {
+    console.error('Gemini API Error:', error);
+    res.status(500).json({ error: 'Failed to generate response' });
   }
 });
 
