@@ -1184,6 +1184,117 @@ textarea.support-field { height:90px;resize:vertical; }
   text-align:center;padding:32px;color:var(--text-muted);font-size:0.6rem;
 }
 
+/* ─── Premium (DJ BOOM + Premium Hub) ───────────────────────────────────────
+   Shares the .lyrics-overlay/.lyrics-panel shell used by Discover/Support/etc
+   — same reasoning as Discover's comment above: reuse the base overlay so
+   z-index, backdrop, and close behavior stay consistent across the app,
+   only widen/restyle the panel contents themselves. */
+.premium-badge {
+  display:inline-flex;align-items:center;gap:3px;font-size:0.4rem;
+  color:#0a0a0a;background:linear-gradient(135deg,#ffd76a,#ff9f4a);
+  border:none;padding:2px 6px;border-radius:var(--radius);
+  letter-spacing:0.06em;text-transform:uppercase;font-weight:700;
+  vertical-align:middle;
+}
+.djboom-chat-body {
+  display:flex;flex-direction:column;height:420px;max-height:60vh;
+  border:1px solid var(--border);border-radius:var(--radius);
+  background:rgba(255,255,255,0.02);overflow:hidden;
+}
+.djboom-messages {
+  flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:10px;
+  scrollbar-width:thin;scrollbar-color:var(--border) transparent;
+}
+.djboom-msg {
+  font-size:0.54rem;line-height:1.7;padding:8px 10px;border-radius:8px;
+  max-width:88%;white-space:pre-wrap;word-break:break-word;
+}
+.djboom-msg.user {
+  align-self:flex-end;background:var(--accent);color:var(--bg);
+}
+.djboom-msg.assistant {
+  align-self:flex-start;background:var(--surface3);color:var(--text);
+  border:1px solid var(--border);
+}
+.djboom-msg.assistant::before {
+  content:'🤖 DJ BOOM';display:block;font-size:0.36rem;color:var(--accent3);
+  margin-bottom:4px;letter-spacing:0.06em;text-transform:uppercase;
+}
+.djboom-typing { align-self:flex-start;color:var(--text-muted);font-size:0.48rem;padding:0 10px; }
+.djboom-input-row {
+  display:flex;gap:8px;padding:10px;border-top:1px solid var(--border);
+}
+.djboom-input-row textarea {
+  flex:1;resize:none;background:rgba(255,255,255,0.03);border:1px solid var(--border);
+  border-radius:var(--radius);color:var(--text-main);font-family:'Space Mono',monospace;
+  font-size:0.54rem;padding:8px 10px;box-sizing:border-box;line-height:1.5;
+}
+.djboom-input-row button {
+  background:var(--accent);color:var(--bg);border:none;border-radius:var(--radius);
+  padding:0 16px;font-family:'Space Mono',monospace;font-size:0.5rem;font-weight:700;
+  cursor:pointer;text-transform:uppercase;letter-spacing:0.05em;
+}
+.djboom-input-row button:disabled { opacity:0.5;cursor:default; }
+.djboom-suggestions { display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px; }
+.djboom-suggestion-chip {
+  background:none;border:1px solid var(--border);color:var(--text-muted);
+  font-family:'Space Mono',monospace;font-size:0.42rem;padding:5px 9px;
+  border-radius:var(--radius);cursor:pointer;letter-spacing:0.03em;
+}
+.djboom-suggestion-chip:hover { border-color:var(--accent3);color:var(--accent3); }
+
+/* Locked-feature upsell card — used inside DJ BOOM overlay (and any future
+   Premium-gated panel) for non-Premium accounts. Blurs+disables the real
+   feature body behind it rather than hiding it, per the "users should know
+   Premium features exist" requirement. */
+.premium-lock-wrap { position:relative; }
+.premium-lock-wrap .premium-lock-target {
+  filter:blur(5px);pointer-events:none;user-select:none;opacity:0.5;
+}
+.premium-lock-card {
+  position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;
+  justify-content:center;gap:10px;text-align:center;padding:20px;z-index:2;
+}
+.premium-lock-card .lock-icon { font-size:1.4rem; }
+.premium-lock-card .lock-msg { font-size:0.56rem;color:var(--text);max-width:280px;line-height:1.6; }
+.premium-upgrade-btn {
+  background:linear-gradient(135deg,#ffd76a,#ff9f4a);color:#0a0a0a;border:none;
+  border-radius:var(--radius);padding:9px 20px;font-family:'Space Mono',monospace;
+  font-size:0.52rem;font-weight:700;cursor:pointer;text-transform:uppercase;
+  letter-spacing:0.06em;
+}
+
+/* Premium Hub */
+.premium-plan-status {
+  display:flex;align-items:center;justify-content:space-between;gap:10px;
+  padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius);
+  margin-bottom:16px;background:rgba(255,255,255,0.02);
+}
+.premium-compare {
+  display:grid;grid-template-columns:1fr auto auto;gap:0;font-size:0.5rem;
+  border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:16px;
+}
+.premium-compare > div {
+  padding:8px 10px;border-bottom:1px solid var(--border);display:flex;align-items:center;
+}
+.premium-compare > div:nth-child(3n+2),.premium-compare > div:nth-child(3n) { justify-content:center; }
+.premium-compare .pc-head { font-size:0.42rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;background:rgba(255,255,255,0.03); }
+.premium-compare .pc-yes { color:var(--accent3); }
+.premium-compare .pc-no  { color:var(--text-muted); }
+.premium-hub-section-title {
+  font-size:0.46rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.08em;
+  margin:16px 0 8px;
+}
+.premium-coming-soon-item {
+  display:flex;align-items:center;justify-content:space-between;gap:10px;
+  padding:9px 10px;border:1px solid var(--border);border-radius:var(--radius);margin-bottom:6px;
+  font-size:0.52rem;
+}
+.premium-coming-soon-tag {
+  font-size:0.36rem;color:var(--text-muted);border:1px solid var(--border);
+  padding:2px 6px;border-radius:var(--radius);text-transform:uppercase;letter-spacing:0.05em;flex-shrink:0;
+}
+
 /* ─── Music Video Player ──────────────────────────────────────────────────
    FREQ-owned player UI wrapping a plain <video> element with native
    controls disabled — per spec, no browser-default video chrome. Sits
@@ -2268,6 +2379,8 @@ body.oled-mode {
     </div>
     <button class="header-tag" id="supportBtn" style="cursor:pointer;background:none;color:var(--accent3);border-color:rgba(0,212,255,0.3);" title="Support / Bug Report">⚑ Help</button>
     <button class="header-tag" id="discoverBtn" style="cursor:pointer;background:none;color:var(--accent3);border-color:rgba(0,212,255,0.3);" title="Discover — trending tracks, playlists, people">⊛ Discover</button>
+    <button class="header-tag" id="djBoomBtn" onclick="openDjBoomOverlay()" style="cursor:pointer;background:none;color:#ffb454;border-color:rgba(255,180,84,0.35);" title="DJ BOOM — AI music assistant">🤖 DJ BOOM</button>
+    <button class="header-tag" id="premiumHubBtn" onclick="openPremiumHubOverlay()" style="cursor:pointer;background:none;color:#ffb454;border-color:rgba(255,180,84,0.35);" title="FREQ Premium">⭐ Premium</button>
     <button class="header-tag" id="settingsBtn" style="cursor:pointer;background:none;" title="Settings">⊞ Settings</button>
     <button class="header-tag" id="lyricsBtn" style="cursor:pointer;background:none;" title="Lyrics">♪ Lyrics</button>
     <button class="header-tag" id="audioQualityBtn" style="cursor:pointer;background:none;" title="Audio Quality & EQ">⚙ Audio</button>
@@ -4024,6 +4137,98 @@ body.oled-mode {
   </div>
 </div>
 
+<!-- ─── DJ BOOM Overlay — Premium AI assistant ──────────────────────────────
+     Real chat, wired to POST /api/djboom/chat (server-side Anthropic call,
+     gated by requirePremium). Non-Premium accounts see the same panel with
+     the chat body blurred+disabled and an upgrade card on top, per the
+     "show it, don't hide it" requirement — not a separate stub page. -->
+<div class="lyrics-overlay" id="djBoomOverlay">
+  <div class="lyrics-panel" style="max-width:480px;">
+    <div class="lyrics-title">🤖 DJ BOOM</div>
+    <div class="lyrics-artist" style="margin-bottom:12px;">Your AI assistant for lyrics, titles, release planning, and playlist ideas.</div>
+
+    <div class="premium-lock-wrap" id="djBoomLockWrap">
+      <div class="premium-lock-target" id="djBoomBody">
+        <div class="djboom-suggestions" id="djBoomSuggestions">
+          <button class="djboom-suggestion-chip" onclick="djBoomSendSuggestion('Give me 5 song title ideas for a moody synthwave track about isolation.')">Song title ideas</button>
+          <button class="djboom-suggestion-chip" onclick="djBoomSendSuggestion('Help me write a chorus about burning out from grinding on a solo project.')">Lyric help</button>
+          <button class="djboom-suggestion-chip" onclick="djBoomSendSuggestion('I have two singles and a concept album in progress — help me think through release order.')">Release planning</button>
+          <button class="djboom-suggestion-chip" onclick="djBoomSendSuggestion('What should go in my playlist if I love dark synth and industrial rap?')">Playlist ideas</button>
+        </div>
+        <div class="djboom-chat-body">
+          <div class="djboom-messages" id="djBoomMessages">
+            <div class="djboom-msg assistant">Hey — I'm DJ BOOM. Ask me for song titles, lyric ideas, release strategy, or playlist recs. What are you working on?</div>
+          </div>
+          <div class="djboom-input-row">
+            <textarea id="djBoomInput" rows="1" placeholder="Ask DJ BOOM…" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();djBoomSend();}"></textarea>
+            <button id="djBoomSendBtn" onclick="djBoomSend()">Send</button>
+          </div>
+        </div>
+      </div>
+      <div class="premium-lock-card" id="djBoomLockCard" style="display:none;">
+        <div class="lock-icon">🔒</div>
+        <div class="lock-msg">DJ BOOM is available with FREQ Premium.</div>
+        <button class="premium-upgrade-btn" onclick="closeDjBoomOverlay(); openPremiumHubOverlay();">See Premium</button>
+      </div>
+    </div>
+
+    <button class="support-close-btn" onclick="closeDjBoomOverlay()" style="margin-top:16px;">Close</button>
+  </div>
+</div>
+
+<!-- ─── FREQ Premium Hub ────────────────────────────────────────────────────
+     Free vs Premium comparison + honest roadmap. Only DJ BOOM is marked
+     live because it's the only Premium feature with a real backend behind
+     it right now — everything else here is explicitly "Coming Soon" rather
+     than a UI that looks functional but isn't, per launch-readiness (no
+     fake data / no unfinished pages pretending to be finished). -->
+<div class="lyrics-overlay" id="premiumHubOverlay">
+  <div class="lyrics-panel" style="max-width:480px;">
+    <div class="lyrics-title">⭐ FREQ Premium</div>
+    <div class="lyrics-artist" style="margin-bottom:4px;">Core FREQ is free, forever. Premium adds extra tools on top.</div>
+
+    <div class="premium-plan-status" id="premiumPlanStatus">
+      <div>
+        <div style="font-size:0.44rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;">Your plan</div>
+        <div id="premiumPlanLabel" style="font-size:0.62rem;font-weight:700;margin-top:2px;">Free</div>
+      </div>
+      <span class="premium-coming-soon-tag" id="premiumUpgradeTag">Upgrade coming soon</span>
+    </div>
+
+    <div class="premium-compare">
+      <div class="pc-head">Feature</div>
+      <div class="pc-head" style="text-align:center;">Free</div>
+      <div class="pc-head" style="text-align:center;">Premium</div>
+
+      <div>🤖 DJ BOOM (AI assistant)</div><div class="pc-no">—</div><div class="pc-yes">✓</div>
+      <div>☁️ Cloud Storage</div><div>Standard</div><div class="pc-yes">75 GB</div>
+      <div>📻 Real-Life Radio</div><div class="pc-no">—</div><div class="pc-yes">✓</div>
+      <div>Artist Pages, Releases, Playlists</div><div class="pc-yes">✓</div><div class="pc-yes">✓</div>
+      <div>⭐ Premium Badge</div><div class="pc-no">—</div><div class="pc-yes">✓</div>
+    </div>
+
+    <div class="premium-hub-section-title">Available Now</div>
+    <div class="premium-coming-soon-item">
+      <span>🤖 DJ BOOM — AI lyrics, titles, release &amp; playlist help</span>
+      <span class="premium-coming-soon-tag" style="color:var(--accent3);border-color:var(--accent3);">Live</span>
+    </div>
+
+    <div class="premium-hub-section-title">Coming Soon</div>
+    <div class="premium-coming-soon-item"><span>☁️ 75 GB Cloud Storage</span><span class="premium-coming-soon-tag">Coming Soon</span></div>
+    <div class="premium-coming-soon-item"><span>📻 Real-Life Radio</span><span class="premium-coming-soon-tag">Coming Soon</span></div>
+    <div class="premium-coming-soon-item"><span>📊 AI Music Analysis</span><span class="premium-coming-soon-tag">Coming Soon</span></div>
+    <div class="premium-coming-soon-item"><span>🧠 AI Playlist Generator</span><span class="premium-coming-soon-tag">Coming Soon</span></div>
+    <div class="premium-coming-soon-item"><span>📈 Creator Insights</span><span class="premium-coming-soon-tag">Coming Soon</span></div>
+    <div class="premium-coming-soon-item"><span>🧪 Experimental Labs</span><span class="premium-coming-soon-tag">Coming Soon</span></div>
+
+    <div style="font-size:0.42rem;color:var(--text-muted);margin-top:14px;line-height:1.7;">
+      Payment isn't connected yet — Premium access is granted manually for now. Full self-serve upgrade is on the way.
+    </div>
+
+    <button class="support-close-btn" onclick="closePremiumHubOverlay()" style="margin-top:12px;">Close</button>
+  </div>
+</div>
+
 <!-- ─── EQ Presets Gallery (added inside audio panel via JS) ──── -->
 
 <!-- Shortcuts Overlay -->
@@ -4749,6 +4954,7 @@ const AUTH = {
   name:        '',
   playlists:   [],
   isAdmin:     false,
+  isPremium:   false,
 };
 
 const AUTH_BASE = '/api/auth';
@@ -4769,7 +4975,7 @@ function setSyncStatus(msg, color) {
 function updateAuthUI() {
   const userBadge = document.getElementById('authBtn');
   if (AUTH.loggedIn) {
-    userBadge.textContent = '⊡ ' + AUTH.name;
+    userBadge.innerHTML = '⊡ ' + AUTH.name + (AUTH.isPremium ? ' <span class="premium-badge">⭐ Premium</span>' : '');
     $('authLoggedInSection').style.display = 'block';
     $('authGuestSection').style.display    = 'none';
     $('authUserName').textContent           = AUTH.name;
@@ -4786,6 +4992,9 @@ function updateAuthUI() {
   // Show/hide admin footer entry
   const adminEntry = $('adminFooterEntry');
   if (adminEntry) adminEntry.style.display = AUTH.isAdmin ? '' : 'none';
+  // DJ BOOM header button reflects lock state at a glance
+  const djBtn = $('djBoomBtn');
+  if (djBtn) djBtn.innerHTML = AUTH.isPremium ? '🤖 DJ BOOM' : '🤖 DJ BOOM 🔒';
 }
 
 function renderSavedPlaylists() {
@@ -5409,6 +5618,98 @@ function openDiscoverOverlay() {
 
 function closeDiscoverOverlay() {
   $('discoverOverlay')?.classList.remove('open');
+}
+
+// ─── DJ BOOM ────────────────────────────────────────────────────────────────
+// Conversation stays in memory only (per browser tab) — no server-side
+// history persistence yet, matching the TOS draft's "may be stored if
+// enabled" language rather than promising something not actually built.
+let djBoomHistory = []; // [{role:'user'|'assistant', content:'...'}]
+let djBoomSending = false;
+
+function openDjBoomOverlay() {
+  $('djBoomOverlay')?.classList.add('open');
+  const locked = !AUTH.isPremium;
+  $('djBoomLockCard').style.display = locked ? 'flex' : 'none';
+  $('djBoomBody').classList.toggle('premium-lock-target', locked);
+  if (!AUTH.loggedIn) {
+    $('djBoomLockCard').style.display = 'flex';
+    $('djBoomBody').classList.add('premium-lock-target');
+    $('djBoomLockCard').querySelector('.lock-msg').textContent = 'Sign in with a FREQ Premium account to use DJ BOOM.';
+  } else {
+    $('djBoomLockCard').querySelector('.lock-msg').textContent = 'DJ BOOM is available with FREQ Premium.';
+  }
+}
+
+function closeDjBoomOverlay() {
+  $('djBoomOverlay')?.classList.remove('open');
+}
+
+function djBoomAppendMessage(role, content) {
+  const el = document.createElement('div');
+  el.className = 'djboom-msg ' + role;
+  el.textContent = content;
+  $('djBoomMessages').appendChild(el);
+  $('djBoomMessages').scrollTop = $('djBoomMessages').scrollHeight;
+}
+
+function djBoomSendSuggestion(text) {
+  $('djBoomInput').value = text;
+  djBoomSend();
+}
+
+async function djBoomSend() {
+  if (djBoomSending) return;
+  if (!AUTH.loggedIn || !AUTH.isPremium) { openPremiumHubOverlay(); return; }
+  const input = $('djBoomInput');
+  const text = (input.value || '').trim();
+  if (!text) return;
+  input.value = '';
+  $('djBoomSuggestions').style.display = 'none';
+  djBoomAppendMessage('user', text);
+  djBoomHistory.push({ role: 'user', content: text });
+
+  djBoomSending = true;
+  $('djBoomSendBtn').disabled = true;
+  const typing = document.createElement('div');
+  typing.className = 'djboom-typing';
+  typing.id = 'djBoomTyping';
+  typing.textContent = 'DJ BOOM is thinking…';
+  $('djBoomMessages').appendChild(typing);
+  $('djBoomMessages').scrollTop = $('djBoomMessages').scrollHeight;
+
+  try {
+    const res = await fetch('/api/djboom/chat', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ messages: djBoomHistory }),
+    });
+    const data = await res.json();
+    $('djBoomTyping')?.remove();
+    if (!res.ok) {
+      djBoomAppendMessage('assistant', data.error || 'DJ BOOM is temporarily unavailable.');
+      return;
+    }
+    djBoomAppendMessage('assistant', data.reply || '…');
+    djBoomHistory.push({ role: 'assistant', content: data.reply || '' });
+  } catch (err) {
+    $('djBoomTyping')?.remove();
+    djBoomAppendMessage('assistant', 'Network error — is the server running?');
+  } finally {
+    djBoomSending = false;
+    $('djBoomSendBtn').disabled = false;
+  }
+}
+
+// ─── Premium Hub ────────────────────────────────────────────────────────────
+function openPremiumHubOverlay() {
+  $('premiumHubOverlay')?.classList.add('open');
+  $('premiumPlanLabel').textContent = AUTH.isPremium ? '⭐ Premium' : 'Free';
+  $('premiumUpgradeTag').style.display = AUTH.isPremium ? 'none' : '';
+}
+
+function closePremiumHubOverlay() {
+  $('premiumHubOverlay')?.classList.remove('open');
 }
 
 // Pane name → tab id suffix mapping
@@ -9808,9 +10109,9 @@ async function authInit() {
     AUTH.username  = data.username;
     AUTH.name      = data.displayName;
     AUTH.playlists = data.playlists || [];
-    // Check admin status
+    // Check admin + premium status
     fetch('/api/admin/me', { headers: { 'Authorization': `Bearer ${AUTH.token}` } })
-      .then(r => r.json()).then(d => { AUTH.isAdmin = !!d.isAdmin; updateAuthUI(); }).catch(() => {});
+      .then(r => r.json()).then(d => { AUTH.isAdmin = !!d.isAdmin; AUTH.isPremium = !!d.isPremium; updateAuthUI(); }).catch(() => {});
     updateAuthUI();
     setSyncStatus(`✓ Session restored · ${AUTH.playlists.length} playlists`, 'var(--accent3)');
     loadSharedWithMe();
@@ -9840,7 +10141,7 @@ $('signinSubmit').addEventListener('click', async () => {
     AUTH.playlists = data.playlists || [];
     localStorage.setItem('freq_token_v4', AUTH.token);
     fetch('/api/admin/me', { headers: { 'Authorization': `Bearer ${AUTH.token}` } })
-      .then(r => r.json()).then(d => { AUTH.isAdmin = !!d.isAdmin; updateAuthUI(); }).catch(() => {});
+      .then(r => r.json()).then(d => { AUTH.isAdmin = !!d.isAdmin; AUTH.isPremium = !!d.isPremium; updateAuthUI(); }).catch(() => {});
     updateAuthUI();
     loadSharedWithMe();
     loadLikedPlaylists();
@@ -9877,6 +10178,7 @@ $('signupSubmit').addEventListener('click', async () => {
     AUTH.playlists = [];
     localStorage.setItem('freq_token_v4', AUTH.token);
     AUTH.isAdmin = false; // New accounts are never admins
+    AUTH.isPremium = false; // New accounts start on Free
     updateAuthUI();
     errEl.classList.remove('show');
     ['signupUsername','signupName','signupPassword','signupConfirm'].forEach(id => $(id).value = '');
@@ -9890,7 +10192,7 @@ $('signupSubmit').addEventListener('click', async () => {
 
 // ─── Sign Out ─────────────────────────────────────────────────────────────────
 $('authLogoutBtn').addEventListener('click', () => {
-  AUTH.loggedIn = false; AUTH.token = null; AUTH.username = ''; AUTH.name = ''; AUTH.playlists = [];
+  AUTH.loggedIn = false; AUTH.token = null; AUTH.username = ''; AUTH.name = ''; AUTH.playlists = []; AUTH.isAdmin = false; AUTH.isPremium = false;
   localStorage.removeItem('freq_token_v4');
   updateAuthUI();
   showToast('Signed out', '', 'info');
@@ -13224,6 +13526,8 @@ document.addEventListener('keydown', e => {
   if ($('settingsOverlay')?.classList.contains('open'))  { closeSettingsModal(); return; }
   if ($('lyricsOverlay')?.classList.contains('open'))    { closeLyricsModal(); return; }
   if ($('discoverOverlay')?.classList.contains('open'))  { closeDiscoverOverlay(); return; }
+  if ($('djBoomOverlay')?.classList.contains('open'))     { closeDjBoomOverlay(); return; }
+  if ($('premiumHubOverlay')?.classList.contains('open')) { closePremiumHubOverlay(); return; }
 });
 
 // ─── 9. Topbar mini-visualizer toggle ────────────────────────────────────────
@@ -14094,7 +14398,7 @@ document.addEventListener('keydown', e => {
 })();
 
 // ─── Patch: Close new overlays via clicking outside ──────────────────────────
-['supportOverlay','aboutOverlay','settingsOverlay','lyricsOverlay','userProfileOverlay','artistProfileOverlay','becomeArtistOverlay','editArtistBioOverlay','manageCollaboratorsOverlay','publishTrackOverlay','trackAnalyticsOverlay','createReleaseOverlay'].forEach(id => {
+['supportOverlay','aboutOverlay','settingsOverlay','lyricsOverlay','userProfileOverlay','artistProfileOverlay','becomeArtistOverlay','editArtistBioOverlay','manageCollaboratorsOverlay','publishTrackOverlay','trackAnalyticsOverlay','createReleaseOverlay','djBoomOverlay','premiumHubOverlay'].forEach(id => {
   const el = $(id);
   if (!el) return;
   el.addEventListener('click', e => { if (e.target === el) el.classList.remove('open'); });
