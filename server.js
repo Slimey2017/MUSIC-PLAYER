@@ -2904,7 +2904,6 @@ app.post('/api/djboom/chat', requirePremium, djBoomRateLimit, async (req, res) =
 try {
   const model = genAI.getGenerativeModel({
     model: "gemini-2.5-flash"
-    // or "gemini-2.5-pro"
   });
 
   const prompt = [
@@ -2934,6 +2933,8 @@ try {
     error: "DJ BOOM is temporarily unavailable."
   });
 }
+
+});
 
 app.post('/api/auth/token-refresh', async (req, res) => {
   const { token } = req.body;
