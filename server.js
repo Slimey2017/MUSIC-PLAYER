@@ -75,19 +75,18 @@ const fs       = require('fs');
 const multer   = require('multer');
 // node-fetch not needed — Node v18+ has native fetch built in
 const { createClient } = require('@supabase/supabase-js');
-const Gemini         = require('@google/genai');
+const { GoogleGenAI } = require('@google/genai');
 
-// ─── Supabase client (server-side only — uses service role key) ───────────────
+// ─── Supabase client ───────────────
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_KEY
 );
 
-// ─── Gemini client (server-side only — powers DJ BOOM) ─────────────────────
-// Gemini_API_KEY lives in Render's env vars, same as SUPABASE_SERVICE_KEY.
-// If it's missing, DJ BOOM routes fail gracefully rather than crashing boot.
-const Gemini = process.env.Gemini_API_KEY
-  ? new Gemini({ apiKey: process.env.Gemini_API_KEY })
+// ─── Gemini client (server-side only) ─────────────────────
+// 2. Use a different name for your instance (e.g., 'geminiClient')
+const geminiClient = process.env.Gemini_API_KEY
+  ? new GoogleGenAI({ apiKey: process.env.Gemini_API_KEY })
   : null;
 
 const app  = express();
