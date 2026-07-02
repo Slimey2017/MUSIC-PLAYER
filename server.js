@@ -84,10 +84,12 @@ const supabase = createClient(
 );
 
 // ─── Anthropic client (server-side only — powers DJ BOOM) ─────────────────────
-// ANTHROPIC_API_KEY lives in Render's env vars, same as SUPABASE_SERVICE_KEY.
+// GEMINI_API_KEY lives in Render's env vars, same as SUPABASE_SERVICE_KEY.
 // If it's missing, DJ BOOM routes fail gracefully rather than crashing boot.
-const anthropic = process.env.ANTHROPIC_API_KEY
-  ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+const { GoogleGenerativeAI } = require("@google/generative-ai");
+
+const genAI = process.env.GEMINI_API_KEY
+  ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
   : null;
 
 const app  = express();
@@ -2881,7 +2883,7 @@ setInterval(() => {
 
 app.post('/api/djboom/chat', requirePremium, djBoomRateLimit, async (req, res) => {
   if (!anthropic) {
-    console.error('[djboom] ANTHROPIC_API_KEY not configured');
+    console.error('[djboom] GEMINI_API_KEY not configured');
     return res.status(503).json({ error: 'DJ BOOM is temporarily unavailable.' });
   }
 
@@ -2899,20 +2901,39 @@ app.post('/api/djboom/chat', requirePremium, djBoomRateLimit, async (req, res) =
     return res.status(400).json({ error: 'No valid messages provided.' });
   }
 
-  try {
-    const completion = await anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 1024,
-      system: DJ_BOOM_SYSTEM_PROMPT,
-      messages: cleaned,
-    });
-    const text = completion.content.find(b => b.type === 'text')?.text || '';
-    return res.json({ reply: text });
-  } catch (err) {
-    console.error('[djboom] Anthropic API error:', err?.message || err);
-    return res.status(502).json({ error: 'DJ BOOM is temporarily unavailable.' });
-  }
-});
+try {
+  const model = genAI.getGenerativeModel({
+    model: "gemini-2.5-flash"
+    // or "gemini-2.5-pro"
+  });
+
+  const prompt = [
+    {
+      role: "user",
+      parts: [
+        {
+          text:
+            DJ_BOOM_SYSTEM_PROMPT +
+            "\n\nConversation:\n" +
+            cleaned
+              .map(msg => `${msg.role}: ${msg.content}`)
+              .join("\n")
+        }
+      ]
+    }
+  ];
+
+  const result = await model.generateContent(prompt);
+  const text = result.response.text();
+
+  return res.json({ reply: text });
+
+} catch (err) {
+  console.error("[djboom] Gemini API error:", err?.message || err);
+  return res.status(502).json({
+    error: "DJ BOOM is temporarily unavailable."
+  });
+}
 
 app.post('/api/auth/token-refresh', async (req, res) => {
   const { token } = req.body;
