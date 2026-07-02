@@ -2901,9 +2901,9 @@ app.post('/api/djboom/chat', requirePremium, djBoomRateLimit, async (req, res) =
 
   try {
     const model = gemini.getGenerativeModel({ model: 'gemini-2.5-flash' });
-    // Convert Anthropic-style messages to Gemini format
+    // Convert Anthropic-style messages to Gemini format with proper role mapping
     const contents = cleaned.map(message => ({
-      role: message.role,
+      role: message.role === 'user' ? 'USER' : 'MODEL',
       parts: [
         {
           text: message.content
