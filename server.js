@@ -75,7 +75,7 @@ const fs       = require('fs');
 const multer   = require('multer');
 // node-fetch not needed — Node v18+ has native fetch built in
 const { createClient } = require('@supabase/supabase-js');
-const Anthropic         = require('@anthropic-ai/sdk');
+const Gemini         = require('@google/genai');
 
 // ─── Supabase client (server-side only — uses service role key) ───────────────
 const supabase = createClient(
@@ -83,11 +83,11 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_KEY
 );
 
-// ─── Anthropic client (server-side only — powers DJ BOOM) ─────────────────────
-// ANTHROPIC_API_KEY lives in Render's env vars, same as SUPABASE_SERVICE_KEY.
+// ─── Gemini client (server-side only — powers DJ BOOM) ─────────────────────
+// Gemini_API_KEY lives in Render's env vars, same as SUPABASE_SERVICE_KEY.
 // If it's missing, DJ BOOM routes fail gracefully rather than crashing boot.
-const anthropic = process.env.ANTHROPIC_API_KEY
-  ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+const Gemini = process.env.Gemini_API_KEY
+  ? new Gemini({ apiKey: process.env.Gemini_API_KEY })
   : null;
 
 const app  = express();
@@ -2844,7 +2844,7 @@ app.post('/api/auth/signin', rateLimit, async (req, res) => {
 });
 
 // ─── DJ BOOM (Premium AI assistant) ────────────────────────────────────────
-// Server-side only — the Anthropic key never touches the client. Gated by
+// Server-side only — the Gemini key never touches the client. Gated by
 // requirePremium so a non-Premium account gets a clean 403 with the same
 // upsell copy the frontend already shows when the panel is blurred, rather
 // than the request silently doing nothing.
@@ -2880,8 +2880,8 @@ setInterval(() => {
 }, 300_000);
 
 app.post('/api/djboom/chat', requirePremium, djBoomRateLimit, async (req, res) => {
-  if (!anthropic) {
-    console.error('[djboom] ANTHROPIC_API_KEY not configured');
+  if (!Gemini) {
+    console.error('[djboom] Gemini_API_KEY not configured');
     return res.status(503).json({ error: 'DJ BOOM is temporarily unavailable.' });
   }
 
@@ -2900,7 +2900,7 @@ app.post('/api/djboom/chat', requirePremium, djBoomRateLimit, async (req, res) =
   }
 
   try {
-    const completion = await anthropic.messages.create({
+    const completion = await Gemini.messages.create({
       model: 'claude-sonnet-4-6',
       max_tokens: 1024,
       system: DJ_BOOM_SYSTEM_PROMPT,
@@ -2909,7 +2909,7 @@ app.post('/api/djboom/chat', requirePremium, djBoomRateLimit, async (req, res) =
     const text = completion.content.find(b => b.type === 'text')?.text || '';
     return res.json({ reply: text });
   } catch (err) {
-    console.error('[djboom] Anthropic API error:', err?.message || err);
+    console.error('[djboom] Gemini API error:', err?.message || err);
     return res.status(502).json({ error: 'DJ BOOM is temporarily unavailable.' });
   }
 });
