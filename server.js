@@ -75,12 +75,20 @@ const fs       = require('fs');
 const multer   = require('multer');
 // node-fetch not needed — Node v18+ has native fetch built in
 const { createClient } = require('@supabase/supabase-js');
+const Anthropic         = require('@anthropic-ai/sdk');
 
 // ─── Supabase client (server-side only — uses service role key) ───────────────
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_KEY
 );
+
+// ─── Anthropic client (server-side only — powers DJ BOOM) ─────────────────────
+// ANTHROPIC_API_KEY lives in Render's env vars, same as SUPABASE_SERVICE_KEY.
+// If it's missing, DJ BOOM routes fail gracefully rather than crashing boot.
+const anthropic = process.env.ANTHROPIC_API_KEY
+  ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+  : null;
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -1662,11 +1670,29 @@ async function dbGetSession(token) {
     await supabase.from('sessions').delete().eq('token', token);
     return null;
   }
-  // Fetch is_admin from accounts (cheap read, cached by Postgres for repeated calls)
-  const { data: acct } = await supabase.from('accounts').select('is_admin').eq('username', data.username).maybeSingle();
+  // Fetch is_admin/is_premium from accounts (cheap read, cached by Postgres for repeated calls)
+  const { data: acct } = await supabase.from('accounts').select('is_admin, is_premium').eq('username', data.username).maybeSingle();
   // Always return a normalized username — guards against any historical row that
   // somehow has trailing whitespace, mixed case, or stray characters drifting through.
-  return { username: normalizeUsername(data.username), expiresAt: new Date(data.expires_at).getTime(), isAdmin: !!(acct?.is_admin) };
+  return {
+    username:   normalizeUsername(data.username),
+    expiresAt:  new Date(data.expires_at).getTime(),
+    isAdmin:    !!(acct?.is_admin),
+    isPremium:  !!(acct?.is_premium),
+  };
+}
+
+// Middleware: require an authenticated Premium session (used by DJ BOOM and
+// any other Premium-gated route). Mirrors requireAdmin below it — same
+// token-resolution order, same shape of response on failure — so the two
+// gates behave identically from the client's point of view.
+async function requirePremium(req, res, next) {
+  const token = (req.headers.authorization || '').replace('Bearer ', '') || req.body?.token || req.query.token;
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Authentication required.' });
+  if (!sess.isPremium) return res.status(403).json({ error: 'DJ BOOM is available with FREQ Premium.' });
+  req._premiumSession = sess;
+  next();
 }
 
 // Middleware: require an authenticated admin session
@@ -2814,6 +2840,77 @@ app.post('/api/auth/signin', rateLimit, async (req, res) => {
   } catch (err) {
     console.error('[signin]', err);
     return res.status(500).json({ error: 'Server error during sign in.' });
+  }
+});
+
+// ─── DJ BOOM (Premium AI assistant) ────────────────────────────────────────
+// Server-side only — the Anthropic key never touches the client. Gated by
+// requirePremium so a non-Premium account gets a clean 403 with the same
+// upsell copy the frontend already shows when the panel is blurred, rather
+// than the request silently doing nothing.
+const DJ_BOOM_SYSTEM_PROMPT = `You are DJ BOOM, FREQ's in-app music AI assistant.
+You help artists with lyric ideas, song titles, release planning, playlist
+recommendations, and general music/career advice. Keep responses concise,
+practical, and music-focused. You are not a substitute for legal, financial,
+or professional advice, and you should say so if a question strays into
+those areas.`;
+
+// Same rolling-window shape as artistFollowRateLimit above, but its own
+// bucket and a tighter ceiling — LLM calls cost real money per request,
+// unlike a follow/unfollow row write, so this deliberately throttles harder.
+const djBoomRateLimitHits = new Map();
+function djBoomRateLimit(req, res, next) {
+  const sess = req._premiumSession;
+  const key = sess?.username || req.ip;
+  const now = Date.now();
+  const times = (djBoomRateLimitHits.get(key) || []).filter(t => now - t < 60_000);
+  times.push(now);
+  djBoomRateLimitHits.set(key, times);
+  if (times.length > 15) {
+    return res.status(429).json({ error: 'DJ BOOM is thinking too fast — give it a few seconds.' });
+  }
+  next();
+}
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, times] of djBoomRateLimitHits) {
+    const fresh = times.filter(t => now - t < 60_000);
+    if (!fresh.length) djBoomRateLimitHits.delete(key); else djBoomRateLimitHits.set(key, fresh);
+  }
+}, 300_000);
+
+app.post('/api/djboom/chat', requirePremium, djBoomRateLimit, async (req, res) => {
+  if (!anthropic) {
+    console.error('[djboom] ANTHROPIC_API_KEY not configured');
+    return res.status(503).json({ error: 'DJ BOOM is temporarily unavailable.' });
+  }
+
+  const { messages } = req.body;
+  if (!Array.isArray(messages) || !messages.length) {
+    return res.status(400).json({ error: '"messages" must be a non-empty array.' });
+  }
+  if (messages.length > 40) {
+    return res.status(400).json({ error: 'Conversation is too long for a single request.' });
+  }
+  const cleaned = messages
+    .filter(m => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')
+    .map(m => ({ role: m.role, content: m.content.slice(0, 8000) }));
+  if (!cleaned.length) {
+    return res.status(400).json({ error: 'No valid messages provided.' });
+  }
+
+  try {
+    const completion = await anthropic.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 1024,
+      system: DJ_BOOM_SYSTEM_PROMPT,
+      messages: cleaned,
+    });
+    const text = completion.content.find(b => b.type === 'text')?.text || '';
+    return res.json({ reply: text });
+  } catch (err) {
+    console.error('[djboom] Anthropic API error:', err?.message || err);
+    return res.status(502).json({ error: 'DJ BOOM is temporarily unavailable.' });
   }
 });
 
@@ -7031,12 +7128,13 @@ app.get('/api/reports/check', async (req, res) => {
   return res.json({ reported: !!data });
 });
 
-// GET /api/admin/me
+// GET /api/admin/me — also carries isPremium so the frontend can gate DJ BOOM
+// and other Premium UI off the same call instead of a second round trip.
 app.get('/api/admin/me', async (req, res) => {
   const token = (req.headers.authorization || '').replace('Bearer ', '') || req.query.token;
   const sess = token ? await dbGetSession(token) : null;
-  if (!sess) return res.json({ isAdmin: false });
-  return res.json({ isAdmin: sess.isAdmin, username: sess.username });
+  if (!sess) return res.json({ isAdmin: false, isPremium: false });
+  return res.json({ isAdmin: sess.isAdmin, isPremium: sess.isPremium, username: sess.username });
 });
 
 // GET /api/admin/reports/stats (must come before /api/admin/reports/:id)
