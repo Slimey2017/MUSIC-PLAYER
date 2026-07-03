@@ -2848,12 +2848,134 @@ app.post('/api/auth/signin', rateLimit, async (req, res) => {
 // requirePremium so a non-Premium account gets a clean 403 with the same
 // upsell copy the frontend already shows when the panel is blurred, rather
 // than the request silently doing nothing.
-const DJ_BOOM_SYSTEM_PROMPT = `You are DJ BOOM, FREQ's in-app music AI assistant.
-You help artists with lyric ideas, song titles, release planning, playlist
-recommendations, and general music/career advice. Keep responses concise,
-practical, and music-focused. You are not a substitute for legal, financial,
-or professional advice, and you should say so if a question strays into
-those areas.`;
+//
+// v2: DJ BOOM is now grounded in the caller's actual FREQ session instead of
+// talking like a generic chatbot with no idea what's playing. The frontend
+// sends a `context` object (current track, queue, playlists, playback state,
+// etc — see buildDjBoomContextBlock below) alongside the message history.
+// That context is rendered into a fenced block placed ahead of the
+// conversation in the system instruction, and the model is told to only use
+// what's in that block — never invent tracks, playlists, or counts.
+//
+// AI/action separation: DJ BOOM never "does" anything itself — it can only
+// describe an action it wants performed and hand back a small, whitelisted
+// action object. The frontend is the only thing that actually mutates
+// playback/queue/library state, after checking the action type against its
+// own switch statement. This route re-validates the action server-side
+// too, against DJ_BOOM_ACTION_TYPES below, before it's allowed out the
+// door — a malformed or hallucinated action degrades to "no action", not a
+// crash or a pass-through of arbitrary model output.
+const DJ_BOOM_ACTION_TYPES = new Set([
+  'playLikedSongs',                  // no payload
+  'shuffleLikedSongs',               // no payload
+  'shuffleQueue',                    // no payload — reshuffles the current queue in place
+  'skipTrack',                       // no payload
+  'previousTrack',                   // no payload
+  'togglePlayPause',                 // no payload
+  'likeCurrentTrack',                // no payload — likes whatever's currently playing
+  'playPlaylistByName',              // { name }
+  'addCurrentTrackToPlaylistByName', // { name }
+  'queueTrackSearch',                // { query } — searches FREQ's catalog and queues best match(es)
+  'searchAndPlay',                   // { query } — same search, but replaces queue/plays immediately
+  'startFreqRadio',                  // no payload — seeds a queue from the current track/artist
+  'playCloudFiles',                  // no payload — queues the user's own uploaded cloud files
+  'setRepeatMode',                   // { mode: 'off'|'all'|'one' }
+]);
+
+const DJ_BOOM_SYSTEM_PROMPT_BASE = `You are DJ BOOM, FREQ's built-in in-app music assistant.
+FREQ is a music streaming and social platform. You are not a generic chatbot
+— you are wired into the user's live FREQ session and can see (via the
+"FREQ SESSION CONTEXT" block provided with every message) what's currently
+playing, their queue, their playlists, their liked songs, and their playback
+state. Treat that block as ground truth about their account and this moment.
+
+Hard rules:
+1. NEVER invent or guess at tracks, artists, playlists, queue contents, like
+   counts, or any other detail about the user's library. If the context
+   block doesn't contain something, say you don't have that information
+   rather than making it up. A null, empty, or missing field means that
+   data is genuinely unavailable right now, not "go figure it out."
+2. You cannot directly play, skip, queue, shuffle, like, or otherwise change
+   anything yourself. When the user asks you to DO something playback- or
+   library-related, respond with a short natural confirmation line AND a
+   structured action for the app to execute afterward. Phrase confirmations
+   as "Sure, doing that now" — not as if it's already finished — since the
+   app performs the action only after your response is received.
+3. Only use action types from this exact list — never invent a new one:
+   ${[...DJ_BOOM_ACTION_TYPES].join(', ')}.
+   If the request doesn't map cleanly to one of these, don't force it —
+   just have a normal conversation, or ask one brief clarifying question.
+4. For general music talk — lyric ideas, song titles, release planning,
+   playlist concepts, "what should I listen to" recommendations — respond
+   conversationally with no action. Base recommendations only on
+   genres/artists actually visible in the provided context (liked songs,
+   recent plays, queue), not on outside opinions about what's "good."
+5. Keep replies short and conversational, like a DJ talking over a mic
+   between tracks, not a formal assistant. You are not a substitute for
+   legal, financial, or professional advice, and should say so plainly if a
+   question strays into those areas.
+
+Response format — this is critical:
+Respond with ONLY a single JSON object, no markdown fences, no prose outside
+the JSON, matching exactly this shape:
+{"reply": "<what you'd say out loud>", "action": {"type": "<action type or null>", "payload": {"name": "<playlist or search text, if relevant>", "query": "<search text, if relevant>", "mode": "<off|all|one, if relevant>"}}}
+Omit payload keys that don't apply to the chosen action type. If no action
+applies, set "action" to null entirely — never invent an action whose type
+isn't in the allowed list above.`;
+
+// Renders the frontend-supplied session context into a fenced block the
+// model is instructed to treat as ground truth. Every field is defensively
+// coerced/truncated — this is user-influenced input (track titles, playlist
+// names, etc. originate from whatever's in their library) — and rendered as
+// inert JSON text rather than interpolated into instruction prose, so it
+// can't smuggle extra instructions to the model.
+function buildDjBoomContextBlock(context) {
+  const c = context && typeof context === 'object' ? context : {};
+  const str = (v, max = 200) => (typeof v === 'string' && v.trim() ? v.slice(0, max) : null);
+  const bool = v => (typeof v === 'boolean' ? v : null);
+  const arr = (v, max = 25) => (Array.isArray(v) ? v.slice(0, max) : []);
+
+  const safeContext = {
+    username: str(c.username, 60) || 'unknown',
+    isPremium: bool(c.isPremium),
+    playback: {
+      state: str(c.playback?.state, 20) || 'unknown', // playing | paused | idle
+      shuffled: bool(c.playback?.shuffled),
+      repeatMode: str(c.playback?.repeatMode, 10) || 'off', // off | all | one
+    },
+    currentTrack: c.currentTrack && typeof c.currentTrack === 'object' ? {
+      title: str(c.currentTrack.title, 200) || 'Unknown',
+      artist: str(c.currentTrack.artist, 200) || 'Unknown',
+      platform: str(c.currentTrack.platform, 40) || 'unknown',
+      isLikedByMe: bool(c.currentTrack.isLikedByMe),
+    } : null, // null = nothing currently playing
+    queue: arr(c.queue).map(t => ({
+      title: str(t?.title, 150) || 'Unknown',
+      artist: str(t?.artist, 150) || 'Unknown',
+    })),
+    queueLength: typeof c.queueLength === 'number' ? c.queueLength : arr(c.queue).length,
+    recentlyPlayed: arr(c.recentlyPlayed, 15).map(t => ({
+      title: str(t?.title, 150) || 'Unknown',
+      artist: str(t?.artist, 150) || 'Unknown',
+    })),
+    likedSongsCount: typeof c.likedSongsCount === 'number' ? c.likedSongsCount : null,
+    likedSongsSample: arr(c.likedSongsSample, 15).map(t => ({
+      title: str(t?.title, 150) || 'Unknown',
+      artist: str(t?.artist, 150) || 'Unknown',
+    })),
+    playlists: arr(c.playlists, 30).map(p => ({
+      name: str(p?.name, 120) || 'Untitled',
+      trackCount: typeof p?.trackCount === 'number' ? p.trackCount : null,
+    })),
+    currentPlaylist: str(c.currentPlaylist, 120),
+    hasCloudFiles: bool(c.hasCloudFiles),
+    cloudFileCount: typeof c.cloudFileCount === 'number' ? c.cloudFileCount : null,
+  };
+
+  return `FREQ SESSION CONTEXT (ground truth — do not contradict or embellish this):
+${JSON.stringify(safeContext, null, 2)}
+END FREQ SESSION CONTEXT`;
+}
 
 // Same rolling-window shape as artistFollowRateLimit above, but its own
 // bucket and a tighter ceiling — LLM calls cost real money per request,
@@ -2885,7 +3007,7 @@ app.post('/api/djboom/chat', requirePremium, djBoomRateLimit, async (req, res) =
     return res.status(503).json({ error: 'DJ BOOM is temporarily unavailable.' });
   }
 
-  const { messages } = req.body;
+  const { messages, context } = req.body;
   if (!Array.isArray(messages) || !messages.length) {
     return res.status(400).json({ error: '"messages" must be a non-empty array.' });
   }
@@ -2899,26 +3021,66 @@ app.post('/api/djboom/chat', requirePremium, djBoomRateLimit, async (req, res) =
     return res.status(400).json({ error: 'No valid messages provided.' });
   }
 
+  const contextBlock = buildDjBoomContextBlock(context);
+  const systemInstruction = `${DJ_BOOM_SYSTEM_PROMPT_BASE}\n\n${contextBlock}`;
+
   try {
     const model = gemini.getGenerativeModel({ model: 'gemini-2.5-flash' });
-    // Convert Anthropic-style messages to Gemini format with proper role mapping
+    // Gemini roles are lowercase 'user' / 'model', not 'USER' / 'MODEL' —
+    // the previous version of this route had this backwards, which silently
+    // degraded every request to Gemini's default role handling.
     const contents = cleaned.map(message => ({
-      role: message.role === 'user' ? 'USER' : 'MODEL',
-      parts: [
-        {
-          text: message.content
-        }
-      ]
+      role: message.role === 'user' ? 'user' : 'model',
+      parts: [{ text: message.content }],
     }));
     const completion = await model.generateContent({
       contents,
       generationConfig: {
         maxOutputTokens: 1024,
+        responseMimeType: 'application/json',
       },
-      systemInstruction: DJ_BOOM_SYSTEM_PROMPT,
+      systemInstruction,
     });
-    const text = completion.response.text() || '';
-    return res.json({ reply: text });
+    const raw = completion.response.text() || '';
+
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (parseErr) {
+      // Model didn't return valid JSON despite the instruction — fall back
+      // to the raw text as a plain conversational reply instead of failing
+      // the whole request. No action in this path since there's no
+      // structured data to trust.
+      console.error('[djboom] Non-JSON response from Gemini:', raw.slice(0, 300));
+      return res.json({ reply: raw.trim() || "Sorry, I didn't catch that — can you try again?", action: null });
+    }
+
+    const reply = typeof parsed?.reply === 'string' && parsed.reply.trim()
+      ? parsed.reply.slice(0, 2000)
+      : "Sorry, I didn't catch that — can you try again?";
+
+    // Re-validate the action server-side rather than trusting the model's
+    // output verbatim — this is the actual boundary that keeps a
+    // hallucinated or malformed action type from ever reaching the
+    // frontend's executor.
+    let action = null;
+    const rawType = parsed?.action?.type;
+    if (typeof rawType === 'string' && DJ_BOOM_ACTION_TYPES.has(rawType)) {
+      const rawPayload = parsed.action.payload;
+      let payload = null;
+      if (rawPayload && typeof rawPayload === 'object' && !Array.isArray(rawPayload)) {
+        payload = {};
+        if (typeof rawPayload.name === 'string' && rawPayload.name.trim()) payload.name = rawPayload.name.slice(0, 120);
+        if (typeof rawPayload.query === 'string' && rawPayload.query.trim()) payload.query = rawPayload.query.slice(0, 200);
+        if (typeof rawPayload.mode === 'string' && ['off', 'all', 'one'].includes(rawPayload.mode)) {
+          payload.mode = rawPayload.mode;
+        }
+        if (!Object.keys(payload).length) payload = null;
+      }
+      action = { type: rawType, payload };
+    }
+
+    return res.json({ reply, action });
   } catch (err) {
     console.error('[djboom] Gemini API error:', err?.message || err);
     return res.status(502).json({ error: 'DJ BOOM is temporarily unavailable.' });
@@ -6858,6 +7020,48 @@ app.post('/api/tracks/:trackId/like', rateLimit, async (req, res) => {
   } catch (err) {
     console.error('[track like]', err);
     return res.status(500).json({ error: 'Could not like track.' });
+  }
+});
+
+// GET /api/tracks/liked?token=...&limit=50
+// Returns the signed-in user's own liked tracks, newest-liked first. This is
+// the one read this schema was missing — track_likes could only be checked
+// per-track (likedByMe) or counted (like_count), never listed back out for
+// the user who did the liking. Added specifically so DJ BOOM's "play my
+// liked songs" has a real list to hand the queue instead of a guess; the
+// frontend "Liked Songs" surface can reuse this same endpoint later.
+app.get('/api/tracks/liked', rateLimit, async (req, res) => {
+  const token = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 200);
+  try {
+    const { data: likeRows, error: likeErr } = await supabase.from('track_likes')
+      .select('track_id, created_at').eq('username', sess.username)
+      .order('created_at', { ascending: false }).limit(limit);
+    if (likeErr) throw new Error(likeErr.message);
+    if (!likeRows?.length) return res.json({ tracks: [] });
+
+    const ids = likeRows.map(l => l.track_id);
+    const { data: tracks, error: trackErr } = await supabase.from('tracks')
+      .select('id, title, artist_id, artist_name, is_explicit, cover_url')
+      .in('id', ids).eq('is_published', true);
+    if (trackErr) throw new Error(trackErr.message);
+
+    // Preserve like-order (most recently liked first), not the arbitrary
+    // order .in() happens to return.
+    const byId = new Map((tracks || []).map(t => [t.id, t]));
+    const ordered = likeRows.map(l => byId.get(l.track_id)).filter(Boolean);
+
+    return res.json({
+      tracks: ordered.map(t => ({
+        id: t.id, title: t.title, artistId: t.artist_id, artistName: t.artist_name,
+        isExplicit: !!t.is_explicit, coverUrl: t.cover_url,
+      })),
+    });
+  } catch (err) {
+    console.error('[tracks liked]', err);
+    return res.status(500).json({ error: 'Could not load liked tracks.' });
   }
 });
 
