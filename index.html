@@ -18,6 +18,11 @@
       emailjs.init({ publicKey: 'Gb2KEX0jVCP5CYuvR' });
     })();
   </script>
+  <!-- Gumroad — FREQ Premium checkout overlay. Binds to any
+       a.gumroad-button in the page (see #pcoGumroadLink) and opens
+       Gumroad's hosted checkout in an in-page overlay instead of
+       navigating away from FREQ. -->
+  <script src="https://gumroad.com/js/gumroad.js"></script>
 <style>
 /* ═══════════════════════════════════════════════════════════════════
    FREQ v4.0  ·  Themes
@@ -1294,6 +1299,103 @@ textarea.support-field { height:90px;resize:vertical; }
   font-size:0.36rem;color:var(--text-muted);border:1px solid var(--border);
   padding:2px 6px;border-radius:var(--radius);text-transform:uppercase;letter-spacing:0.05em;flex-shrink:0;
 }
+
+/* ─── Premium Checkout Modal ─────────────────────────────────────────────
+   Launched from the Premium Hub (and the DJ BOOM lock card, via the Hub).
+   Reuses .lyrics-overlay/.lyrics-panel like every other modal in the app —
+   .above-dash so it stacks correctly on top of premiumHubOverlay, which is
+   itself a base .lyrics-overlay. One panel, several internal "steps"
+   (gate / confirm / checkout / activating / success / failed) toggled by
+   showing/hiding .pco-step blocks rather than separate overlays, so the
+   whole purchase flow feels like one continuous surface instead of a
+   chain of modals popping over modals. */
+.pco-panel { max-width:420px; }
+.pco-step { display:none; }
+.pco-step.active { display:block; animation: pcoFadeIn 0.25s ease; }
+@keyframes pcoFadeIn { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:translateY(0); } }
+
+.pco-logo-row {
+  display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:4px;
+}
+.pco-logo-mark {
+  font-family:'Unbounded',sans-serif;font-weight:900;font-size:1rem;color:var(--accent);letter-spacing:-0.02em;
+}
+.pco-logo-badge {
+  background:linear-gradient(135deg,#ffd76a,#ff9f4a);color:#0a0a0a;font-size:0.4rem;
+  font-weight:700;padding:2px 6px;border-radius:var(--radius);text-transform:uppercase;letter-spacing:0.06em;
+}
+.pco-price-row {
+  text-align:center;margin:14px 0 4px;
+}
+.pco-price {
+  font-family:'Unbounded',sans-serif;font-weight:900;font-size:1.7rem;color:var(--text);
+}
+.pco-price span { font-size:0.6rem;color:var(--text-muted);font-weight:400;font-family:'Space Mono',monospace; }
+.pco-subline {
+  text-align:center;font-size:0.48rem;color:var(--text-dim);margin-bottom:16px;
+  display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap;
+}
+.pco-subline span { display:inline-flex;align-items:center;gap:4px; }
+.pco-feature-list {
+  display:flex;flex-direction:column;gap:8px;margin:16px 0;padding:14px;
+  border:1px solid var(--border);border-radius:var(--radius);background:rgba(255,255,255,0.02);
+}
+.pco-feature-list div { font-size:0.54rem;color:var(--text);display:flex;align-items:center;gap:8px; }
+.pco-btn-primary {
+  width:100%;background:linear-gradient(135deg,#ffd76a,#ff9f4a);color:#0a0a0a;border:none;
+  border-radius:var(--radius);padding:11px;font-family:'Unbounded',sans-serif;font-size:0.6rem;
+  font-weight:700;cursor:pointer;letter-spacing:0.03em;margin-top:6px;transition:opacity 0.2s,transform 0.1s;
+}
+.pco-btn-primary:hover { opacity:0.9; }
+.pco-btn-primary:active { transform:scale(0.98); }
+.pco-btn-primary:disabled { opacity:0.5;cursor:default; }
+.pco-btn-secondary {
+  width:100%;background:var(--surface3);color:var(--text-dim);border:1px solid var(--border);
+  border-radius:var(--radius);padding:9px;font-family:'Space Mono',monospace;font-size:0.52rem;
+  cursor:pointer;letter-spacing:0.05em;text-transform:uppercase;margin-top:8px;
+}
+.pco-btn-secondary:hover { border-color:var(--accent2);color:var(--accent2); }
+
+.pco-confirm-card {
+  margin:16px 0;padding:14px;border:1px solid var(--border);border-radius:var(--radius);
+  background:rgba(255,255,255,0.02);text-align:center;
+}
+.pco-confirm-card .pco-confirm-label {
+  font-size:0.42rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px;
+}
+.pco-confirm-card .pco-confirm-username {
+  font-family:'Unbounded',sans-serif;font-size:0.9rem;font-weight:700;color:var(--accent);
+}
+
+.pco-spinner {
+  width:36px;height:36px;border-radius:50%;margin:8px auto 18px;
+  border:3px solid var(--border);border-top-color:var(--accent3);
+  animation: pcoSpin 0.8s linear infinite;
+}
+@keyframes pcoSpin { to { transform:rotate(360deg); } }
+.pco-activating-text { text-align:center;font-size:0.62rem;color:var(--text);margin-bottom:6px;font-weight:700; }
+.pco-activating-sub { text-align:center;font-size:0.46rem;color:var(--text-muted);line-height:1.7; }
+
+.pco-success-icon {
+  font-size:2.4rem;text-align:center;margin:4px 0 10px;
+  animation: pcoPop 0.5s cubic-bezier(0.34,1.56,0.64,1);
+}
+@keyframes pcoPop { from { opacity:0;transform:scale(0.5); } to { opacity:1;transform:scale(1); } }
+.pco-unlocked-list {
+  display:flex;flex-direction:column;gap:7px;margin:14px 0;padding:14px;
+  border:1px solid rgba(255,180,84,0.3);border-radius:var(--radius);
+  background:linear-gradient(135deg,rgba(255,215,106,0.06),rgba(255,159,74,0.03));
+}
+.pco-unlocked-list div { font-size:0.54rem;color:var(--text);display:flex;align-items:center;gap:8px; }
+.pco-unlocked-list div::before { content:'✓';color:var(--accent3);font-weight:700; }
+
+.pco-error-icon { font-size:1.6rem;text-align:center;margin-bottom:8px; }
+
+@media (max-width:480px) {
+  .pco-panel { padding:20px; }
+  .pco-price { font-size:1.4rem; }
+}
+
 
 /* ─── Music Video Player ──────────────────────────────────────────────────
    FREQ-owned player UI wrapping a plain <video> element with native
@@ -4192,13 +4294,18 @@ body.oled-mode {
         <div style="font-size:0.44rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;">Your plan</div>
         <div id="premiumPlanLabel" style="font-size:0.62rem;font-weight:700;margin-top:2px;">Free</div>
       </div>
-      <span class="premium-coming-soon-tag" id="premiumUpgradeTag">Upgrade coming soon</span>
+      <span class="premium-coming-soon-tag" id="premiumUpgradeTag">Free</span>
     </div>
 
     <div style="margin-top:12px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface2);">
       <div style="font-size:0.42rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;">Status</div>
       <div id="premiumStatusText" style="font-size:0.62rem;font-weight:700;margin-top:2px;color:var(--text);">Free plan</div>
       <div id="premiumStatusMeta" style="font-size:0.45rem;color:var(--text-dim);margin-top:5px;line-height:1.6;"></div>
+      <button class="premium-upgrade-btn" id="premiumHubUpgradeBtn" style="width:100%;margin-top:10px;" onclick="openPremiumCheckout()">🚀 Upgrade to Premium</button>
+      <div id="premiumHubManageRow" style="display:none;gap:8px;margin-top:10px;">
+        <button class="pco-btn-secondary" style="margin-top:0;flex:1;min-width:0;width:auto;" onclick="showToast('Manage Subscription', 'Self-serve subscription management is coming soon. For changes to your plan, contact support.', 'info')">Manage Subscription</button>
+        <button class="pco-btn-secondary" style="margin-top:0;flex:1;min-width:0;width:auto;" onclick="showToast('Cancel Subscription', 'Self-serve cancellation is coming soon. For now, contact support to cancel.', 'info')">Cancel Subscription</button>
+      </div>
     </div>
 
     <div style="margin-top:12px;">
@@ -4233,10 +4340,112 @@ body.oled-mode {
     <div class="premium-coming-soon-item"><span>🧪 Experimental Labs</span><span class="premium-coming-soon-tag">Coming Soon</span></div>
 
     <div style="font-size:0.42rem;color:var(--text-muted);margin-top:14px;line-height:1.7;">
-      Payment isn't connected yet — Premium access is granted manually for now. Full self-serve upgrade is on the way.
+      Checkout is powered by Gumroad. Premium unlocks automatically on this account within moments of a successful purchase.
     </div>
 
     <button class="support-close-btn" onclick="closePremiumHubOverlay()" style="margin-top:12px;">Close</button>
+  </div>
+</div>
+
+<!-- ─── Premium Checkout Modal ─────────────────────────────────────────────
+     The actual purchase flow: gate (signed-out) → confirm account →
+     Gumroad overlay checkout → activating (polls /api/premium/status) →
+     success. One overlay, multiple internal steps toggled via .pco-step,
+     so the whole thing reads as one continuous flow rather than a chain of
+     separate modals. .above-dash so it renders above premiumHubOverlay,
+     which is where it's launched from. -->
+<div class="lyrics-overlay above-dash" id="premiumCheckoutOverlay">
+  <div class="lyrics-panel pco-panel">
+
+    <!-- Step: not signed in -->
+    <div class="pco-step" id="pcoStepGate">
+      <div class="pco-logo-row">
+        <span class="pco-logo-mark">FREQ</span><span class="pco-logo-badge">Premium</span>
+      </div>
+      <div class="pco-activating-text" style="margin-top:18px;">Sign in to purchase FREQ Premium</div>
+      <div class="pco-activating-sub" style="margin-bottom:6px;">You'll need a FREQ account so Premium can unlock on it automatically after payment.</div>
+      <button class="pco-btn-primary" onclick="closePremiumCheckout(); $('authOverlay').classList.add('open'); $('authTabSignin').click();">Sign In</button>
+      <button class="pco-btn-primary" style="background:var(--surface3);color:var(--text);margin-top:8px;" onclick="closePremiumCheckout(); $('authOverlay').classList.add('open'); $('authTabSignup').click();">Create Account</button>
+      <button class="pco-btn-secondary" onclick="closePremiumCheckout()">Not Now</button>
+    </div>
+
+    <!-- Step: plan + features + continue -->
+    <div class="pco-step" id="pcoStepPlan">
+      <div class="pco-logo-row">
+        <span class="pco-logo-mark">FREQ</span><span class="pco-logo-badge">Premium</span>
+      </div>
+      <div class="pco-price-row">
+        <div class="pco-price" id="pcoPriceDisplay">$—<span>/month</span></div>
+      </div>
+      <div class="pco-subline">
+        <span>↻ Cancel anytime</span>
+        <span>🔒 Secure checkout</span>
+      </div>
+      <div class="pco-feature-list">
+        <div>🤖 DJ BOOM AI Assistant</div>
+        <div>📻 Real-Life Radio</div>
+        <div>☁️ 75 GB Cloud Storage</div>
+        <div>🚀 Early Access Features</div>
+        <div>⭐ Premium Badge</div>
+      </div>
+      <button class="pco-btn-primary" id="pcoContinueBtn" onclick="pcoGoToConfirm()">Continue to Secure Checkout</button>
+      <button class="pco-btn-secondary" onclick="closePremiumCheckout()">Not Now</button>
+    </div>
+
+    <!-- Step: confirm which account gets Premium -->
+    <div class="pco-step" id="pcoStepConfirm">
+      <div class="pco-logo-row">
+        <span class="pco-logo-mark">FREQ</span><span class="pco-logo-badge">Premium</span>
+      </div>
+      <div class="pco-activating-text" style="margin-top:14px;">Your Premium subscription will be activated for:</div>
+      <div class="pco-confirm-card">
+        <div class="pco-confirm-label">FREQ Account</div>
+        <div class="pco-confirm-username" id="pcoConfirmUsername">—</div>
+      </div>
+      <div class="pco-activating-sub" style="margin-bottom:6px;">Premium unlocks on this account automatically after your payment is confirmed — no extra steps needed.</div>
+      <button class="pco-btn-primary" id="pcoConfirmBtn" onclick="pcoLaunchGumroad()">Continue</button>
+      <button class="pco-btn-secondary" onclick="pcoGoToPlan()">Cancel</button>
+      <!-- Real Gumroad overlay link — gumroad.js binds its click handler to
+           this exact element (class="gumroad-button"), so pcoLaunchGumroad()
+           dispatches a real click on it rather than faking the overlay any
+           other way. Kept off-screen, not display:none, since some
+           embed scripts skip binding to unrendered elements. -->
+      <a href="#" id="pcoGumroadLink" class="gumroad-button" data-gumroad-single-product="true"
+         style="position:absolute;width:1px;height:1px;overflow:hidden;opacity:0;pointer-events:none;" target="_blank" rel="noopener">Buy</a>
+    </div>
+
+    <!-- Step: activating (polling) -->
+    <div class="pco-step" id="pcoStepActivating">
+      <div class="pco-logo-row">
+        <span class="pco-logo-mark">FREQ</span><span class="pco-logo-badge">Premium</span>
+      </div>
+      <div class="pco-spinner"></div>
+      <div class="pco-activating-text">Activating Premium…</div>
+      <div class="pco-activating-sub" id="pcoActivatingSub">We're confirming your purchase with Gumroad. This usually takes just a few seconds.</div>
+    </div>
+
+    <!-- Step: success -->
+    <div class="pco-step" id="pcoStepSuccess">
+      <div class="pco-success-icon">🎉</div>
+      <div class="pco-activating-text" style="font-size:0.74rem;">Welcome to FREQ Premium!</div>
+      <div class="pco-unlocked-list">
+        <div>DJ BOOM</div>
+        <div>Real-Life Radio</div>
+        <div>75 GB Cloud Storage</div>
+        <div>Premium Badge</div>
+      </div>
+      <button class="pco-btn-primary" onclick="pcoFinish()">Start Listening</button>
+    </div>
+
+    <!-- Step: still verifying / failed -->
+    <div class="pco-step" id="pcoStepFailed">
+      <div class="pco-error-icon">⏳</div>
+      <div class="pco-activating-text">We're still verifying your purchase.</div>
+      <div class="pco-activating-sub" style="margin-bottom:10px;">This can take a little longer than usual. Your purchase is safe — Premium will unlock as soon as it's confirmed.</div>
+      <button class="pco-btn-primary" onclick="pcoRetryPoll()">Refresh Status</button>
+      <button class="pco-btn-secondary" onclick="closePremiumCheckout(); openSupportModal();">Contact Support</button>
+    </div>
+
   </div>
 </div>
 
@@ -4996,6 +5205,8 @@ function renderPremiumStatus() {
   const tag = $('premiumUpgradeTag');
   const statusText = $('premiumStatusText');
   const statusMeta = $('premiumStatusMeta');
+  const upgradeBtn = $('premiumHubUpgradeBtn');
+  const manageRow = $('premiumHubManageRow');
   if (!label || !tag) return;
 
   const premium = AUTH.isPremium || (AUTH.premiumStatus && ['active', 'grace_period', 'trial'].includes(String(AUTH.premiumStatus.status || '').toLowerCase()));
@@ -5005,7 +5216,7 @@ function renderPremiumStatus() {
 
   label.textContent = premium ? '⭐ Premium' : 'Free';
   label.style.color = premium ? 'var(--accent3)' : 'var(--text)';
-  tag.textContent = premium ? displayStatus : 'Upgrade coming soon';
+  tag.textContent = premium ? displayStatus : 'Free';
   tag.style.display = '';
   tag.style.color = premium ? (status === 'grace_period' ? 'var(--accent2)' : 'var(--accent3)') : 'var(--text-muted)';
   tag.style.borderColor = premium ? (status === 'grace_period' ? 'rgba(255,92,92,0.35)' : 'rgba(255,180,84,0.35)') : 'rgba(255,255,255,0.1)';
@@ -5030,6 +5241,11 @@ function renderPremiumStatus() {
     }
     statusMeta.innerHTML = lines.map(line => `<div>${line}</div>`).join('');
   }
+
+  // Free accounts see the Upgrade CTA; Premium accounts see subscription
+  // management placeholders instead (spec: future-ready, not fully wired yet).
+  if (upgradeBtn) upgradeBtn.style.display = premium ? 'none' : '';
+  if (manageRow) manageRow.style.display = premium ? 'flex' : 'none';
 }
 
 function updateAuthUI() {
@@ -6088,6 +6304,188 @@ async function openPremiumHubOverlay() {
 
 function closePremiumHubOverlay() {
   $('premiumHubOverlay')?.classList.remove('open');
+}
+
+// ─── Premium Checkout ───────────────────────────────────────────────────────
+// Full purchase flow: gate (signed-out) → plan/features → confirm account →
+// launch Gumroad overlay → poll for activation → success. See the
+// #premiumCheckoutOverlay markup for the step structure this drives.
+
+const PCO = {
+  checkoutUrl: null,     // fetched once from /api/premium/config
+  pollTimer: null,
+  pollStartedAt: 0,
+  pollAttempts: 0,
+};
+
+const PCO_POLL_INTERVAL_MS = 4000;
+const PCO_POLL_TIMEOUT_MS  = 3 * 60 * 1000; // give up polling after 3 minutes and show the "still verifying" step
+
+function pcoShowStep(stepId) {
+  ['pcoStepGate', 'pcoStepPlan', 'pcoStepConfirm', 'pcoStepActivating', 'pcoStepSuccess', 'pcoStepFailed'].forEach(id => {
+    const el = $(id);
+    if (el) el.classList.toggle('active', id === stepId);
+  });
+}
+
+async function pcoFetchCheckoutUrl() {
+  if (PCO.checkoutUrl) return PCO.checkoutUrl;
+  try {
+    const res = await fetch('/api/premium/config');
+    const data = await res.json();
+    PCO.checkoutUrl = data.checkoutUrl || null;
+  } catch (err) {
+    PCO.checkoutUrl = null;
+  }
+  return PCO.checkoutUrl;
+}
+
+// Entry point — call this from anywhere ("Upgrade to Premium" buttons, the
+// DJ BOOM lock card, etc). Figures out which step to open on: signed-out
+// users see the sign-in gate, everyone else starts at the plan/features step.
+async function openPremiumCheckout() {
+  $('premiumCheckoutOverlay')?.classList.add('open');
+  pcoFetchCheckoutUrl(); // fire off in background, no need to block the modal opening on it
+
+  if (AUTH.isPremium) {
+    // Already Premium — nothing to sell. Send them to the Hub's status/management view instead.
+    closePremiumCheckout();
+    openPremiumHubOverlay();
+    return;
+  }
+
+  if (!AUTH.loggedIn) {
+    pcoShowStep('pcoStepGate');
+    return;
+  }
+
+  const price = await pcoFetchPriceLabel();
+  const priceEl = $('pcoPriceDisplay');
+  if (priceEl) priceEl.innerHTML = `${price}<span>/month</span>`;
+  pcoShowStep('pcoStepPlan');
+}
+
+// Gumroad doesn't expose price via a simple public JSON endpoint we can
+// safely call from the client, so the price shown here is a static display
+// value that mirrors what's configured on the Gumroad product page itself.
+// Update this if the Gumroad product price changes.
+async function pcoFetchPriceLabel() {
+  return '$4.99';
+}
+
+function closePremiumCheckout() {
+  $('premiumCheckoutOverlay')?.classList.remove('open');
+  pcoStopPolling();
+}
+
+function pcoGoToPlan() {
+  pcoShowStep('pcoStepPlan');
+}
+
+function pcoGoToConfirm() {
+  if (!AUTH.loggedIn) { pcoShowStep('pcoStepGate'); return; }
+  const el = $('pcoConfirmUsername');
+  if (el) el.textContent = AUTH.username || '—';
+  pcoShowStep('pcoStepConfirm');
+}
+
+// Builds the Gumroad checkout URL with the FREQ username passed through as
+// the "FREQ Username" custom field (must match the field name configured on
+// the Gumroad product — see findGumroadUsername() in server.js, which reads
+// this same field name back out of the webhook payload) and clicks the real
+// <a class="gumroad-button"> element so gumroad.js's own click handler opens
+// the in-page overlay. wanted=true skips straight to the payment form.
+async function pcoLaunchGumroad() {
+  const btn = $('pcoConfirmBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Opening checkout…'; }
+
+  const base = await pcoFetchCheckoutUrl();
+  if (btn) { btn.disabled = false; btn.textContent = 'Continue'; }
+
+  if (!base) {
+    showToast('Checkout unavailable', 'Could not reach the checkout provider. Please try again in a moment.', 'error');
+    return;
+  }
+
+  const url = new URL(base);
+  url.searchParams.set('wanted', 'true');
+  url.searchParams.set('FREQ Username', AUTH.username);
+
+  const link = $('pcoGumroadLink');
+  if (!link) return;
+  link.href = url.toString();
+
+  // Mark that we're expecting a return from Gumroad so activation polling
+  // resumes automatically even if the tab reloads (e.g. the overlay
+  // redirected instead of staying in-page on some browsers).
+  try { localStorage.setItem('freq_pco_pending', '1'); } catch (_e) {}
+
+  link.click();
+  pcoStartPolling();
+}
+
+function pcoStartPolling() {
+  pcoShowStep('pcoStepActivating');
+  PCO.pollAttempts = 0;
+  PCO.pollStartedAt = Date.now();
+  pcoStopPolling();
+  pcoPollOnce();
+  PCO.pollTimer = setInterval(pcoPollOnce, PCO_POLL_INTERVAL_MS);
+}
+
+function pcoStopPolling() {
+  if (PCO.pollTimer) { clearInterval(PCO.pollTimer); PCO.pollTimer = null; }
+}
+
+async function pcoPollOnce() {
+  if (!AUTH.loggedIn || !AUTH.token) { pcoStopPolling(); return; }
+  PCO.pollAttempts++;
+
+  if (Date.now() - PCO.pollStartedAt > PCO_POLL_TIMEOUT_MS) {
+    pcoStopPolling();
+    pcoShowStep('pcoStepFailed');
+    return;
+  }
+
+  try {
+    const res = await fetch(`/api/premium/status?token=${encodeURIComponent(AUTH.token)}`);
+    if (!res.ok) return; // transient error — just wait for the next tick
+    const data = await res.json();
+    if (data.isPremium) {
+      pcoStopPolling();
+      AUTH.isPremium = true;
+      AUTH.premiumStatus = data.premiumStatus || AUTH.premiumStatus;
+      try { localStorage.removeItem('freq_pco_pending'); } catch (_e) {}
+      updateAuthUI(); // unlocks Premium badge, DJ BOOM, Premium Hub state — no reload needed
+      pcoShowStep('pcoStepSuccess');
+      playSfx?.('success');
+    }
+  } catch (_err) {
+    // network hiccup mid-poll — let it try again on the next tick rather than failing the whole flow
+  }
+}
+
+function pcoRetryPoll() {
+  pcoStartPolling();
+}
+
+function pcoFinish() {
+  closePremiumCheckout();
+  showToast('Welcome to FREQ Premium!', 'DJ BOOM, Real-Life Radio, and 75 GB storage are unlocked.', 'success');
+}
+
+// If the user closed the tab mid-purchase and comes back later, resume the
+// activating/polling state automatically once auth is restored, instead of
+// silently leaving them on the free plan with no explanation. authInit()
+// calls this after it finishes restoring the session.
+function pcoResumeIfPending() {
+  let pending = false;
+  try { pending = localStorage.getItem('freq_pco_pending') === '1'; } catch (_e) {}
+  if (!pending) return;
+  if (AUTH.isPremium) { try { localStorage.removeItem('freq_pco_pending'); } catch (_e) {} return; }
+  if (!AUTH.loggedIn) return;
+  $('premiumCheckoutOverlay')?.classList.add('open');
+  pcoStartPolling();
 }
 
 // Pane name → tab id suffix mapping
@@ -10499,6 +10897,7 @@ async function authInit() {
     loadSharedWithMe();
     loadLikedPlaylists();
     activityInit();
+    pcoResumeIfPending(); // resume "Activating Premium…" if a checkout was left in-flight
   } catch (err) {
     // Server offline — gracefully skip, don't nuke the token
     setSyncStatus('Server offline — working locally', 'var(--text-muted)');
@@ -13913,6 +14312,7 @@ document.addEventListener('keydown', e => {
   if ($('discoverOverlay')?.classList.contains('open'))  { closeDiscoverOverlay(); return; }
   if ($('djBoomOverlay')?.classList.contains('open'))     { closeDjBoomOverlay(); return; }
   if ($('premiumHubOverlay')?.classList.contains('open')) { closePremiumHubOverlay(); return; }
+  if ($('premiumCheckoutOverlay')?.classList.contains('open')) { closePremiumCheckout(); return; }
 });
 
 // ─── 9. Topbar mini-visualizer toggle ────────────────────────────────────────
@@ -14783,7 +15183,7 @@ document.addEventListener('keydown', e => {
 })();
 
 // ─── Patch: Close new overlays via clicking outside ──────────────────────────
-['supportOverlay','aboutOverlay','settingsOverlay','lyricsOverlay','userProfileOverlay','artistProfileOverlay','becomeArtistOverlay','editArtistBioOverlay','manageCollaboratorsOverlay','publishTrackOverlay','trackAnalyticsOverlay','createReleaseOverlay','djBoomOverlay','premiumHubOverlay'].forEach(id => {
+['supportOverlay','aboutOverlay','settingsOverlay','lyricsOverlay','userProfileOverlay','artistProfileOverlay','becomeArtistOverlay','editArtistBioOverlay','manageCollaboratorsOverlay','publishTrackOverlay','trackAnalyticsOverlay','createReleaseOverlay','djBoomOverlay','premiumHubOverlay','premiumCheckoutOverlay'].forEach(id => {
   const el = $(id);
   if (!el) return;
   el.addEventListener('click', e => { if (e.target === el) el.classList.remove('open'); });
