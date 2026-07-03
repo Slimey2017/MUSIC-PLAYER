@@ -10391,9 +10391,10 @@ async function authInit() {
     AUTH.username  = data.username;
     AUTH.name      = data.displayName;
     AUTH.playlists = data.playlists || [];
-    // Check admin + premium status
+    AUTH.isPremium = !!data.isPremium;
+    // Check admin status separately; premium is already reflected from pull.
     fetch('/api/admin/me', { headers: { 'Authorization': `Bearer ${AUTH.token}` } })
-      .then(r => r.json()).then(d => { AUTH.isAdmin = !!d.isAdmin; AUTH.isPremium = !!d.isPremium; updateAuthUI(); }).catch(() => {});
+      .then(r => r.json()).then(d => { AUTH.isAdmin = !!d.isAdmin; AUTH.isPremium = AUTH.isPremium || !!d.isPremium; updateAuthUI(); }).catch(() => {});
     updateAuthUI();
     setSyncStatus(`✓ Session restored · ${AUTH.playlists.length} playlists`, 'var(--accent3)');
     loadSharedWithMe();
