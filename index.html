@@ -4195,7 +4195,18 @@ body.oled-mode {
       <span class="premium-coming-soon-tag" id="premiumUpgradeTag">Upgrade coming soon</span>
     </div>
 
-    <div class="premium-compare">
+    <div style="margin-top:12px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface2);">
+      <div style="font-size:0.42rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;">Status</div>
+      <div id="premiumStatusText" style="font-size:0.62rem;font-weight:700;margin-top:2px;color:var(--text);">Free plan</div>
+      <div id="premiumStatusMeta" style="font-size:0.45rem;color:var(--text-dim);margin-top:5px;line-height:1.6;"></div>
+    </div>
+
+    <div style="margin-top:12px;">
+      <div style="font-size:0.42rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px;">Billing history</div>
+      <div id="premiumHistoryList" style="display:flex;flex-direction:column;gap:6px;"></div>
+    </div>
+
+    <div class="premium-compare" style="margin-top:14px;">
       <div class="pc-head">Feature</div>
       <div class="pc-head" style="text-align:center;">Free</div>
       <div class="pc-head" style="text-align:center;">Premium</div>
@@ -4955,6 +4966,7 @@ const AUTH = {
   playlists:   [],
   isAdmin:     false,
   isPremium:   false,
+  premiumStatus: null,
 };
 
 const AUTH_BASE = '/api/auth';
@@ -4972,6 +4984,54 @@ function setSyncStatus(msg, color) {
 }
 
 // ─── Auth UI ─────────────────────────────────────────────────────────────────
+function formatPremiumDate(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function renderPremiumStatus() {
+  const label = $('premiumPlanLabel');
+  const tag = $('premiumUpgradeTag');
+  const statusText = $('premiumStatusText');
+  const statusMeta = $('premiumStatusMeta');
+  if (!label || !tag) return;
+
+  const premium = AUTH.isPremium || (AUTH.premiumStatus && ['active', 'grace_period', 'trial'].includes(String(AUTH.premiumStatus.status || '').toLowerCase()));
+  const ps = AUTH.premiumStatus || {};
+  const status = String(ps.status || (premium ? 'active' : 'inactive')).toLowerCase();
+  const displayStatus = status === 'active' ? 'Active' : status === 'grace_period' ? 'Grace period' : status === 'canceled' ? 'Canceled' : status === 'trial' ? 'Trial' : status === 'inactive' ? 'Inactive' : 'Free';
+
+  label.textContent = premium ? '⭐ Premium' : 'Free';
+  label.style.color = premium ? 'var(--accent3)' : 'var(--text)';
+  tag.textContent = premium ? displayStatus : 'Upgrade coming soon';
+  tag.style.display = '';
+  tag.style.color = premium ? (status === 'grace_period' ? 'var(--accent2)' : 'var(--accent3)') : 'var(--text-muted)';
+  tag.style.borderColor = premium ? (status === 'grace_period' ? 'rgba(255,92,92,0.35)' : 'rgba(255,180,84,0.35)') : 'rgba(255,255,255,0.1)';
+
+  if (statusText) {
+    statusText.textContent = premium ? `Premium · ${displayStatus}` : 'Free plan';
+    statusText.style.color = premium ? (status === 'grace_period' ? 'var(--accent2)' : 'var(--accent3)') : 'var(--text)';
+  }
+
+  if (statusMeta) {
+    const lines = [];
+    if (premium) {
+      if (ps.plan) lines.push(`Plan: ${ps.plan}`);
+      if (ps.provider) lines.push(`Provider: ${ps.provider}`);
+      if (ps.expiresAt) lines.push(`Expires: ${formatPremiumDate(ps.expiresAt)}`);
+      if (ps.graceUntil) lines.push(`Grace period: ${formatPremiumDate(ps.graceUntil)}`);
+      if (ps.trialUntil) lines.push(`Trial until: ${formatPremiumDate(ps.trialUntil)}`);
+      if (ps.failureReason) lines.push(`Last issue: ${ps.failureReason}`);
+      if (ps.lastEventType) lines.push(`Last event: ${ps.lastEventType.replace(/_/g, ' ')}`);
+    } else {
+      lines.push('No active Premium subscription.');
+    }
+    statusMeta.innerHTML = lines.map(line => `<div>${line}</div>`).join('');
+  }
+}
+
 function updateAuthUI() {
   const userBadge = document.getElementById('authBtn');
   if (AUTH.loggedIn) {
@@ -4995,6 +5055,7 @@ function updateAuthUI() {
   // DJ BOOM header button reflects lock state at a glance
   const djBtn = $('djBoomBtn');
   if (djBtn) djBtn.innerHTML = AUTH.isPremium ? '🤖 DJ BOOM' : '🤖 DJ BOOM 🔒';
+  renderPremiumStatus();
 }
 
 function renderSavedPlaylists() {
@@ -5984,10 +6045,45 @@ async function djBoomQueueFromSearchTerms(terms, { replace = false, play = false
 }
 
 // ─── Premium Hub ────────────────────────────────────────────────────────────
-function openPremiumHubOverlay() {
+async function loadPremiumBillingHistory() {
+  const list = $('premiumHistoryList');
+  if (!list) return;
+  list.innerHTML = '<div style="font-size:0.46rem;color:var(--text-muted);">Loading billing history…</div>';
+  if (!AUTH.loggedIn || !AUTH.token) {
+    list.innerHTML = '<div style="font-size:0.46rem;color:var(--text-muted);">Sign in to view billing history.</div>';
+    return;
+  }
+  try {
+    const res = await fetch(`/api/premium/history?token=${encodeURIComponent(AUTH.token)}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to load billing history.');
+    const history = Array.isArray(data.history) ? data.history : [];
+    if (!history.length) {
+      list.innerHTML = '<div style="font-size:0.46rem;color:var(--text-muted);">No billing history yet.</div>';
+      return;
+    }
+    list.innerHTML = history.map(item => {
+      const date = formatPremiumDate(item.purchase_date || item.created_at || item.updated_at);
+      const status = String(item.status || 'active').replace(/_/g, ' ');
+      return `
+        <div style="padding:7px 8px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface2);">
+          <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;">
+            <strong style="font-size:0.5rem;color:var(--text);">${item.plan || 'FREQ Premium'}</strong>
+            <span style="font-size:0.42rem;color:var(--accent3);text-transform:uppercase;letter-spacing:0.06em;">${status}</span>
+          </div>
+          <div style="font-size:0.43rem;color:var(--text-dim);margin-top:4px;">${date || 'Unknown date'}</div>
+          <div style="font-size:0.42rem;color:var(--text-muted);margin-top:2px;">${item.provider || 'gumroad'} · ${item.provider_purchase_id || '—'}</div>
+        </div>`;
+    }).join('');
+  } catch (err) {
+    list.innerHTML = `<div style="font-size:0.46rem;color:var(--accent2);">${String(err.message || err)}</div>`;
+  }
+}
+
+async function openPremiumHubOverlay() {
   $('premiumHubOverlay')?.classList.add('open');
-  $('premiumPlanLabel').textContent = AUTH.isPremium ? '⭐ Premium' : 'Free';
-  $('premiumUpgradeTag').style.display = AUTH.isPremium ? 'none' : '';
+  renderPremiumStatus();
+  await loadPremiumBillingHistory();
 }
 
 function closePremiumHubOverlay() {
@@ -10357,6 +10453,8 @@ async function serverPull() {
       return;
     }
     AUTH.playlists = data.playlists || [];
+    AUTH.premiumStatus = data.premiumStatus || null;
+    AUTH.isPremium = !!data.isPremium;
     renderSavedPlaylists();
     const d = new Date(data.pulledAt);
     setSyncStatus(`✓ Pulled ${data.playlists.length} playlists · ${d.toLocaleTimeString()}`, 'var(--accent3)');
@@ -10368,7 +10466,7 @@ async function serverPull() {
 }
 
 function handleTokenExpiry() {
-  AUTH.loggedIn = false; AUTH.token = null; AUTH.username = ''; AUTH.name = ''; AUTH.playlists = [];
+  AUTH.loggedIn = false; AUTH.token = null; AUTH.username = ''; AUTH.name = ''; AUTH.playlists = []; AUTH.isPremium = false; AUTH.premiumStatus = null;
   localStorage.removeItem('freq_token_v4');
   updateAuthUI();
   activitySseDisconnect();
@@ -10392,6 +10490,7 @@ async function authInit() {
     AUTH.name      = data.displayName;
     AUTH.playlists = data.playlists || [];
     AUTH.isPremium = !!data.isPremium;
+    AUTH.premiumStatus = data.premiumStatus || null;
     // Check admin status separately; premium is already reflected from pull.
     fetch('/api/admin/me', { headers: { 'Authorization': `Bearer ${AUTH.token}` } })
       .then(r => r.json()).then(d => { AUTH.isAdmin = !!d.isAdmin; AUTH.isPremium = AUTH.isPremium || !!d.isPremium; updateAuthUI(); }).catch(() => {});
@@ -10422,6 +10521,8 @@ $('signinSubmit').addEventListener('click', async () => {
     AUTH.username  = data.username;
     AUTH.name      = data.displayName;
     AUTH.playlists = data.playlists || [];
+    AUTH.isPremium = !!data.isPremium;
+    AUTH.premiumStatus = data.premiumStatus || null;
     localStorage.setItem('freq_token_v4', AUTH.token);
     fetch('/api/admin/me', { headers: { 'Authorization': `Bearer ${AUTH.token}` } })
       .then(r => r.json()).then(d => { AUTH.isAdmin = !!d.isAdmin; AUTH.isPremium = !!d.isPremium; updateAuthUI(); }).catch(() => {});
@@ -10459,9 +10560,10 @@ $('signupSubmit').addEventListener('click', async () => {
     AUTH.username  = data.username;
     AUTH.name      = data.displayName;
     AUTH.playlists = [];
-    localStorage.setItem('freq_token_v4', AUTH.token);
     AUTH.isAdmin = false; // New accounts are never admins
-    AUTH.isPremium = false; // New accounts start on Free
+    AUTH.isPremium = !!data.isPremium;
+    AUTH.premiumStatus = data.premiumStatus || null;
+    localStorage.setItem('freq_token_v4', AUTH.token);
     updateAuthUI();
     errEl.classList.remove('show');
     ['signupUsername','signupName','signupPassword','signupConfirm'].forEach(id => $(id).value = '');
@@ -10475,7 +10577,7 @@ $('signupSubmit').addEventListener('click', async () => {
 
 // ─── Sign Out ─────────────────────────────────────────────────────────────────
 $('authLogoutBtn').addEventListener('click', () => {
-  AUTH.loggedIn = false; AUTH.token = null; AUTH.username = ''; AUTH.name = ''; AUTH.playlists = []; AUTH.isAdmin = false; AUTH.isPremium = false;
+  AUTH.loggedIn = false; AUTH.token = null; AUTH.username = ''; AUTH.name = ''; AUTH.playlists = []; AUTH.isAdmin = false; AUTH.isPremium = false; AUTH.premiumStatus = null;
   localStorage.removeItem('freq_token_v4');
   updateAuthUI();
   showToast('Signed out', '', 'info');
@@ -10504,7 +10606,7 @@ $('deleteAccountBtn').addEventListener('click', async () => {
   try {
     const res = await fetch(`${AUTH_BASE}/account`, { method:'DELETE', headers: authHeaders(), body: JSON.stringify({ token: AUTH.token }) });
     if (res.ok) {
-      AUTH.loggedIn = false; AUTH.token = null; AUTH.username = ''; AUTH.name = ''; AUTH.playlists = [];
+      AUTH.loggedIn = false; AUTH.token = null; AUTH.username = ''; AUTH.name = ''; AUTH.playlists = []; AUTH.isPremium = false; AUTH.premiumStatus = null;
       localStorage.removeItem('freq_token_v4');
       updateAuthUI();
       showToast('Account deleted', 'Your account has been removed.', 'info');
