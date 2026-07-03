@@ -96,10 +96,100 @@ const PORT = process.env.PORT || 3000;
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
 const captureRawBody = (req, _res, buf, encoding) => {
-  if (buf && buf.length) req.rawBody = buf.toString(encoding || 'utf8');
+  if (!buf || !buf.length) return;
+  req.rawBodyBuffer = Buffer.isBuffer(buf) ? Buffer.from(buf) : Buffer.from(String(buf));
+  req.rawBody = req.rawBodyBuffer.toString(encoding || 'utf8');
+  req.rawBodyEncoding = encoding || 'utf8';
 };
 
 app.use(cors());
+app.post('/api/gumroad/webhook',
+  express.raw({
+    type: ['application/json', 'application/x-www-form-urlencoded', 'text/plain', 'application/octet-stream'],
+    limit: '35mb',
+    verify: captureRawBody,
+  }),
+  async (req, res) => {
+    const contentType = req.headers['content-type'] || '';
+    const signatureHeader = getGumroadSignature(req);
+    const rawBodyExists = Boolean(req.rawBodyBuffer || req.rawBody);
+    const bodyKind = Buffer.isBuffer(req.body)
+      ? 'raw-buffer'
+      : (typeof req.body === 'string'
+        ? 'raw-text'
+        : (req.body && typeof req.body === 'object' ? 'parsed-json' : 'empty'));
+
+    console.log('[gumroad webhook] request headers', req.headers);
+    console.log('[gumroad webhook] content-type', contentType);
+    console.log('[gumroad webhook] signature header', signatureHeader);
+    console.log('[gumroad webhook] rawBody exists', rawBodyExists);
+    console.log('[gumroad webhook] req.body kind', bodyKind);
+
+    if (!verifyGumroadWebhook(req)) {
+      console.warn('[gumroad webhook] invalid signature or missing raw body');
+      return res.status(401).json({ error: 'Invalid Gumroad webhook signature.' });
+    }
+
+    const payload = parseGumroadPayload(req);
+    const eventName = payload.event_name || payload.event || payload.type || payload.event_type;
+    const purchaseId = payload.sale_id || payload.purchase_id || payload.id || payload.purchase?.id;
+    const purchaserEmail = payload.email || payload.purchaser_email || payload.purchaser_email_address || payload.purchase_email || null;
+    const providerCustomerId = payload.customer_id || payload.buyer_id || payload.purchaser_id || payload.user_id || null;
+    const purchaseDate = payload.purchase_time || payload.purchased_at || payload.payment_date || payload.purchase_date || payload.created_at;
+    const username = findGumroadUsername(payload);
+    const plan = 'FREQ Premium';
+
+    if (isGumroadPingPayload(payload)) {
+      console.log('[gumroad webhook] accepted ping', { eventName, purchaseId });
+      return res.json({ ok: true, message: 'Ping accepted.' });
+    }
+
+    if (eventName && !['sale', 'sale_completed', 'purchase', 'payment', 'payment_succeeded'].includes(String(eventName).toLowerCase())) {
+      return res.json({ ok: true, message: `Ignored event ${eventName}.` });
+    }
+
+    if (!purchaseId) {
+      console.error('[gumroad webhook] missing purchase id', { eventName, payload });
+      return res.status(400).json({ error: 'Missing Gumroad purchase id.' });
+    }
+
+    try {
+      const existing = await dbGetPremiumSubscription('gumroad', String(purchaseId));
+      if (existing) {
+        return res.json({ ok: true, message: 'Purchase already processed.' });
+      }
+
+      if (!username) {
+        console.error('[gumroad webhook] missing username for purchase', { purchaseId, purchaserEmail, payload });
+        return res.status(400).json({ error: 'Missing FREQ username in Gumroad purchase.' });
+      }
+
+      const account = await dbGetAccount(username);
+      if (!account) {
+        console.error('[gumroad webhook] account not found', { username, purchaseId, purchaserEmail, providerCustomerId });
+        return res.status(404).json({ error: `No FREQ account found for username "${username}".` });
+      }
+
+      await dbActivatePremiumAccount(username, plan, 'gumroad', providerCustomerId || null, String(purchaseId), purchaserEmail || null, purchaseDate || new Date().toISOString());
+      await dbCreatePremiumSubscription({
+        username: account.username,
+        provider: 'gumroad',
+        providerCustomerId: providerCustomerId || null,
+        providerPurchaseId: String(purchaseId),
+        purchaserEmail: purchaserEmail || null,
+        purchaseDate: purchaseDate || new Date().toISOString(),
+        plan,
+      });
+
+      console.log('[gumroad webhook] activated premium', { username: account.username, purchaseId });
+      return res.json({ ok: true });
+    } catch (err) {
+      console.error('[gumroad webhook] processing error:', err?.message || err, { purchaseId, username, purchaserEmail });
+      return res.status(500).json({ error: 'Could not process Gumroad purchase at this time.' });
+    }
+  }
+);
+
 app.use(express.json({ limit: '35mb', verify: captureRawBody }));
 app.use(express.urlencoded({ extended: true, limit: '35mb', verify: captureRawBody }));
 app.use(express.static(__dirname));
@@ -3175,11 +3265,20 @@ function verifyGumroadWebhook(req) {
   const secret = process.env.GUMROAD_WEBHOOK_SECRET;
   if (!secret) return false;
   const signature = getGumroadSignature(req);
-  if (!signature || !req.rawBody) return false;
-  const digest = crypto.createHmac('sha256', secret).update(req.rawBody).digest();
+  const rawBodyBuffer = req.rawBodyBuffer || (typeof req.rawBody === 'string' ? Buffer.from(req.rawBody, req.rawBodyEncoding || 'utf8') : null);
+  if (!signature || !rawBodyBuffer || !rawBodyBuffer.length) return false;
+  const digest = crypto.createHmac('sha256', secret).update(rawBodyBuffer).digest();
   const expectedHex = digest.toString('hex');
   const expectedBase64 = digest.toString('base64');
   return timingSafeEqualStrings(signature, expectedHex) || timingSafeEqualStrings(signature, expectedBase64);
+}
+
+function isGumroadPingPayload(payload) {
+  if (!payload || typeof payload !== 'object') return false;
+  const eventName = String(payload.event_name || payload.event || payload.type || payload.event_type || '').toLowerCase();
+  return ['ping', 'pings', 'test', 'test_ping', 'ping_test'].includes(eventName)
+    || payload.ping === true
+    || payload.test === true;
 }
 
 function findGumroadUsername(payload) {
@@ -3219,9 +3318,14 @@ function findGumroadUsername(payload) {
 }
 
 function parseGumroadPayload(req) {
-  if (req.body && typeof req.body === 'object' && Object.keys(req.body).length) return req.body;
-  if (typeof req.rawBody === 'string' && req.rawBody.trim()) {
-    const trimmed = req.rawBody.trim();
+  if (req.body && typeof req.body === 'object' && !Buffer.isBuffer(req.body) && Object.keys(req.body).length) return req.body;
+
+  const rawText = Buffer.isBuffer(req.rawBodyBuffer)
+    ? req.rawBodyBuffer.toString('utf8')
+    : (typeof req.rawBody === 'string' ? req.rawBody : (typeof req.body === 'string' ? req.body : ''));
+
+  if (typeof rawText === 'string' && rawText.trim()) {
+    const trimmed = rawText.trim();
     if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
       try {
         return JSON.parse(trimmed);
@@ -3229,77 +3333,21 @@ function parseGumroadPayload(req) {
         // fall through to form parsing
       }
     }
-    try {
-      const params = new URLSearchParams(req.rawBody);
-      const body = {};
-      for (const [key, value] of params.entries()) body[key] = value;
-      return body;
-    } catch (_err) {
-      return {};
+    const contentType = String(req.headers['content-type'] || '').toLowerCase();
+    if (contentType.includes('application/x-www-form-urlencoded') || trimmed.includes('=')) {
+      try {
+        const params = new URLSearchParams(trimmed);
+        const body = {};
+        for (const [key, value] of params.entries()) body[key] = value;
+        return body;
+      } catch (_err) {
+        return {};
+      }
     }
   }
+
   return {};
 }
-
-app.post('/api/gumroad/webhook', async (req, res) => {
-  if (!verifyGumroadWebhook(req)) {
-    console.warn('[gumroad webhook] invalid signature or missing raw body');
-    return res.status(401).json({ error: 'Invalid Gumroad webhook signature.' });
-  }
-
-  const payload = parseGumroadPayload(req);
-  const eventName = payload.event_name || payload.event || payload.type || payload.event_type;
-  const purchaseId = payload.sale_id || payload.purchase_id || payload.id || payload['purchase']['id'];
-  const purchaserEmail = payload.email || payload.purchaser_email || payload.purchaser_email_address || payload['purchase_email'] || null;
-  const providerCustomerId = payload.customer_id || payload.buyer_id || payload.purchaser_id || payload['user_id'] || null;
-  const purchaseDate = payload.purchase_time || payload.purchased_at || payload.payment_date || payload['purchase_date'] || payload['created_at'];
-  const username = findGumroadUsername(payload);
-  const plan = 'FREQ Premium';
-
-  if (eventName && !['sale', 'sale_completed', 'purchase', 'payment', 'payment_succeeded'].includes(String(eventName).toLowerCase())) {
-    return res.json({ ok: true, message: `Ignored event ${eventName}.` });
-  }
-
-  if (!purchaseId) {
-    console.error('[gumroad webhook] missing purchase id', { eventName, payload });
-    return res.status(400).json({ error: 'Missing Gumroad purchase id.' });
-  }
-
-  try {
-    const existing = await dbGetPremiumSubscription('gumroad', String(purchaseId));
-    if (existing) {
-      return res.json({ ok: true, message: 'Purchase already processed.' });
-    }
-
-    if (!username) {
-      console.error('[gumroad webhook] missing username for purchase', { purchaseId, purchaserEmail, payload });
-      return res.status(400).json({ error: 'Missing FREQ username in Gumroad purchase.' });
-    }
-
-    const account = await dbGetAccount(username);
-    if (!account) {
-      console.error('[gumroad webhook] account not found', { username, purchaseId, purchaserEmail, providerCustomerId });
-      return res.status(404).json({ error: `No FREQ account found for username "${username}".` });
-    }
-
-    await dbActivatePremiumAccount(username, plan, 'gumroad', providerCustomerId || null, String(purchaseId), purchaserEmail || null, purchaseDate || new Date().toISOString());
-    await dbCreatePremiumSubscription({
-      username: account.username,
-      provider: 'gumroad',
-      providerCustomerId: providerCustomerId || null,
-      providerPurchaseId: String(purchaseId),
-      purchaserEmail: purchaserEmail || null,
-      purchaseDate: purchaseDate || new Date().toISOString(),
-      plan,
-    });
-
-    console.log('[gumroad webhook] activated premium', { username: account.username, purchaseId });
-    return res.json({ ok: true });
-  } catch (err) {
-    console.error('[gumroad webhook] processing error:', err?.message || err, { purchaseId, username, purchaserEmail });
-    return res.status(500).json({ error: 'Could not process Gumroad purchase at this time.' });
-  }
-});
 
 app.get('/api/auth/pull', async (req, res) => {
   const token = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
