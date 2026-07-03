@@ -75,14 +75,11 @@ const crypto   = require('crypto');
 const fs       = require('fs');
 const multer   = require('multer');
 // node-fetch not needed — Node v18+ has native fetch built in
-const { createClient } = require('@supabase/supabase-js');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { createSupabaseClientFromEnv, createFallbackSupabaseClient } = require('./server-config');
 
 // ─── Supabase client (server-side only — uses service role key) ───────────────
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_KEY
-);
+const supabase = createSupabaseClientFromEnv(process.env) || createFallbackSupabaseClient();
 
 // ─── Google Gemini client (server-side only — powers DJ BOOM) ──────────────────
 // GEMINI_API_KEY lives in Render's env vars, same as SUPABASE_SERVICE_KEY.
@@ -103,6 +100,7 @@ const captureRawBody = (req, _res, buf, encoding) => {
 };
 
 app.use(cors());
+app.get('/health', (_req, res) => res.json({ ok: true, service: 'freq' }));
 app.post('/api/gumroad/webhook',
   express.raw({
     type: ['application/json', 'application/x-www-form-urlencoded', 'text/plain', 'application/octet-stream'],
@@ -132,19 +130,32 @@ app.post('/api/gumroad/webhook',
 
     const payload = parseGumroadPayload(req);
     const eventName = payload.event_name || payload.event || payload.type || payload.event_type;
-    const purchaseId = payload.sale_id || payload.purchase_id || payload.id || payload.purchase?.id;
+    const normalizedEvent = String(eventName || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+    const purchaseId = payload.sale_id || payload.purchase_id || payload.id || payload.purchase?.id || payload.subscription?.id || payload.subscription_id || payload.order_id || null;
     const purchaserEmail = payload.email || payload.purchaser_email || payload.purchaser_email_address || payload.purchase_email || null;
-    const providerCustomerId = payload.customer_id || payload.buyer_id || payload.purchaser_id || payload.user_id || null;
-    const purchaseDate = payload.purchase_time || payload.purchased_at || payload.payment_date || payload.purchase_date || payload.created_at;
+    const providerCustomerId = payload.customer_id || payload.buyer_id || payload.purchaser_id || payload.user_id || payload.customer?.id || payload.subscription?.customer_id || null;
+    const purchaseDate = payload.purchase_time || payload.purchased_at || payload.payment_date || payload.purchase_date || payload.created_at || payload.subscription?.started_at || null;
+    const expiresAt = payload.expires_at || payload.expiresAt || payload.ends_at || payload.end_date || payload.subscription?.expires_at || payload.subscription?.ends_at || null;
+    const graceUntil = payload.grace_period_ends_at || payload.grace_until || payload.grace_period_end || payload.subscription?.grace_period_ends_at || null;
+    const trialUntil = payload.trial_ends_at || payload.trial_end || payload.trial_until || payload.subscription?.trial_ends_at || null;
+    const cancelledAt = payload.canceled_at || payload.cancelled_at || payload.subscription?.canceled_at || payload.subscription?.cancelled_at || null;
     const username = findGumroadUsername(payload);
-    const plan = 'FREQ Premium';
+    const plan = payload.plan_name || payload.plan || payload.subscription_plan || payload.subscription?.plan_name || payload.subscription?.plan || 'FREQ Premium';
+    const failureReason = payload.failure_reason || payload.reason || payload.error || null;
 
     if (isGumroadPingPayload(payload)) {
       console.log('[gumroad webhook] accepted ping', { eventName, purchaseId });
       return res.json({ ok: true, message: 'Ping accepted.' });
     }
 
-    if (eventName && !['sale', 'sale_completed', 'purchase', 'payment', 'payment_succeeded'].includes(String(eventName).toLowerCase())) {
+    const handledEvents = new Set([
+      'sale', 'sale_completed', 'purchase', 'payment', 'payment_succeeded', 'charge_succeeded',
+      'subscription_created', 'subscription_updated', 'subscription_renewed', 'subscription_reactivated',
+      'subscription_cancelled', 'subscription_canceled', 'subscription_ended', 'subscription_expired',
+      'payment_failed', 'charge_failed', 'subscription_failed', 'subscription_period_ending', 'payment_required'
+    ]);
+
+    if (eventName && !handledEvents.has(normalizedEvent)) {
       return res.json({ ok: true, message: `Ignored event ${eventName}.` });
     }
 
@@ -155,9 +166,9 @@ app.post('/api/gumroad/webhook',
 
     try {
       const existing = await dbGetPremiumSubscription('gumroad', String(purchaseId));
-      if (existing) {
-        return res.json({ ok: true, message: 'Purchase already processed.' });
-      }
+      const isCancellation = ['subscription_cancelled', 'subscription_canceled', 'subscription_ended', 'subscription_expired'].includes(normalizedEvent);
+      const isGracePeriod = ['payment_failed', 'charge_failed', 'subscription_failed', 'subscription_period_ending', 'payment_required'].includes(normalizedEvent);
+      const isRenewal = ['subscription_renewed', 'subscription_reactivated', 'subscription_created', 'subscription_updated', 'sale', 'sale_completed', 'purchase', 'payment', 'payment_succeeded', 'charge_succeeded'].includes(normalizedEvent);
 
       if (!username) {
         console.error('[gumroad webhook] missing username for purchase', { purchaseId, purchaserEmail, payload });
@@ -170,19 +181,83 @@ app.post('/api/gumroad/webhook',
         return res.status(404).json({ error: `No FREQ account found for username "${username}".` });
       }
 
-      await dbActivatePremiumAccount(username, plan, 'gumroad', providerCustomerId || null, String(purchaseId), purchaserEmail || null, purchaseDate || new Date().toISOString());
-      await dbCreatePremiumSubscription({
-        username: account.username,
-        provider: 'gumroad',
-        providerCustomerId: providerCustomerId || null,
-        providerPurchaseId: String(purchaseId),
-        purchaserEmail: purchaserEmail || null,
-        purchaseDate: purchaseDate || new Date().toISOString(),
-        plan,
-      });
+      if (isCancellation) {
+        await dbActivatePremiumAccount(username, plan, 'gumroad', providerCustomerId || null, String(purchaseId), purchaserEmail || null, purchaseDate || new Date().toISOString(), {
+          isPremium: false,
+          status: 'canceled',
+          cancelledAt: cancelledAt || new Date().toISOString(),
+          lastEventType: normalizedEvent,
+        });
+        await dbUpdatePremiumSubscriptionMetadata({
+          username,
+          provider: 'gumroad',
+          providerPurchaseId: String(purchaseId),
+          status: 'canceled',
+          cancelledAt: cancelledAt || new Date().toISOString(),
+          lastEventType: normalizedEvent,
+        });
+        console.log('[gumroad webhook] canceled premium', { username: account.username, purchaseId, eventName });
+        return res.json({ ok: true, message: 'Subscription canceled.' });
+      }
 
-      console.log('[gumroad webhook] activated premium', { username: account.username, purchaseId });
-      return res.json({ ok: true });
+      if (isGracePeriod) {
+        await dbActivatePremiumAccount(username, plan, 'gumroad', providerCustomerId || null, String(purchaseId), purchaserEmail || null, purchaseDate || new Date().toISOString(), {
+          isPremium: true,
+          status: 'grace_period',
+          expiresAt: expiresAt || graceUntil || purchaseDate || new Date().toISOString(),
+          graceUntil: graceUntil || expiresAt || purchaseDate || new Date().toISOString(),
+          failureReason,
+          lastEventType: normalizedEvent,
+        });
+        await dbUpdatePremiumSubscriptionMetadata({
+          username,
+          provider: 'gumroad',
+          providerPurchaseId: String(purchaseId),
+          status: 'grace_period',
+          expiresAt: expiresAt || graceUntil || purchaseDate || new Date().toISOString(),
+          graceUntil: graceUntil || expiresAt || purchaseDate || new Date().toISOString(),
+          failureReason,
+          lastEventType: normalizedEvent,
+        });
+        console.log('[gumroad webhook] grace period', { username: account.username, purchaseId, eventName, graceUntil });
+        return res.json({ ok: true, message: 'Renewal issue flagged for grace period.' });
+      }
+
+      if (isRenewal || !existing) {
+        await dbActivatePremiumAccount(username, plan, 'gumroad', providerCustomerId || null, String(purchaseId), purchaserEmail || null, purchaseDate || new Date().toISOString(), {
+          isPremium: true,
+          status: 'active',
+          expiresAt: expiresAt || purchaseDate || new Date().toISOString(),
+          graceUntil: graceUntil || null,
+          trialUntil,
+          lastEventType: normalizedEvent,
+        });
+        if (!existing) {
+          await dbCreatePremiumSubscription({
+            username: account.username,
+            provider: 'gumroad',
+            providerCustomerId: providerCustomerId || null,
+            providerPurchaseId: String(purchaseId),
+            purchaserEmail: purchaserEmail || null,
+            purchaseDate: purchaseDate || new Date().toISOString(),
+            plan,
+          });
+        }
+        await dbUpdatePremiumSubscriptionMetadata({
+          username,
+          provider: 'gumroad',
+          providerPurchaseId: String(purchaseId),
+          status: 'active',
+          expiresAt: expiresAt || purchaseDate || new Date().toISOString(),
+          graceUntil,
+          trialUntil,
+          lastEventType: normalizedEvent,
+        });
+        console.log('[gumroad webhook] activated premium', { username: account.username, purchaseId, eventName });
+        return res.json({ ok: true });
+      }
+
+      return res.json({ ok: true, message: `Handled event ${eventName}.` });
     } catch (err) {
       console.error('[gumroad webhook] processing error:', err?.message || err, { purchaseId, username, purchaserEmail });
       return res.status(500).json({ error: 'Could not process Gumroad purchase at this time.' });
@@ -335,17 +410,62 @@ async function dbCreatePremiumSubscription({ username, provider, providerCustome
   return data;
 }
 
-async function dbActivatePremiumAccount(username, plan, provider, providerCustomerId, providerPurchaseId, purchaserEmail, purchaseDate) {
-  const { error } = await supabase.from('accounts').update({
-    is_premium: true,
+async function dbActivatePremiumAccount(username, plan, provider, providerCustomerId, providerPurchaseId, purchaserEmail, purchaseDate, extra = {}) {
+  const patch = {
+    is_premium: extra.isPremium ?? true,
     premium_plan: plan,
     premium_provider: provider,
     premium_provider_customer_id: providerCustomerId,
     premium_provider_purchase_id: providerPurchaseId,
     premium_purchase_date: purchaseDate ? new Date(purchaseDate).toISOString() : new Date().toISOString(),
     premium_email: purchaserEmail,
-  }).eq('username', normalizeUsername(username));
+  };
+  if (extra.status) patch.premium_status = extra.status;
+  if (extra.expiresAt) patch.premium_expires_at = new Date(extra.expiresAt).toISOString();
+  if (extra.graceUntil) patch.premium_grace_until = new Date(extra.graceUntil).toISOString();
+  if (extra.trialUntil) patch.premium_trial_until = new Date(extra.trialUntil).toISOString();
+  if (extra.cancelledAt) patch.premium_cancelled_at = new Date(extra.cancelledAt).toISOString();
+  if (extra.failureReason) patch.premium_failure_reason = extra.failureReason;
+  if (extra.lastEventType) patch.premium_last_event = extra.lastEventType;
+
+  const { error } = await supabase.from('accounts').update(patch).eq('username', normalizeUsername(username));
   if (error) throw new Error(error.message);
+}
+
+async function dbUpdatePremiumSubscriptionMetadata({ username, provider, providerPurchaseId, status, cancelledAt, expiresAt, graceUntil, trialUntil, failureReason, lastEventType }) {
+  if (!providerPurchaseId) return;
+  const patch = {};
+  if (status) patch.status = status;
+  if (cancelledAt) patch.canceled_at = new Date(cancelledAt).toISOString();
+  if (expiresAt) patch.expires_at = new Date(expiresAt).toISOString();
+  if (graceUntil) patch.grace_until = new Date(graceUntil).toISOString();
+  if (trialUntil) patch.trial_until = new Date(trialUntil).toISOString();
+  if (failureReason) patch.failure_reason = failureReason;
+  if (lastEventType) patch.last_event_type = lastEventType;
+  if (username) patch.username = normalizeUsername(username);
+  if (!Object.keys(patch).length) return;
+
+  const { error } = await supabase.from('premium_subscriptions')
+    .update(patch)
+    .eq('provider', provider)
+    .eq('provider_purchase_id', String(providerPurchaseId));
+  if (error) console.warn('[db] updatePremiumSubscriptionMetadata:', error.message);
+}
+
+function getPremiumStatusFromAccount(account) {
+  const status = String(account?.premium_status || account?.premium_state || '').toLowerCase();
+  return {
+    isActive: !!account?.is_premium,
+    status: status || (account?.is_premium ? 'active' : 'inactive'),
+    plan: account?.premium_plan || null,
+    provider: account?.premium_provider || null,
+    expiresAt: account?.premium_expires_at || null,
+    graceUntil: account?.premium_grace_until || null,
+    trialUntil: account?.premium_trial_until || null,
+    canceledAt: account?.premium_cancelled_at || null,
+    failureReason: account?.premium_failure_reason || null,
+    lastEventType: account?.premium_last_event || null,
+  };
 }
 
 async function dbCreateAccount(username, displayName, salt, hash) {
@@ -2944,7 +3064,14 @@ app.post('/api/auth/signup', rateLimit, async (req, res) => {
     const expiresAt = Date.now() + TOKEN_TTL;
     await dbCreateSession(token, key, expiresAt);
 
-    return res.status(201).json({ token, username: key, displayName: dName });
+    const acct = await dbGetAccount(key);
+    return res.status(201).json({
+      token,
+      username: key,
+      displayName: dName,
+      isPremium: !!acct?.is_premium,
+      premiumStatus: getPremiumStatusFromAccount(acct),
+    });
   } catch (err) {
     console.error('[signup]', err);
     return res.status(500).json({ error: 'Server error during signup.' });
@@ -2971,7 +3098,14 @@ app.post('/api/auth/signin', rateLimit, async (req, res) => {
     const playlists = await dbGetPlaylists(key);
     dbEnsureProfile(key, acct.display_name); // fire-and-forget self-heal — see dbEnsureProfile's comment
 
-    return res.json({ token, username: key, displayName: acct.display_name, playlists });
+    return res.json({
+      token,
+      username: key,
+      displayName: acct.display_name,
+      playlists,
+      isPremium: !!acct.is_premium,
+      premiumStatus: getPremiumStatusFromAccount(acct),
+    });
   } catch (err) {
     console.error('[signin]', err);
     return res.status(500).json({ error: 'Server error during sign in.' });
@@ -3228,7 +3362,14 @@ app.post('/api/auth/token-refresh', async (req, res) => {
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token.' });
   const expiresAt = Date.now() + TOKEN_TTL;
   await dbRefreshSession(token, expiresAt);
-  return res.json({ ok: true, expiresAt });
+  const acct = await dbGetAccount(sess.username);
+  return res.json({
+    ok: true,
+    expiresAt,
+    username: sess.username,
+    isPremium: !!acct?.is_premium,
+    premiumStatus: getPremiumStatusFromAccount(acct),
+  });
 });
 
 app.post('/api/auth/sync', async (req, res) => {
@@ -3361,6 +3502,7 @@ app.get('/api/auth/pull', async (req, res) => {
       username:    sess.username,
       displayName: acct?.display_name || sess.username,
       isPremium:   !!acct?.is_premium,
+      premiumStatus: getPremiumStatusFromAccount(acct),
       playlists,
       pulledAt:    Date.now(),
     });
@@ -3380,6 +3522,24 @@ app.delete('/api/auth/account', async (req, res) => {
   } catch (err) {
     console.error('[delete-account]', err);
     return res.status(500).json({ error: 'Account deletion failed.' });
+  }
+});
+
+app.get('/api/premium/history', async (req, res) => {
+  const token = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token.' });
+  try {
+    const { data, error } = await supabase
+      .from('premium_subscriptions')
+      .select('*')
+      .eq('username', sess.username)
+      .order('created_at', { ascending: false });
+    if (error) throw new Error(error.message);
+    return res.json({ history: data || [] });
+  } catch (err) {
+    console.error('[premium history]', err);
+    return res.status(500).json({ error: 'Could not load billing history.' });
   }
 });
 
@@ -7759,7 +7919,7 @@ app.get('/api/admin/releases/:releaseId', requireAdmin, async (req, res) => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-app.get('*', (req, res) => {
+app.get(/.*/, (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
 });
 
