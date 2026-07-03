@@ -5624,6 +5624,16 @@ function closeDiscoverOverlay() {
 // Conversation stays in memory only (per browser tab) — no server-side
 // history persistence yet, matching the TOS draft's "may be stored if
 // enabled" language rather than promising something not actually built.
+//
+// v2: DJ BOOM is grounded in FREQ's actual runtime state. Every chat request
+// carries a fresh context snapshot (djBoomBuildContext) describing what's
+// currently playing, the queue, playlists, liked songs, etc, so the backend
+// can ground Gemini's replies instead of it improvising a generic chatbot
+// answer. Server responses may include a small `action` object describing
+// something DJ BOOM wants performed (shuffle, skip, like, queue a search,
+// ...) — DJ BOOM itself never touches playback state; djBoomExecuteAction
+// is the only thing that does, and only after checking the action's type
+// against its own whitelist below, independent of the server's own check.
 let djBoomHistory = []; // [{role:'user'|'assistant', content:'...'}]
 let djBoomSending = false;
 
@@ -5658,6 +5668,74 @@ function djBoomSendSuggestion(text) {
   djBoomSend();
 }
 
+// ─── Context builder ────────────────────────────────────────────────────────
+// Reads FREQ's actual in-memory state (queue, playback, playlists, etc) and
+// shapes it into the payload the backend expects. Deliberately reads only
+// what's already loaded client-side — it does not itself trigger new network
+// requests, to keep sending a chat message fast and side-effect-free. Liked
+// songs are the one exception (djBoomFetchLikedSongsSample below) since
+// there's no client-side cache of them to read from yet.
+function djBoomBuildContext(likedSongsSample) {
+  let currentTrack = null;
+  if (state.activeIndex >= 0 && state.queue[state.activeIndex]) {
+    const item = state.queue[state.activeIndex];
+    currentTrack = {
+      title: item.customLabel || item.title || null,
+      artist: item.artist || item.meta || null,
+      platform: item.platform || null,
+      isLikedByMe: !!item.likedByMe,
+    };
+  }
+
+  const playbackState = !localPlayer?.classList.contains('visible')
+    ? 'idle'
+    : (localAudio && !localAudio.paused ? 'playing' : 'paused');
+
+  return {
+    username: AUTH.username || null,
+    isPremium: !!AUTH.isPremium,
+    playback: {
+      state: playbackState,
+      shuffled: false, // FREQ's shuffle reorders the queue in place rather than tracking a mode flag
+      repeatMode: ['off', 'all', 'one'][state.repeat] || 'off',
+    },
+    currentTrack,
+    queue: state.queue.slice(0, 25).map(t => ({
+      title: t.customLabel || t.title || 'Unknown',
+      artist: t.artist || t.meta || 'Unknown',
+    })),
+    queueLength: state.queue.length,
+    recentlyPlayed: (state.history || []).slice(0, 15).map(t => ({
+      title: t.customLabel || t.title || 'Unknown',
+      artist: t.artist || t.meta || 'Unknown',
+    })),
+    likedSongsCount: likedSongsSample ? likedSongsSample.total : null,
+    likedSongsSample: likedSongsSample ? likedSongsSample.tracks : [],
+    playlists: (myPlaylists || []).map(p => ({ name: p.name, trackCount: p.trackCount })),
+    currentPlaylist: viewedPlaylist?.name || null,
+    hasCloudFiles: cloudFilesLoadedOnce ? cloudFilesCache.length > 0 : null,
+    cloudFileCount: cloudFilesLoadedOnce ? cloudFilesCache.length : null,
+  };
+}
+
+// Small on-demand fetch — liked songs aren't cached client-side anywhere
+// else, so DJ BOOM pulls a fresh sample right before sending context. Kept
+// short (fails fast) so it never meaningfully delays sending a chat message;
+// a failure just means DJ BOOM reports liked-songs info as unavailable
+// rather than the request stalling on it.
+async function djBoomFetchLikedSongsSample() {
+  if (!AUTH.loggedIn || !AUTH.token) return null;
+  try {
+    const res = await fetch(`/api/tracks/liked?token=${encodeURIComponent(AUTH.token)}&limit=15`);
+    const data = await res.json();
+    if (!res.ok) return null;
+    const tracks = (data.tracks || []).map(t => ({ title: t.title, artist: t.artistName }));
+    return { total: tracks.length, tracks };
+  } catch (_) {
+    return null;
+  }
+}
+
 async function djBoomSend() {
   if (djBoomSending) return;
   if (!AUTH.loggedIn || !AUTH.isPremium) { openPremiumHubOverlay(); return; }
@@ -5679,10 +5757,12 @@ async function djBoomSend() {
   $('djBoomMessages').scrollTop = $('djBoomMessages').scrollHeight;
 
   try {
+    const likedSample = await djBoomFetchLikedSongsSample();
+    const context = djBoomBuildContext(likedSample);
     const res = await fetch('/api/djboom/chat', {
       method: 'POST',
       headers: authHeaders(),
-      body: JSON.stringify({ messages: djBoomHistory }),
+      body: JSON.stringify({ messages: djBoomHistory, context }),
     });
     const data = await res.json();
     $('djBoomTyping')?.remove();
@@ -5692,6 +5772,9 @@ async function djBoomSend() {
     }
     djBoomAppendMessage('assistant', data.reply || '…');
     djBoomHistory.push({ role: 'assistant', content: data.reply || '' });
+    if (data.action && data.action.type) {
+      await djBoomExecuteAction(data.action);
+    }
   } catch (err) {
     $('djBoomTyping')?.remove();
     djBoomAppendMessage('assistant', 'Network error — is the server running?');
@@ -5699,6 +5782,205 @@ async function djBoomSend() {
     djBoomSending = false;
     $('djBoomSendBtn').disabled = false;
   }
+}
+
+// ─── Action executor ────────────────────────────────────────────────────────
+// The only place DJ BOOM's action metadata actually touches app state.
+// Re-checks the action type against its own whitelist independent of the
+// backend's validation — a response arriving here with an unrecognized
+// type is silently ignored rather than executed, so a backend bug or a
+// future model change can't cause this to fall through to something
+// unintended.
+const DJ_BOOM_ACTION_HANDLERS = {
+  async playLikedSongs() {
+    const sample = await djBoomFetchLikedSongsSample();
+    if (!sample || !sample.tracks.length) {
+      showToast('DJ BOOM', "You don't have any liked songs yet.", 'info');
+      return;
+    }
+    await djBoomQueueFromSearchTerms(sample.tracks.map(t => `${t.title} ${t.artist}`), { replace: true, play: true });
+  },
+  async shuffleLikedSongs() {
+    const sample = await djBoomFetchLikedSongsSample();
+    if (!sample || !sample.tracks.length) {
+      showToast('DJ BOOM', "You don't have any liked songs yet.", 'info');
+      return;
+    }
+    const terms = sample.tracks.map(t => `${t.title} ${t.artist}`);
+    for (let i = terms.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [terms[i], terms[j]] = [terms[j], terms[i]];
+    }
+    await djBoomQueueFromSearchTerms(terms, { replace: true, play: true });
+  },
+  shuffleQueue() {
+    if (state.queue.length < 2) { showToast('DJ BOOM', 'Queue needs at least 2 tracks to shuffle.', 'info'); return; }
+    shuffleBtn?.click();
+  },
+  skipTrack() {
+    if (!state.queue.length) { showToast('DJ BOOM', 'Nothing queued to skip to.', 'info'); return; }
+    nextBtn?.click();
+  },
+  previousTrack() {
+    if (!state.queue.length) { showToast('DJ BOOM', 'Nothing in the queue.', 'info'); return; }
+    prevBtn?.click();
+  },
+  togglePlayPause() {
+    if (!localPlayer?.classList.contains('visible')) { showToast('DJ BOOM', 'Nothing is loaded to play.', 'info'); return; }
+    PlaybackManager.toggle();
+  },
+  async likeCurrentTrack() {
+    const item = state.queue[state.activeIndex];
+    if (!item) { showToast('DJ BOOM', 'Nothing is currently playing.', 'info'); return; }
+    if (!item.freqTrackId) { showToast('DJ BOOM', "This track isn't a FREQ catalog track, so it can't be liked.", 'info'); return; }
+    try {
+      const res = await fetch(`/api/tracks/${encodeURIComponent(item.freqTrackId)}/like`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: AUTH.token }),
+      });
+      if (res.ok) { item.likedByMe = true; showToast('DJ BOOM', 'Added to your liked songs.', 'success'); }
+    } catch (_) { /* network blip — stay quiet, the reply text already set expectations */ }
+  },
+  async playPlaylistByName(payload) {
+    await djBoomOpenPlaylistByName(payload?.name, { play: true });
+  },
+  async addCurrentTrackToPlaylistByName(payload) {
+    const item = state.queue[state.activeIndex];
+    if (!item?.freqTrackId) { showToast('DJ BOOM', "This track can't be added to a playlist.", 'info'); return; }
+    const match = (myPlaylists || []).find(p => p.name.toLowerCase() === (payload?.name || '').toLowerCase().trim());
+    if (!match) { showToast('DJ BOOM', `Couldn't find a playlist named "${payload?.name || ''}".`, 'info'); return; }
+    try {
+      // POST /api/playlists/:id/tracks expects { token, trackData } — a
+      // small track object, not a bare trackId — matching
+      // dbAddTrackToPlaylist's shape elsewhere in the app.
+      const res = await fetch(`${PLAYLISTS_BASE}/${encodeURIComponent(match.id)}/tracks`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          token: AUTH.token,
+          trackData: { id: item.freqTrackId, title: item.title || item.customLabel, platform: 'freq' },
+        }),
+      });
+      if (res.ok) showToast('DJ BOOM', `Added to "${match.name}".`, 'success');
+      else showToast('DJ BOOM', 'Could not add that track to the playlist.', 'error');
+    } catch (_) {
+      showToast('DJ BOOM', 'Network error adding to playlist.', 'error');
+    }
+  },
+  async queueTrackSearch(payload) {
+    if (!payload?.query) return;
+    await djBoomQueueFromSearchTerms([payload.query], { replace: false, play: false });
+  },
+  async searchAndPlay(payload) {
+    if (!payload?.query) return;
+    await djBoomQueueFromSearchTerms([payload.query], { replace: true, play: true });
+  },
+  async startFreqRadio() {
+    const item = state.queue[state.activeIndex];
+    const seed = item ? (item.artist || item.meta || item.title) : null;
+    if (!seed) { showToast('DJ BOOM', 'Play something first so FREQ Radio has a seed.', 'info'); return; }
+    try {
+      const params = new URLSearchParams({ q: seed, limit: '15' });
+      const res = await fetch(`/api/discover/tracks?${params}`);
+      const data = await res.json();
+      const tracks = (data.tracks || []).filter(t => t.id !== item.freqTrackId);
+      if (!tracks.length) { showToast('DJ BOOM', 'Could not find similar tracks for FREQ Radio.', 'info'); return; }
+      tracks.forEach(t => state.queue.push({
+        platform: 'freq', type: 'track', title: t.title, artist: t.artistName,
+        freqTrackId: t.id, id: `freq_${t.id}`, originalUrl: null,
+      }));
+      save(); renderQueue();
+      showToast('DJ BOOM', `Started FREQ Radio from "${seed}".`, 'success');
+    } catch (_) {
+      showToast('DJ BOOM', 'Could not start FREQ Radio.', 'error');
+    }
+  },
+  async playCloudFiles() {
+    if (!cloudFilesLoadedOnce) await updateCloudFilesUI();
+    if (!cloudFilesCache.length) { showToast('DJ BOOM', "You don't have any cloud files uploaded.", 'info'); return; }
+    state.queue = cloudFilesCache.map(f => ({
+      platform: 'local', type: 'track', title: f.title || f.filename, artist: f.artist || 'Cloud File',
+      cloudFileId: f.id, id: `cloud_${f.id}`, originalUrl: null,
+    }));
+    state.activeIndex = -1; save(); renderQueue();
+    if (state.queue.length) playItem(0);
+    showToast('DJ BOOM', `Playing ${state.queue.length} cloud file${state.queue.length === 1 ? '' : 's'}.`, 'success');
+  },
+  setRepeatMode(payload) {
+    const idx = { off: 0, all: 1, one: 2 }[payload?.mode];
+    if (idx === undefined) return;
+    state.repeat = idx;
+    updateRepeatUI(); save();
+    showToast('DJ BOOM', 'Repeat: ' + ['Off', 'All', 'One'][idx], 'info');
+  },
+};
+
+async function djBoomExecuteAction(action) {
+  const handler = DJ_BOOM_ACTION_HANDLERS[action?.type];
+  if (typeof handler !== 'function') return; // unrecognized type — ignore, don't guess
+  try {
+    await handler(action.payload || null);
+  } catch (err) {
+    console.error('[djboom action]', action.type, err);
+    showToast('DJ BOOM', 'Something went wrong performing that action.', 'error');
+  }
+}
+
+// Looks up a playlist the user owns by (case-insensitive) name and opens it,
+// optionally loading its tracks straight into the queue and playing.
+async function djBoomOpenPlaylistByName(name, { play = false } = {}) {
+  if (!name) { showToast('DJ BOOM', 'Which playlist did you mean?', 'info'); return; }
+  if (!myPlaylists.length) await loadMyPlaylists();
+  const match = myPlaylists.find(p => p.name.toLowerCase() === name.toLowerCase().trim())
+    || myPlaylists.find(p => p.name.toLowerCase().includes(name.toLowerCase().trim()));
+  if (!match) { showToast('DJ BOOM', `Couldn't find a playlist named "${name}".`, 'info'); return; }
+  await openPlaylistViewer(match.id, true);
+  if (play && viewedPlaylist?.tracks?.length) {
+    state.queue = viewedPlaylist.tracks.map(t => ({
+      platform: 'freq', type: 'track', title: t.title, artist: t.artistName || t.artist,
+      freqTrackId: t.id, id: `freq_${t.id}`, originalUrl: null,
+    }));
+    state.activeIndex = -1; save(); renderQueue();
+    playItem(0);
+    showToast('DJ BOOM', `Playing "${match.name}".`, 'success');
+  } else if (play) {
+    showToast('DJ BOOM', `"${match.name}" doesn't have any tracks yet.`, 'info');
+  }
+}
+
+// Shared helper for actions that need to turn free-text search terms
+// (a track title, an artist name, a "title artist" pair) into real FREQ
+// catalog tracks via /api/discover/tracks, then either queue or replace+play
+// them. Terms that return no match are silently skipped rather than failing
+// the whole action — DJ BOOM's own reply text already sets the user's
+// expectation, and a toast covers the "found nothing at all" case.
+async function djBoomQueueFromSearchTerms(terms, { replace = false, play = false } = {}) {
+  const found = [];
+  for (const term of terms.slice(0, 15)) {
+    try {
+      const params = new URLSearchParams({ q: term, limit: '1' });
+      const res = await fetch(`/api/discover/tracks?${params}`);
+      const data = await res.json();
+      if (data.tracks && data.tracks[0]) found.push(data.tracks[0]);
+    } catch (_) { /* skip this term, keep going */ }
+  }
+  if (!found.length) {
+    showToast('DJ BOOM', "Couldn't find any matching tracks in FREQ's catalog.", 'info');
+    return;
+  }
+  const items = found.map(t => ({
+    platform: 'freq', type: 'track', title: t.title, artist: t.artistName,
+    freqTrackId: t.id, id: `freq_${t.id}`, originalUrl: null,
+  }));
+  if (replace) {
+    state.queue = items;
+    state.activeIndex = -1;
+  } else {
+    items.forEach(item => {
+      if (!state.allowDups && state.queue.some(q => q.freqTrackId === item.freqTrackId)) return;
+      state.queue.push(item);
+    });
+  }
+  save(); renderQueue();
+  if (play && state.queue.length) playItem(0);
 }
 
 // ─── Premium Hub ────────────────────────────────────────────────────────────
