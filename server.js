@@ -52,6 +52,9 @@
  *
  * POST   /api/plays                            { originalUrl, platform?, title?, token? }
  * POST   /api/gumroad/webhook                  Gumroad webhook for premium purchases
+ * GET    /api/premium/status                   ?token=   → { isPremium, premiumStatus }  (checkout-return polling)
+ * GET    /api/premium/history                  ?token=   → { history: [...] }
+ * GET    /api/premium/config                                → { checkoutUrl }  (Gumroad product URL, no secrets)
  * GET    /api/charts/tracks                    ?window=all|7d&limit=
  *
  * GET    /api/discover/playlists                ?sort=likes|recent&limit=
@@ -90,6 +93,16 @@ const gemini = process.env.GEMINI_API_KEY
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
+
+// ─── Premium checkout config ────────────────────────────────────────────────
+// The Gumroad *product* URL (not a secret — this is the public page/overlay
+// target). Kept server-side and handed to the client via /api/premium/config
+// instead of hardcoding it in index.html, so swapping products, adding a
+// discount-coded variant, or moving providers later is a one-line env change
+// rather than an HTML edit. Falls back to the current live product if the
+// env var isn't set, so checkout doesn't silently break in an environment
+// that hasn't been configured yet.
+const GUMROAD_CHECKOUT_URL = process.env.GUMROAD_CHECKOUT_URL || 'https://strickland717.gumroad.com/l/freq-premium';
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
 const captureRawBody = (req, _res, buf, encoding) => {
@@ -3522,6 +3535,35 @@ app.delete('/api/auth/account', async (req, res) => {
   } catch (err) {
     console.error('[delete-account]', err);
     return res.status(500).json({ error: 'Account deletion failed.' });
+  }
+});
+
+// Public, unauthenticated — just hands the client the Gumroad product URL so
+// it isn't hardcoded into index.html. Contains no secrets (it's the same URL
+// anyone sees clicking a "Buy" link), so no auth/session check needed here.
+app.get('/api/premium/config', (_req, res) => {
+  res.json({ checkoutUrl: GUMROAD_CHECKOUT_URL });
+});
+
+// Lightweight status check, built for the checkout-return polling loop —
+// the frontend calls this every few seconds while "Activating Premium…" is
+// showing. Deliberately doesn't touch dbRefreshSession/expiry (unlike
+// token-refresh) since a poll shouldn't extend the session TTL, and stays
+// a single cheap account read rather than the heavier /api/auth/pull
+// (which also fetches playlists) so rapid polling stays inexpensive.
+app.get('/api/premium/status', async (req, res) => {
+  const token = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token.' });
+  try {
+    const acct = await dbGetAccount(sess.username);
+    return res.json({
+      isPremium: !!acct?.is_premium,
+      premiumStatus: getPremiumStatusFromAccount(acct),
+    });
+  } catch (err) {
+    console.error('[premium status]', err);
+    return res.status(500).json({ error: 'Could not check Premium status.' });
   }
 });
 
