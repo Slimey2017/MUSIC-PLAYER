@@ -4441,8 +4441,8 @@ body.oled-mode {
            dispatches a real click on it rather than faking the overlay any
            other way. Kept off-screen, not display:none, since some
            embed scripts skip binding to unrendered elements. -->
-      <a href="#" id="pcoGumroadLink" class="gumroad-button" data-gumroad-single-product="true"
-         style="position:absolute;width:1px;height:1px;overflow:hidden;opacity:0;pointer-events:none;" target="_blank" rel="noopener">Buy</a>
+      <a href="https://strickland717.gumroad.com/l/freq-premium" id="pcoGumroadLink" class="gumroad-button" data-gumroad-single-product="true"
+         style="position:absolute;width:1px;height:1px;overflow:hidden;opacity:0;pointer-events:none;">Buy</a>
     </div>
 
     <!-- Step: activating (polling) -->
@@ -6560,6 +6560,14 @@ async function pcoLaunchGumroad() {
 
   const link = $('pcoGumroadLink');
   if (!link) return;
+  // Update the href's query params (username, wanted=true) in place —
+  // the link keeps its real gumroad.com pathname/host from page load
+  // (see the static href on #pcoGumroadLink in the markup) so Gumroad's
+  // embed script, which only registers a.gumroad-button elements that
+  // already point at a real Gumroad product URL when it scans the DOM on
+  // page load, has already bound its overlay click-handler to this exact
+  // element. Only ever changing the href's *query string* here — never
+  // swapping in a fresh URL object wholesale — keeps that binding intact.
   link.href = url.toString();
 
   // Mark that we're expecting a return from Gumroad so activation polling
@@ -6567,7 +6575,18 @@ async function pcoLaunchGumroad() {
   // redirected instead of staying in-page on some browsers).
   try { localStorage.setItem('freq_pco_pending', '1'); } catch (_e) {}
 
-  link.click();
+  // Prefer Gumroad's own overlay-open API when the embed script exposes
+  // it — more reliable than a synthetic click, which some browsers/embed
+  // versions treat as an untrusted event and refuse to intercept, falling
+  // through to native anchor navigation (the exact "sends me to the
+  // website" bug this replaces). Falls back to the click dispatch when
+  // the API isn't present, so this keeps working even if Gumroad changes
+  // or removes window.GumroadOverlay in a future version of their script.
+  if (window.GumroadOverlay && typeof window.GumroadOverlay.open === 'function') {
+    window.GumroadOverlay.open(link.href);
+  } else {
+    link.click();
+  }
   pcoStartPolling();
 }
 
