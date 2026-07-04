@@ -62,6 +62,14 @@
  * POST   /api/account/email                    Authenticated. { email } → sets/updates accounts.email. Used both
  *                                               by signup-era accounts adding a required email retroactively and
  *                                               as the general "change my email" endpoint.
+ * POST   /api/presence/heartbeat                Authenticated. { } → refreshes this session's online status.
+ *                                               Called automatically every ~30s by the frontend while visible.
+ * POST   /api/analytics/page-view               { path } → logs a page view. Auth optional (guests included,
+ *                                               username null). No IP/location ever recorded.
+ * GET    /api/admin/presence                    requireAdmin. Who's online right now.
+ * GET    /api/admin/presence/history             requireAdmin. ?username=&limit=  Join/leave log.
+ * GET    /api/admin/page-views                  requireAdmin. ?username=&limit=  Recent page views.
+ * GET    /api/admin/activity                    requireAdmin. ?limit=&before=  Who posted what, when.
  * GET    /api/charts/tracks                    ?window=all|7d&limit=
  *
  * GET    /api/discover/playlists                ?sort=likes|recent&limit=
@@ -7832,6 +7840,209 @@ app.get('/api/admin/me', async (req, res) => {
   const sess = token ? await dbGetSession(token) : null;
   if (!sess) return res.json({ isAdmin: false, isPremium: false });
   return res.json({ isAdmin: sess.isAdmin, isPremium: sess.isPremium, username: sess.username });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  PRESENCE + PAGE VIEWS — admin-only "who's using the site" tracking
+//  ─────────────────────────────────────────────────────────────────────────
+//  Two logging endpoints any authenticated user's client calls automatically
+//  (heartbeat + page view), and three admin-only read endpoints. No IP
+//  address or geolocation is ever collected or stored — see the migration
+//  comment on presence_sessions/page_views. "Who posted" isn't a new system:
+//  post creation already writes to activity_feed via dbWriteActivity, so
+//  GET /api/admin/activity below just exposes dbGetGlobalFeed to admins
+//  rather than duplicating that tracking.
+//
+//  POST /api/presence/heartbeat   Authenticated. { } → upserts this session's
+//                                 presence_sessions row, refreshing last_seen_at.
+//                                 Called every PRESENCE_HEARTBEAT_MS by the
+//                                 frontend while the tab is visible. Not
+//                                 admin-gated — every logged-in user calls
+//                                 this for themselves, same as any session
+//                                 keep-alive; only the READ side is admin-only.
+//  POST /api/analytics/page-view  { path } → logs a page_views row. Optional
+//                                 auth (works for guests too, username null).
+//
+//  GET  /api/admin/presence       requireAdmin. Currently-online users (any
+//                                 presence_sessions row with last_seen_at
+//                                 within the offline threshold), plus each
+//                                 one's first_seen_at for "online since".
+//  GET  /api/admin/presence/history  requireAdmin. Closed online-periods
+//                                 (join/leave pairs) for a "who was online
+//                                 when" log, most recent first.
+//  GET  /api/admin/page-views     requireAdmin. Recent page_views rows,
+//                                 optionally filtered by ?username=.
+//  GET  /api/admin/activity       requireAdmin. Thin wrapper around
+//                                 dbGetGlobalFeed — "who posted what, when."
+
+// A session counts as online if its last heartbeat was within this window.
+// Set to 3x the frontend's heartbeat interval (see PRESENCE_HEARTBEAT_MS in
+// index.html, 30s) so one dropped/delayed beat doesn't flip someone offline
+// and back on again every other tick.
+const PRESENCE_OFFLINE_THRESHOLD_MS = 90 * 1000; // 90 seconds
+
+// Upserts the caller's presence row: if they already have an open session
+// (no ended_at) that hasn't gone stale past the offline threshold, just bump
+// last_seen_at on it; otherwise start a new row. This is what makes
+// presence_sessions double as a join/leave history rather than a single
+// "currently online" flag per user — going stale and coming back later
+// starts a fresh row with its own first_seen_at, rather than stretching the
+// old row's "online since" back to a session that actually ended.
+async function dbRecordHeartbeat(username, sessionToken) {
+  const nowIso = new Date().toISOString();
+  const staleBefore = new Date(Date.now() - PRESENCE_OFFLINE_THRESHOLD_MS).toISOString();
+
+  const { data: openRow } = await supabase
+    .from('presence_sessions')
+    .select('id, last_seen_at')
+    .eq('username', username)
+    .eq('session_token', sessionToken)
+    .is('ended_at', null)
+    .order('last_seen_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (openRow && openRow.last_seen_at >= staleBefore) {
+    await supabase.from('presence_sessions').update({ last_seen_at: nowIso }).eq('id', openRow.id);
+    return;
+  }
+  // Either no open row, or the existing one already went stale (the sweep
+  // just hasn't closed it out yet) — either way this heartbeat starts a new
+  // online period rather than reviving an old one.
+  if (openRow) {
+    await supabase.from('presence_sessions').update({ ended_at: openRow.last_seen_at }).eq('id', openRow.id);
+  }
+  await supabase.from('presence_sessions').insert({
+    username, session_token: sessionToken, first_seen_at: nowIso, last_seen_at: nowIso,
+  });
+}
+
+// Closes out any presence_sessions row that's gone stale (last_seen_at older
+// than the offline threshold) but hasn't been marked ended_at yet, so
+// "currently online" queries and the join/leave history stay accurate even
+// if a user's tab just vanished (closed, crashed, lost network) without a
+// final heartbeat ever arriving to signal "offline" directly. Cheap enough
+// to run opportunistically on every admin presence read rather than needing
+// its own cron/scheduler.
+async function dbSweepStalePresence() {
+  const staleBefore = new Date(Date.now() - PRESENCE_OFFLINE_THRESHOLD_MS).toISOString();
+  await supabase.from('presence_sessions')
+    .update({ ended_at: staleBefore })
+    .is('ended_at', null)
+    .lt('last_seen_at', staleBefore);
+}
+
+app.post('/api/presence/heartbeat', async (req, res) => {
+  const token = (req.headers.authorization || '').replace('Bearer ', '') || req.body?.token;
+  const sess = token ? await dbGetSession(token) : null;
+  if (!sess) return res.status(401).json({ error: 'Authentication required.' });
+  try {
+    await dbRecordHeartbeat(sess.username, token);
+    return res.json({ ok: true });
+  } catch (err) {
+    // Best-effort — a failed heartbeat write should never surface as a
+    // user-visible error; it just means this tick's presence isn't recorded.
+    console.error('[presence heartbeat]', err?.message || err);
+    return res.json({ ok: false });
+  }
+});
+
+// Logs a page view. Deliberately does NOT require authentication — guests
+// browsing the site are part of "who's using the website" too, they just
+// show up with username: null. `path` is the frontend's own internal route
+// name (see ROUTE constants in index.html), never a raw URL — so no query
+// strings, hashes, or anything that could carry incidental PII through.
+app.post('/api/analytics/page-view', async (req, res) => {
+  const path = typeof req.body?.path === 'string' ? req.body.path.slice(0, 200).trim() : '';
+  if (!path) return res.status(400).json({ error: 'path is required.' });
+
+  const token = (req.headers.authorization || '').replace('Bearer ', '') || req.body?.token;
+  const sess = token ? await dbGetSession(token) : null;
+
+  try {
+    await supabase.from('page_views').insert({ username: sess?.username || null, path });
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('[page view]', err?.message || err);
+    return res.json({ ok: false });
+  }
+});
+
+// GET /api/admin/presence — who's online right now.
+app.get('/api/admin/presence', requireAdmin, async (req, res) => {
+  try {
+    await dbSweepStalePresence();
+    const { data, error } = await supabase
+      .from('presence_sessions')
+      .select('username, first_seen_at, last_seen_at')
+      .is('ended_at', null)
+      .order('first_seen_at', { ascending: false });
+    if (error) throw new Error(error.message);
+    return res.json({ online: data || [], count: (data || []).length });
+  } catch (err) {
+    console.error('[admin presence]', err?.message || err);
+    return res.status(500).json({ error: 'Could not load presence.' });
+  }
+});
+
+// GET /api/admin/presence/history — closed online-periods (join/leave log),
+// most recent first. ?username= filters to one account; ?limit= caps rows
+// (default 100, max 500).
+app.get('/api/admin/presence/history', requireAdmin, async (req, res) => {
+  try {
+    await dbSweepStalePresence();
+    const limit = Math.min(parseInt(req.query.limit, 10) || 100, 500);
+    let q = supabase
+      .from('presence_sessions')
+      .select('username, first_seen_at, last_seen_at, ended_at')
+      .not('ended_at', 'is', null)
+      .order('ended_at', { ascending: false })
+      .limit(limit);
+    if (req.query.username) q = q.eq('username', normalizeUsername(req.query.username));
+    const { data, error } = await q;
+    if (error) throw new Error(error.message);
+    return res.json({ history: data || [] });
+  } catch (err) {
+    console.error('[admin presence history]', err?.message || err);
+    return res.status(500).json({ error: 'Could not load presence history.' });
+  }
+});
+
+// GET /api/admin/page-views — recent page views. ?username= filters to one
+// account; ?limit= caps rows (default 200, max 1000).
+app.get('/api/admin/page-views', requireAdmin, async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit, 10) || 200, 1000);
+    let q = supabase
+      .from('page_views')
+      .select('username, path, viewed_at')
+      .order('viewed_at', { ascending: false })
+      .limit(limit);
+    if (req.query.username) q = q.eq('username', normalizeUsername(req.query.username));
+    const { data, error } = await q;
+    if (error) throw new Error(error.message);
+    return res.json({ pageViews: data || [] });
+  } catch (err) {
+    console.error('[admin page views]', err?.message || err);
+    return res.status(500).json({ error: 'Could not load page views.' });
+  }
+});
+
+// GET /api/admin/activity — "who posted what, when." Thin wrapper around the
+// same dbGetGlobalFeed used by the public Activity Feed — post creation
+// already lands here via dbWriteActivity, so this isn't a new tracking
+// system, just an admin-facing read of the existing one. ?limit= caps rows
+// (default 50, max 200); ?before= paginates (ISO timestamp cursor).
+app.get('/api/admin/activity', requireAdmin, async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
+    const before = typeof req.query.before === 'string' ? req.query.before : null;
+    const feed = await dbGetGlobalFeed({ limit, before });
+    return res.json({ activity: feed });
+  } catch (err) {
+    console.error('[admin activity]', err?.message || err);
+    return res.status(500).json({ error: 'Could not load activity.' });
+  }
 });
 
 // GET /api/admin/reports/stats (must come before /api/admin/reports/:id)
