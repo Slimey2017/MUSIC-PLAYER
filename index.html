@@ -4308,6 +4308,18 @@ body.oled-mode {
       </div>
     </div>
 
+    <!-- Already purchased on Gumroad but not showing as Premium here yet
+         (e.g. bought before creating a FREQ account, or on another device)?
+         This calls POST /api/premium/verify directly — a live Gumroad API
+         lookup, no webhook involved — and unlocks Premium immediately if a
+         match is found. Hidden once the account is already Premium. -->
+    <div id="premiumHubVerifyRow" style="margin-top:10px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface2);">
+      <div style="font-size:0.5rem;font-weight:700;color:var(--text);">Already purchased?</div>
+      <div style="font-size:0.44rem;color:var(--text-dim);margin-top:3px;margin-bottom:8px;line-height:1.5;">If you bought FREQ Premium on Gumroad and it hasn't unlocked here yet, verify your purchase.</div>
+      <button class="pco-btn-secondary" id="premiumHubVerifyBtn" style="margin-top:0;width:100%;" onclick="hubVerifyPurchase()">Verify Purchase</button>
+      <div id="premiumHubVerifyResult" style="font-size:0.44rem;margin-top:8px;line-height:1.6;"></div>
+    </div>
+
     <div style="margin-top:12px;">
       <div style="font-size:0.42rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px;">Billing history</div>
       <div id="premiumHistoryList" style="display:flex;flex-direction:column;gap:6px;"></div>
@@ -4420,8 +4432,8 @@ body.oled-mode {
         <span class="pco-logo-mark">FREQ</span><span class="pco-logo-badge">Premium</span>
       </div>
       <div class="pco-spinner"></div>
-      <div class="pco-activating-text">Activating Premium…</div>
-      <div class="pco-activating-sub" id="pcoActivatingSub">We're confirming your purchase with Gumroad. This usually takes just a few seconds.</div>
+      <div class="pco-activating-text">Checking your Gumroad membership…</div>
+      <div class="pco-activating-sub" id="pcoActivatingSub">We're verifying your purchase directly with Gumroad. This usually takes just a few seconds.</div>
     </div>
 
     <!-- Step: success -->
@@ -4437,12 +4449,12 @@ body.oled-mode {
       <button class="pco-btn-primary" onclick="pcoFinish()">Start Listening</button>
     </div>
 
-    <!-- Step: still verifying / failed -->
+    <!-- Step: no membership found / failed -->
     <div class="pco-step" id="pcoStepFailed">
       <div class="pco-error-icon">⏳</div>
-      <div class="pco-activating-text">We're still verifying your purchase.</div>
-      <div class="pco-activating-sub" style="margin-bottom:10px;">This can take a little longer than usual. Your purchase is safe — Premium will unlock as soon as it's confirmed.</div>
-      <button class="pco-btn-primary" onclick="pcoRetryPoll()">Refresh Status</button>
+      <div class="pco-activating-text">No active FREQ Premium membership was found for this account.</div>
+      <div class="pco-activating-sub" style="margin-bottom:10px;">If you just completed checkout, this can occasionally take a little longer. Your purchase is safe — try again in a moment.</div>
+      <button class="pco-btn-primary" onclick="pcoRetryPoll()">Try Again</button>
       <button class="pco-btn-secondary" onclick="closePremiumCheckout(); openSupportModal();">Contact Support</button>
     </div>
 
@@ -5246,6 +5258,12 @@ function renderPremiumStatus() {
   // management placeholders instead (spec: future-ready, not fully wired yet).
   if (upgradeBtn) upgradeBtn.style.display = premium ? 'none' : '';
   if (manageRow) manageRow.style.display = premium ? 'flex' : 'none';
+
+  // "Already purchased? Verify Purchase" only makes sense for accounts that
+  // aren't Premium yet — once verified, hide it rather than leave a
+  // functional-but-pointless button sitting under a Premium account's status.
+  const verifyRow = $('premiumHubVerifyRow');
+  if (verifyRow) verifyRow.style.display = premium ? 'none' : '';
 }
 
 function updateAuthUI() {
@@ -6306,6 +6324,74 @@ function closePremiumHubOverlay() {
   $('premiumHubOverlay')?.classList.remove('open');
 }
 
+// "Already purchased? [Verify Purchase]" — calls POST /api/premium/verify,
+// a live Gumroad API lookup (matches by purchaser email or the "FREQ
+// Username" custom field). No webhook involved and no manual approval:
+// if Gumroad reports an active membership for this account, Premium
+// unlocks immediately and AUTH is refreshed in place — no reload, no
+// re-login. Covers someone who bought on Gumroad directly (skipping the
+// in-app checkout flow) or whose in-app purchase didn't auto-activate.
+async function hubVerifyPurchase() {
+  const btn = $('premiumHubVerifyBtn');
+  const resultEl = $('premiumHubVerifyResult');
+  if (!AUTH.loggedIn || !AUTH.token) {
+    showToast('Sign in required', 'Sign in to verify a FREQ Premium purchase.', 'error');
+    return;
+  }
+  if (btn) { btn.disabled = true; btn.textContent = 'Checking your Gumroad membership…'; }
+  if (resultEl) resultEl.innerHTML = '<span class="pco-spinner" style="width:12px;height:12px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:6px;"></span>Checking your Gumroad membership…';
+
+  try {
+    const res = await fetch('/api/premium/verify', {
+      method: 'POST',
+      headers: authHeaders(),
+    });
+    const data = await res.json().catch(() => ({}));
+
+    if (res.ok && data.isPremium) {
+      AUTH.isPremium = true;
+      AUTH.premiumStatus = data.premiumStatus || AUTH.premiumStatus;
+      updateAuthUI(); // unlocks Premium badge, DJ BOOM, Premium Hub state — no reload, no re-login
+      renderPremiumStatus();
+      await loadPremiumBillingHistory();
+      if (resultEl) resultEl.innerHTML = '';
+      showToast('🎉 Welcome to FREQ Premium!', 'DJ BOOM, Real-Life Radio, Premium Badge, and 75 GB storage are unlocked.', 'success');
+      playSfx?.('success');
+    } else if (res.ok && !data.isPremium) {
+      if (resultEl) {
+        resultEl.innerHTML = `
+          <div style="color:var(--text-dim);margin-bottom:6px;">No active FREQ Premium membership was found for this account.</div>
+          <div style="display:flex;gap:8px;">
+            <button class="pco-btn-secondary" style="margin-top:0;flex:1;min-width:0;width:auto;padding:6px 8px;" onclick="hubVerifyPurchase()">Try Again</button>
+            <button class="pco-btn-secondary" style="margin-top:0;flex:1;min-width:0;width:auto;padding:6px 8px;" onclick="openSupportModal()">Contact Support</button>
+          </div>`;
+      }
+    } else {
+      // Server-side error (provider unreachable, misconfigured, etc.) —
+      // never surface the raw error to the user, just a generic retry path.
+      if (resultEl) {
+        resultEl.innerHTML = `
+          <div style="color:var(--text-dim);margin-bottom:6px;">We couldn't verify your purchase right now.</div>
+          <div style="display:flex;gap:8px;">
+            <button class="pco-btn-secondary" style="margin-top:0;flex:1;min-width:0;width:auto;padding:6px 8px;" onclick="hubVerifyPurchase()">Try Again</button>
+            <button class="pco-btn-secondary" style="margin-top:0;flex:1;min-width:0;width:auto;padding:6px 8px;" onclick="openSupportModal()">Contact Support</button>
+          </div>`;
+      }
+    }
+  } catch (_err) {
+    if (resultEl) {
+      resultEl.innerHTML = `
+        <div style="color:var(--text-dim);margin-bottom:6px;">We couldn't verify your purchase right now.</div>
+        <div style="display:flex;gap:8px;">
+          <button class="pco-btn-secondary" style="margin-top:0;flex:1;min-width:0;width:auto;padding:6px 8px;" onclick="hubVerifyPurchase()">Try Again</button>
+          <button class="pco-btn-secondary" style="margin-top:0;flex:1;min-width:0;width:auto;padding:6px 8px;" onclick="openSupportModal()">Contact Support</button>
+        </div>`;
+    }
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Verify Purchase'; }
+  }
+}
+
 // ─── Premium Checkout ───────────────────────────────────────────────────────
 // Full purchase flow: gate (signed-out) → plan/features → confirm account →
 // launch Gumroad overlay → poll for activation → success. See the
@@ -6391,10 +6477,12 @@ function pcoGoToConfirm() {
 
 // Builds the Gumroad checkout URL with the FREQ username passed through as
 // the "FREQ Username" custom field (must match the field name configured on
-// the Gumroad product — see findGumroadUsername() in server.js, which reads
-// this same field name back out of the webhook payload) and clicks the real
-// <a class="gumroad-button"> element so gumroad.js's own click handler opens
-// the in-page overlay. wanted=true skips straight to the payment form.
+// the Gumroad product — see extractCustomFieldUsername() in
+// lib/gumroad.js, which reads this same field name back out of the sale
+// when verifying the purchase directly against Gumroad's API) and clicks
+// the real <a class="gumroad-button"> element so gumroad.js's own click
+// handler opens the in-page overlay. wanted=true skips straight to the
+// payment form.
 async function pcoLaunchGumroad() {
   const btn = $('pcoConfirmBtn');
   if (btn) { btn.disabled = true; btn.textContent = 'Opening checkout…'; }
@@ -6437,6 +6525,12 @@ function pcoStopPolling() {
   if (PCO.pollTimer) { clearInterval(PCO.pollTimer); PCO.pollTimer = null; }
 }
 
+// Polls by actively calling POST /api/premium/verify — a live Gumroad API
+// lookup — rather than passively re-reading whatever's already in the DB.
+// This is what makes Premium activate automatically right after checkout
+// with no webhook involved: each tick asks Gumroad directly "does this
+// account have an active membership yet?" until the sale shows up on
+// Gumroad's side (usually near-instant, but can lag a few seconds).
 async function pcoPollOnce() {
   if (!AUTH.loggedIn || !AUTH.token) { pcoStopPolling(); return; }
   PCO.pollAttempts++;
@@ -6448,8 +6542,8 @@ async function pcoPollOnce() {
   }
 
   try {
-    const res = await fetch(`/api/premium/status?token=${encodeURIComponent(AUTH.token)}`);
-    if (!res.ok) return; // transient error — just wait for the next tick
+    const res = await fetch('/api/premium/verify', { method: 'POST', headers: authHeaders() });
+    if (!res.ok) return; // transient/provider error — just wait for the next tick, verify already logs details server-side
     const data = await res.json();
     if (data.isPremium) {
       pcoStopPolling();
