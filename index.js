@@ -37,14 +37,24 @@
 'use strict';
 
 const gumroad = require('./gumroad');
+const stripe = require('./stripe');
+const lemonsqueezy = require('./lemonsqueezy');
+const paddle = require('./paddle');
+const polar = require('./polar');
 
 // Registry of all known providers, keyed by the same string stored in
-// accounts.premium_provider / premium_subscriptions.provider.
+// accounts.premium_provider / premium_subscriptions.provider. Gumroad is
+// the only one actually implemented today — the rest are safe placeholders
+// (isConfigured() always false, so getConfiguredProviders() below never
+// selects them) that exist so adding a real implementation later is a
+// one-file change, not a registry restructure. See each file's header
+// comment for what a real implementation needs to do.
 const PROVIDERS = {
   gumroad,
-  // stripe:        require('./stripe'),        // future
-  // paddle:        require('./paddle'),        // future
-  // lemonsqueezy:  require('./lemonsqueezy'),   // future
+  stripe,
+  lemonsqueezy,
+  paddle,
+  polar,
 };
 
 function getProvider(name) {
