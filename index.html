@@ -1300,6 +1300,31 @@ textarea.support-field { height:90px;resize:vertical; }
   padding:2px 6px;border-radius:var(--radius);text-transform:uppercase;letter-spacing:0.05em;flex-shrink:0;
 }
 
+/* Premium Subscription Management ("Self Serve") dashboard */
+.pm-row {
+  display:flex;align-items:center;justify-content:space-between;gap:10px;
+  padding:9px 12px;border-bottom:1px solid var(--border);font-size:0.5rem;
+}
+.pm-row span { color:var(--text-muted); }
+.pm-row strong { color:var(--text);font-weight:700;text-align:right; }
+.pm-row-last { border-bottom:none; }
+.pm-timeline-step {
+  display:flex;align-items:flex-start;gap:10px;position:relative;padding-bottom:16px;
+}
+.pm-timeline-step:last-child { padding-bottom:0; }
+.pm-timeline-dot {
+  width:9px;height:9px;border-radius:50%;background:var(--surface3);border:2px solid var(--border);
+  margin-top:3px;flex-shrink:0;position:relative;z-index:1;
+}
+.pm-timeline-step.pm-done .pm-timeline-dot { background:var(--accent3);border-color:var(--accent3); }
+.pm-timeline-step.pm-current .pm-timeline-dot { background:var(--accent);border-color:var(--accent); }
+.pm-timeline-step.pm-danger .pm-timeline-dot { background:var(--accent2);border-color:var(--accent2); }
+.pm-timeline-step:not(:last-child)::before {
+  content:'';position:absolute;left:4px;top:14px;bottom:-2px;width:1px;background:var(--border);
+}
+.pm-timeline-label { font-size:0.5rem;color:var(--text);font-weight:700; }
+.pm-timeline-sub { font-size:0.42rem;color:var(--text-muted);margin-top:2px; }
+
 /* ─── Premium Checkout Modal ─────────────────────────────────────────────
    Launched from the Premium Hub (and the DJ BOOM lock card, via the Hub).
    Reuses .lyrics-overlay/.lyrics-panel like every other modal in the app —
@@ -4321,8 +4346,7 @@ body.oled-mode {
       <div id="premiumStatusMeta" style="font-size:0.45rem;color:var(--text-dim);margin-top:5px;line-height:1.6;"></div>
       <button class="premium-upgrade-btn" id="premiumHubUpgradeBtn" style="width:100%;margin-top:10px;" onclick="openPremiumCheckout()">🚀 Upgrade to Premium</button>
       <div id="premiumHubManageRow" style="display:none;gap:8px;margin-top:10px;">
-        <button class="pco-btn-secondary" style="margin-top:0;flex:1;min-width:0;width:auto;" onclick="showToast('Manage Subscription', 'Self-serve subscription management is coming soon. For changes to your plan, contact support.', 'info')">Manage Subscription</button>
-        <button class="pco-btn-secondary" style="margin-top:0;flex:1;min-width:0;width:auto;" onclick="showToast('Cancel Subscription', 'Self-serve cancellation is coming soon. For now, contact support to cancel.', 'info')">Cancel Subscription</button>
+        <button class="pco-btn-secondary" style="margin-top:0;flex:1;min-width:0;width:auto;" onclick="openPremiumManageOverlay()">⚙️ Manage Subscription</button>
       </div>
     </div>
 
@@ -4375,6 +4399,89 @@ body.oled-mode {
     </div>
 
     <button class="support-close-btn" onclick="closePremiumHubOverlay()" style="margin-top:12px;">Close</button>
+  </div>
+</div>
+
+<!-- ─── Premium Subscription Management ────────────────────────────────────
+     The "Self Serve" dashboard. FREQ doesn't have (and Gumroad doesn't
+     offer) a per-customer billing-portal API to embed or deep-link into,
+     so this is a real, fully-populated dashboard built from FREQ's own
+     record of the subscription (kept fresh via live Gumroad API checks in
+     premiumVerification.js) plus a direct link out to Gumroad for the one
+     thing only Gumroad can actually do: cancel the recurring charge.
+     .above-dash so it renders above premiumHubOverlay, where it's launched
+     from. -->
+<div class="lyrics-overlay above-dash" id="premiumManageOverlay">
+  <div class="lyrics-panel" style="max-width:480px;">
+    <div class="lyrics-title">⚙️ Manage Subscription</div>
+    <div class="lyrics-artist" style="margin-bottom:12px;">Your FREQ Premium subscription, at a glance.</div>
+
+    <div id="premiumManageLoading" style="font-size:0.52rem;color:var(--text-muted);padding:20px 0;text-align:center;">Loading subscription details…</div>
+
+    <div id="premiumManageBody" style="display:none;">
+
+      <!-- Subscription Information -->
+      <div style="border:1px solid var(--border);border-radius:var(--radius);background:var(--surface2);overflow:hidden;">
+        <div class="pm-row"><span>Current Plan</span><strong id="pmPlan">—</strong></div>
+        <div class="pm-row"><span>Status</span><strong id="pmStatus">—</strong></div>
+        <div class="pm-row"><span>Provider</span><strong id="pmProvider">—</strong></div>
+        <div class="pm-row"><span>Purchase Date</span><strong id="pmPurchaseDate">—</strong></div>
+        <div class="pm-row" id="pmRenewalRow"><span id="pmRenewalLabel">Next Renewal</span><strong id="pmRenewalDate">—</strong></div>
+        <div class="pm-row"><span>Billing Interval</span><strong id="pmInterval">—</strong></div>
+        <div class="pm-row"><span>Auto-Renew</span><strong id="pmAutoRenew">—</strong></div>
+        <div class="pm-row"><span>Subscription Age</span><strong id="pmAge">—</strong></div>
+        <div class="pm-row" id="pmTrialRow" style="display:none;"><span>Trial</span><strong id="pmTrial">—</strong></div>
+        <div class="pm-row pm-row-last"><span>Last Verified</span><strong id="pmLastVerified">—</strong></div>
+      </div>
+
+      <!-- Renewal / cancellation banner -->
+      <div id="pmBanner" style="margin-top:12px;padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius);background:rgba(255,255,255,0.02);text-align:center;">
+        <div id="pmBannerLabel" style="font-size:0.44rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;">Next billing</div>
+        <div id="pmBannerDate" style="font-size:0.72rem;font-weight:700;margin-top:4px;color:var(--text);">—</div>
+        <div id="pmBannerSub" style="font-size:0.44rem;color:var(--text-dim);margin-top:5px;line-height:1.6;"></div>
+      </div>
+
+      <!-- Countdown -->
+      <div id="pmCountdownWrap" style="margin-top:10px;padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius);background:rgba(255,255,255,0.02);text-align:center;">
+        <div id="pmCountdownLabel" style="font-size:0.44rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;">Next renewal in</div>
+        <div id="pmCountdownValue" style="font-size:1rem;font-weight:900;font-family:'Unbounded',sans-serif;margin-top:4px;color:var(--accent3);">—</div>
+      </div>
+
+      <!-- AI Subscription Assistant -->
+      <div style="margin-top:12px;padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface2);">
+        <div style="font-size:0.5rem;font-weight:700;color:var(--text);display:flex;align-items:center;gap:6px;">🤖 Subscription Assistant</div>
+        <div id="pmAssistantText" style="font-size:0.48rem;color:var(--text-dim);margin-top:6px;line-height:1.7;">—</div>
+      </div>
+
+      <!-- Timeline -->
+      <div style="margin-top:14px;">
+        <div class="premium-hub-section-title" style="margin:0 0 8px;">Subscription Timeline</div>
+        <div id="pmTimeline" style="display:flex;flex-direction:column;gap:0;"></div>
+      </div>
+
+      <!-- Actions -->
+      <button class="pco-btn-secondary" id="pmRefreshBtn" style="margin-top:14px;width:100%;" onclick="refreshPremiumManage()">🔄 Refresh Subscription Status</button>
+
+      <!-- Verify with a different purchase email (e.g. bought on Gumroad
+           with an email that differs from this FREQ account) — a separate
+           action from Refresh, which only re-checks whatever provider/email
+           FREQ already has on file for this account. -->
+      <div style="margin-top:8px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius);background:rgba(255,255,255,0.02);">
+        <div style="font-size:0.44rem;color:var(--text-dim);margin-bottom:6px;line-height:1.5;">Paid with a different email than this account? Verify against it directly.</div>
+        <input type="email" id="pmVerifyEmail" placeholder="Email used at checkout (optional)" autocomplete="email" style="width:100%;box-sizing:border-box;margin-bottom:6px;padding:6px 8px;font-size:0.48rem;border-radius:var(--radius);border:1px solid var(--border);background:var(--surface);color:var(--text);">
+        <button class="pco-btn-secondary" id="pmVerifyBtn" style="margin-top:0;width:100%;" onclick="pmVerifyPurchase()">Verify Purchase</button>
+      </div>
+
+      <!-- Gumroad-only management (cancellation etc) -->
+      <div id="pmManageLinkWrap" style="margin-top:10px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius);background:rgba(255,255,255,0.02);">
+        <div style="font-size:0.46rem;color:var(--text-dim);line-height:1.6;">Your subscription is billed through Gumroad. To change your payment method or cancel, manage it directly on Gumroad — FREQ will pick up the change automatically next time it checks.</div>
+        <a id="pmManageLinkBtn" class="pco-btn-secondary" style="margin-top:8px;display:block;text-align:center;text-decoration:none;box-sizing:border-box;" href="https://app.gumroad.com/library" target="_blank" rel="noopener">Manage on Gumroad ↗</a>
+      </div>
+
+      <div id="pmErrorBox" style="display:none;margin-top:10px;font-size:0.46rem;color:var(--accent2);text-align:center;"></div>
+    </div>
+
+    <button class="support-close-btn" onclick="closePremiumManageOverlay()" style="margin-top:14px;">Close</button>
   </div>
 </div>
 
@@ -6449,6 +6556,362 @@ async function hubVerifyPurchase() {
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Verify Purchase'; }
   }
+}
+
+// ─── Premium Subscription Management ("Self Serve") ──────────────────────────
+// Real, fully-populated subscription dashboard fed by /api/premium/manage
+// (FREQ's own record, refreshed via live Gumroad checks elsewhere) — not a
+// placeholder. There's no per-customer Gumroad billing-portal URL to embed
+// or deep-link into (confirmed against Gumroad's own docs: customers manage
+// via their Library or purchase receipt, not a link a third-party app can
+// generate on their behalf), so cancellation/payment-method changes route
+// out to Gumroad's Library — the one place that's actually true for every
+// FREQ Premium customer regardless of which sale or email they used.
+
+const PM = {
+  data: null,          // last-loaded /api/premium/manage response
+  countdownTimer: null,
+};
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+function pmDaysUntil(isoDate) {
+  if (!isoDate) return null;
+  const target = new Date(isoDate).getTime();
+  if (Number.isNaN(target)) return null;
+  return Math.ceil((target - Date.now()) / MS_PER_DAY);
+}
+
+function pmFormatInterval(recurrence) {
+  switch (recurrence) {
+    case 'monthly': return 'Monthly';
+    case 'quarterly': return 'Quarterly';
+    case 'biannually': return 'Every 6 months';
+    case 'yearly': return 'Yearly';
+    default: return null;
+  }
+}
+
+// "Member for 2 months" / "Member for 11 days" / "Member for 1 year" — the
+// largest whole unit that fits, matching how Spotify/Discord-style
+// dashboards phrase subscription age rather than a raw day count.
+function pmFormatDuration(fromIso) {
+  if (!fromIso) return null;
+  const start = new Date(fromIso).getTime();
+  if (Number.isNaN(start)) return null;
+  const days = Math.max(0, Math.floor((Date.now() - start) / MS_PER_DAY));
+  if (days < 1) return 'Member for less than a day';
+  if (days < 30) return `Member for ${days} day${days === 1 ? '' : 's'}`;
+  const months = Math.floor(days / 30.44);
+  if (months < 12) return `Member for ${months} month${months === 1 ? '' : 's'}`;
+  const years = Math.floor(months / 12);
+  const remMonths = months % 12;
+  return remMonths
+    ? `Member for ${years} year${years === 1 ? '' : 's'}, ${remMonths} month${remMonths === 1 ? '' : 's'}`
+    : `Member for ${years} year${years === 1 ? '' : 's'}`;
+}
+
+function pmFormatDateTime(isoDate) {
+  if (!isoDate) return null;
+  const d = new Date(isoDate);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleString([], { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
+// Deterministic, plain-English explanation of the current subscription
+// state — generated from the actual status/dates on the account each time
+// this renders, never a static string. This is the "DJ BOOM" assistant
+// card's content; DJ BOOM's own AI backend isn't invoked here on purpose —
+// a subscription-status sentence has a small, fully-known set of cases, so
+// computing it directly is more reliable (and has no failure mode) than a
+// live model call for what is ultimately a template over real data.
+function pmAssistantMessage(status) {
+  const planName = status.plan || 'FREQ Premium';
+  if (!status.isActive) {
+    if (status.status === 'inactive' && status.canceledAt) {
+      return `Your ${planName} subscription has ended. Renew any time to get Premium features back.`;
+    }
+    return `You don't have an active Premium subscription right now. Verify a purchase above, or upgrade to unlock DJ BOOM, Real-Life Radio, and more.`;
+  }
+
+  const renewalDate = formatPremiumDate(status.projectedRenewalOrEndDate);
+  const estimateNote = status.isEstimatedDate ? ' (estimated from your billing cycle)' : '';
+
+  if (status.canceledAt) {
+    return renewalDate
+      ? `You cancelled your subscription. Premium will stay active until ${renewalDate}${estimateNote}, then your account will move to Free.`
+      : `You cancelled your subscription. Premium will remain active until your current billing period ends — refresh once Gumroad confirms the exact date.`;
+  }
+  if (status.status === 'trial' && status.trialUntil) {
+    return `You're on a free trial of ${planName}, running through ${formatPremiumDate(status.trialUntil)}.`;
+  }
+  if (status.status === 'grace_period') {
+    return `Your last payment had an issue. You're in a grace period${status.graceUntil ? ` until ${formatPremiumDate(status.graceUntil)}` : ''} — update your payment method on Gumroad to keep Premium.`;
+  }
+  return renewalDate
+    ? `Your ${planName} membership is active and will renew on ${renewalDate}${estimateNote}.`
+    : `Your ${planName} membership is active. Renewal date isn't available yet — refresh to check with Gumroad.`;
+}
+
+function pmRenderRow(id, value) {
+  const el = $(id);
+  if (el) el.textContent = (value === null || value === undefined || value === '') ? '—' : value;
+}
+
+function pmRenderTimeline(status) {
+  const wrap = $('pmTimeline');
+  if (!wrap) return;
+
+  const purchaseDate = formatPremiumDate(status.purchaseDate) || 'Unknown date';
+  const steps = [];
+
+  if (!status.isActive && !status.purchaseDate) {
+    wrap.innerHTML = `<div style="font-size:0.46rem;color:var(--text-muted);">No subscription history yet.</div>`;
+    return;
+  }
+
+  steps.push({ label: 'Purchased', sub: purchaseDate, state: 'done' });
+
+  if (status.canceledAt) {
+    steps.push({ label: 'Cancelled', sub: formatPremiumDate(status.canceledAt) || 'Recently', state: 'danger' });
+    steps.push({
+      label: 'Expires',
+      sub: formatPremiumDate(status.projectedRenewalOrEndDate) || 'Pending — refresh to check',
+      state: status.isActive ? 'current' : 'done',
+    });
+    steps.push({ label: 'Free Account', sub: status.isActive ? 'Not yet' : 'Now', state: status.isActive ? '' : 'current' });
+  } else {
+    steps.push({ label: 'Premium Active', sub: status.isActive ? 'Currently active' : 'No longer active', state: status.isActive ? 'done' : 'danger' });
+    steps.push({
+      label: 'Next Renewal',
+      sub: status.isActive ? (formatPremiumDate(status.projectedRenewalOrEndDate) || 'Refresh to check') : '—',
+      state: status.isActive ? 'current' : '',
+    });
+    steps.push({ label: 'Future Renewals', sub: status.isActive ? 'Continues automatically' : '—', state: '' });
+  }
+
+  wrap.innerHTML = steps.map(s => `
+    <div class="pm-timeline-step ${s.state ? 'pm-' + s.state : ''}">
+      <div class="pm-timeline-dot"></div>
+      <div>
+        <div class="pm-timeline-label">${s.label}</div>
+        <div class="pm-timeline-sub">${s.sub}</div>
+      </div>
+    </div>`).join('');
+}
+
+function pmStartCountdown(status) {
+  clearInterval(PM.countdownTimer);
+  const wrap = $('pmCountdownWrap');
+  const label = $('pmCountdownLabel');
+  const valueEl = $('pmCountdownValue');
+  if (!wrap || !valueEl) return;
+
+  const targetDate = status.isActive ? status.projectedRenewalOrEndDate : null;
+  if (!targetDate) {
+    wrap.style.display = 'none';
+    return;
+  }
+  wrap.style.display = '';
+  if (label) label.textContent = status.canceledAt ? 'Premium expires in' : 'Next renewal in';
+
+  const render = () => {
+    const days = pmDaysUntil(targetDate);
+    if (days === null) { valueEl.textContent = '—'; return; }
+    if (days <= 0) { valueEl.textContent = 'Today'; return; }
+    valueEl.textContent = `${days} day${days === 1 ? '' : 's'}`;
+    valueEl.style.color = status.canceledAt ? 'var(--accent2)' : 'var(--accent3)';
+  };
+  render();
+  // Re-render once a day is enough (the count is day-granularity anyway) —
+  // recomputing every hour would just show the same number until midnight.
+  PM.countdownTimer = setInterval(render, 60 * 60 * 1000);
+}
+
+function pmRenderBanner(status) {
+  const label = $('pmBannerLabel');
+  const dateEl = $('pmBannerDate');
+  const sub = $('pmBannerSub');
+  if (!label || !dateEl || !sub) return;
+
+  const projected = formatPremiumDate(status.projectedRenewalOrEndDate);
+  const estimateNote = status.isEstimatedDate ? 'Estimated from your billing cycle.' : '';
+
+  if (!status.isActive) {
+    label.textContent = 'Subscription';
+    dateEl.textContent = status.canceledAt ? 'Ended' : 'No active subscription';
+    sub.textContent = status.canceledAt ? 'Your Premium access has ended.' : '';
+    return;
+  }
+
+  if (status.canceledAt) {
+    label.textContent = 'Subscription ends on';
+    dateEl.textContent = projected || 'Renewal date unavailable.';
+    sub.textContent = projected
+      ? `You will continue enjoying Premium until this date. ${estimateNote}`
+      : 'Renewal date unavailable. Refresh subscription information.';
+    dateEl.style.color = 'var(--accent2)';
+    return;
+  }
+
+  label.textContent = 'Next billing';
+  dateEl.textContent = projected || 'Renewal date unavailable.';
+  sub.textContent = projected ? estimateNote : 'Renewal date unavailable. Refresh subscription information.';
+  dateEl.style.color = 'var(--text)';
+}
+
+function pmRenderAll(payload) {
+  const status = payload.premiumStatus || {};
+  PM.data = payload;
+
+  $('premiumManageLoading').style.display = 'none';
+  $('premiumManageBody').style.display = '';
+
+  pmRenderRow('pmPlan', status.plan || (status.isActive ? 'FREQ Premium' : 'Free'));
+  pmRenderRow('pmStatus', status.isActive
+    ? (status.canceledAt ? 'Cancelled' : status.status.charAt(0).toUpperCase() + status.status.slice(1).replace(/_/g, ' '))
+    : (status.canceledAt ? 'Expired' : 'Inactive'));
+  pmRenderRow('pmProvider', status.provider ? status.provider.charAt(0).toUpperCase() + status.provider.slice(1) : '—');
+  pmRenderRow('pmPurchaseDate', formatPremiumDate(status.purchaseDate));
+  pmRenderRow('pmInterval', pmFormatInterval(status.recurrence) || 'Unavailable');
+  pmRenderRow('pmAutoRenew', status.isActive ? (status.canceledAt ? 'Off' : 'On') : '—');
+  pmRenderRow('pmAge', pmFormatDuration(status.purchaseDate) || '—');
+  pmRenderRow('pmLastVerified', status.lastVerifiedAt ? pmFormatDateTime(status.lastVerifiedAt) : 'Never verified yet');
+
+  const renewalLabel = $('pmRenewalLabel');
+  if (renewalLabel) renewalLabel.textContent = status.canceledAt ? 'Cancellation Date' : 'Next Renewal Date';
+  pmRenderRow('pmRenewalDate', status.canceledAt
+    ? (formatPremiumDate(status.canceledAt) || 'Unavailable')
+    : (formatPremiumDate(status.projectedRenewalOrEndDate) || 'Renewal date unavailable.'));
+
+  const trialRow = $('pmTrialRow');
+  if (trialRow) {
+    if (status.status === 'trial' && status.trialUntil) {
+      trialRow.style.display = 'flex';
+      pmRenderRow('pmTrial', `Until ${formatPremiumDate(status.trialUntil)}`);
+    } else {
+      trialRow.style.display = 'none';
+    }
+  }
+
+  pmRenderBanner(status);
+  pmStartCountdown(status);
+  pmRenderTimeline(status);
+
+  const assistantEl = $('pmAssistantText');
+  if (assistantEl) assistantEl.textContent = pmAssistantMessage(status);
+
+  const manageLinkWrap = $('pmManageLinkWrap');
+  const manageLinkBtn = $('pmManageLinkBtn');
+  if (manageLinkWrap && manageLinkBtn) {
+    if (payload.manageUrl) {
+      manageLinkWrap.style.display = '';
+      manageLinkBtn.href = payload.manageUrl;
+    } else {
+      manageLinkWrap.style.display = 'none';
+    }
+  }
+
+  $('pmErrorBox').style.display = 'none';
+}
+
+async function loadPremiumManage() {
+  if (!AUTH.loggedIn || !AUTH.token) {
+    $('premiumManageLoading').textContent = 'Sign in to manage your subscription.';
+    $('premiumManageLoading').style.display = '';
+    $('premiumManageBody').style.display = 'none';
+    return;
+  }
+  try {
+    const res = await fetch(`/api/premium/manage?token=${encodeURIComponent(AUTH.token)}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not load subscription details.');
+    pmRenderAll(data);
+  } catch (err) {
+    $('premiumManageLoading').style.display = 'none';
+    $('premiumManageBody').style.display = '';
+    $('pmErrorBox').style.display = '';
+    $('pmErrorBox').textContent = String(err.message || err);
+  }
+}
+
+// "Refresh Subscription" — re-queries Gumroad live (same endpoint the
+// checkout-return flow uses) and re-renders in place, no page reload.
+async function refreshPremiumManage() {
+  const btn = $('pmRefreshBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Refreshing…'; }
+  try {
+    const res = await fetch('/api/premium/sync', { method: 'POST', headers: authHeaders(), body: JSON.stringify({}) });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) {
+      AUTH.isPremium = data.isPremium;
+      AUTH.premiumStatus = data.premiumStatus || AUTH.premiumStatus;
+      updateAuthUI();
+    }
+    // Reload the full manage payload regardless of sync outcome — it
+    // reflects whatever FREQ now has on file, which is the point of a
+    // "refresh" even if the sync call itself hit a transient provider error.
+    await loadPremiumManage();
+    if (res.ok) showToast('Subscription refreshed', 'Your subscription status is up to date.', 'success');
+  } catch (err) {
+    showToast('Refresh failed', "Couldn't reach the server. Please try again.", 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '🔄 Refresh Subscription'; }
+  }
+}
+
+// "Verify Purchase" inside the Manage dashboard — same underlying check as
+// hubVerifyPurchase() (POST /api/premium/verify), but reads from this
+// overlay's own email field rather than the Premium Hub's, since Manage can
+// be reached without ever opening the Hub's verify box first.
+async function pmVerifyPurchase() {
+  const btn = $('pmVerifyBtn');
+  const emailInput = $('pmVerifyEmail');
+  if (!AUTH.loggedIn || !AUTH.token) {
+    showToast('Sign in required', 'Sign in to verify a FREQ Premium purchase.', 'error');
+    return;
+  }
+  const email = emailInput ? emailInput.value.trim() : '';
+
+  if (btn) { btn.disabled = true; btn.textContent = 'Checking your Gumroad membership…'; }
+  try {
+    const res = await fetch('/api/premium/verify', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify(email ? { email } : {}),
+    });
+    const data = await res.json().catch(() => ({}));
+
+    if (res.ok && data.isPremium) {
+      AUTH.isPremium = true;
+      AUTH.premiumStatus = data.premiumStatus || AUTH.premiumStatus;
+      updateAuthUI();
+      await loadPremiumManage();
+      showToast('🎉 Welcome to FREQ Premium!', 'DJ BOOM, Real-Life Radio, Premium Badge, and 75 GB storage are unlocked.', 'success');
+      playSfx?.('success');
+    } else if (res.ok && !data.isPremium) {
+      showToast('No membership found', 'No active FREQ Premium membership was found for this account.', 'info');
+    } else {
+      showToast("Couldn't verify", data.error || "We couldn't verify your purchase right now. Please try again.", 'error');
+    }
+  } catch (_err) {
+    showToast("Couldn't verify", "We couldn't reach the server. Please try again.", 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Verify Purchase'; }
+  }
+}
+
+async function openPremiumManageOverlay() {
+  $('premiumManageOverlay')?.classList.add('open');
+  $('premiumManageLoading').textContent = 'Loading subscription details…';
+  $('premiumManageLoading').style.display = '';
+  $('premiumManageBody').style.display = 'none';
+  await loadPremiumManage();
+}
+
+function closePremiumManageOverlay() {
+  $('premiumManageOverlay')?.classList.remove('open');
+  clearInterval(PM.countdownTimer);
 }
 
 // ─── Premium Checkout ───────────────────────────────────────────────────────
@@ -14650,6 +15113,7 @@ document.addEventListener('keydown', e => {
   if ($('djBoomOverlay')?.classList.contains('open'))     { closeDjBoomOverlay(); return; }
   if ($('premiumHubOverlay')?.classList.contains('open')) { closePremiumHubOverlay(); return; }
   if ($('premiumCheckoutOverlay')?.classList.contains('open')) { closePremiumCheckout(); return; }
+  if ($('premiumManageOverlay')?.classList.contains('open')) { closePremiumManageOverlay(); return; }
 });
 
 // ─── 9. Topbar mini-visualizer toggle ────────────────────────────────────────
@@ -15520,7 +15984,7 @@ document.addEventListener('keydown', e => {
 })();
 
 // ─── Patch: Close new overlays via clicking outside ──────────────────────────
-['supportOverlay','aboutOverlay','settingsOverlay','lyricsOverlay','userProfileOverlay','artistProfileOverlay','becomeArtistOverlay','editArtistBioOverlay','manageCollaboratorsOverlay','publishTrackOverlay','trackAnalyticsOverlay','createReleaseOverlay','djBoomOverlay','premiumHubOverlay','premiumCheckoutOverlay','addEmailOverlay'].forEach(id => {
+['supportOverlay','aboutOverlay','settingsOverlay','lyricsOverlay','userProfileOverlay','artistProfileOverlay','becomeArtistOverlay','editArtistBioOverlay','manageCollaboratorsOverlay','publishTrackOverlay','trackAnalyticsOverlay','createReleaseOverlay','djBoomOverlay','premiumHubOverlay','premiumCheckoutOverlay','premiumManageOverlay','addEmailOverlay'].forEach(id => {
   const el = $(id);
   if (!el) return;
   el.addEventListener('click', e => { if (e.target === el) el.classList.remove('open'); });
