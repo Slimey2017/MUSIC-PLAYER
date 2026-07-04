@@ -3721,10 +3721,28 @@ body.oled-mode {
       <button class="admin-dash-tab"         id="adminTabReviewed" onclick="setAdminTab('reviewed')">Reviewed</button>
       <button class="admin-dash-tab"         id="adminTabActioned" onclick="setAdminTab('action_taken')">Actioned</button>
       <button class="admin-dash-tab"         id="adminTabDismissed" onclick="setAdminTab('dismissed')">Dismissed</button>
+      <button class="admin-dash-tab"         id="adminTabPresence" onclick="setAdminTab('presence')">Presence</button>
     </div>
     <div id="adminReportsList"><div class="empty-panel">Loading…</div></div>
     <div id="adminReportsLoadMore" style="display:none;margin-top:10px;">
       <button onclick="loadAdminReports(true)" style="width:100%;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.44rem;padding:8px;border-radius:var(--radius);cursor:pointer;">Load More</button>
+    </div>
+    <!-- Presence/activity tab content — separate container from
+         adminReportsList so switching to/from this tab doesn't need to
+         re-render or clobber the reports list's own state (its Load More
+         pagination, scroll position, etc). setAdminTab toggles which of
+         the two containers is visible. -->
+    <div id="adminPresencePanel" style="display:none;">
+      <div class="admin-stats-strip" style="margin-bottom:12px;">
+        <div class="admin-stat-pill"><span id="adminStatOnlineCount">—</span>Online now</div>
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:10px;">
+        <button class="admin-dash-tab active" id="adminPresenceSubtabOnline" onclick="setAdminPresenceSubtab('online')" style="flex:1;">Online Now</button>
+        <button class="admin-dash-tab" id="adminPresenceSubtabHistory" onclick="setAdminPresenceSubtab('history')" style="flex:1;">Join/Leave Log</button>
+        <button class="admin-dash-tab" id="adminPresenceSubtabViews" onclick="setAdminPresenceSubtab('views')" style="flex:1;">Page Views</button>
+        <button class="admin-dash-tab" id="adminPresenceSubtabPosts" onclick="setAdminPresenceSubtab('posts')" style="flex:1;">Who Posted</button>
+      </div>
+      <div id="adminPresenceContent"><div class="empty-panel">Loading…</div></div>
     </div>
   </div>
 </div>
@@ -9479,9 +9497,22 @@ function setAdminTab(status) {
   adminCurrentTab = status;
   adminCurrentOffset = 0;
   document.querySelectorAll('.admin-dash-tab').forEach(t => t.classList.remove('active'));
-  const tabIds = { pending: 'adminTabPending', reviewed: 'adminTabReviewed', action_taken: 'adminTabActioned', dismissed: 'adminTabDismissed' };
+  const tabIds = { pending: 'adminTabPending', reviewed: 'adminTabReviewed', action_taken: 'adminTabActioned', dismissed: 'adminTabDismissed', presence: 'adminTabPresence' };
   $(tabIds[status])?.classList.add('active');
-  loadAdminReports(false);
+
+  const reportsList = $('adminReportsList');
+  const reportsLoadMore = $('adminReportsLoadMore');
+  const presencePanel = $('adminPresencePanel');
+  if (status === 'presence') {
+    if (reportsList) reportsList.style.display = 'none';
+    if (reportsLoadMore) reportsLoadMore.style.display = 'none';
+    if (presencePanel) presencePanel.style.display = '';
+    loadAdminPresenceOnline();
+  } else {
+    if (reportsList) reportsList.style.display = '';
+    if (presencePanel) presencePanel.style.display = 'none';
+    loadAdminReports(false);
+  }
 }
 
 async function loadAdminStats() {
@@ -9495,6 +9526,113 @@ async function loadAdminStats() {
     $('adminStatDismissed').textContent = data.dismissed ?? '—';
   } catch (err) {
     console.error('[admin stats]', err);
+  }
+}
+
+// ── Admin Presence/Activity subtabs ─────────────────────────────────────────
+// Formats an ISO timestamp for the admin dashboard — absolute, not relative
+// ("2 min ago" drifts stale the moment the panel stops re-rendering), since
+// an admin reviewing this later needs the actual time, not a snapshot-time
+// relative label frozen at load.
+function adminFormatTimestamp(iso) {
+  if (!iso) return '—';
+  try {
+    return new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'medium' });
+  } catch (_e) { return iso; }
+}
+
+function setAdminPresenceSubtab(subtab) {
+  document.querySelectorAll('#adminPresencePanel .admin-dash-tab').forEach(t => t.classList.remove('active'));
+  const ids = { online: 'adminPresenceSubtabOnline', history: 'adminPresenceSubtabHistory', views: 'adminPresenceSubtabViews', posts: 'adminPresenceSubtabPosts' };
+  $(ids[subtab])?.classList.add('active');
+  if (subtab === 'online') loadAdminPresenceOnline();
+  else if (subtab === 'history') loadAdminPresenceHistory();
+  else if (subtab === 'views') loadAdminPageViews();
+  else if (subtab === 'posts') loadAdminActivity();
+}
+
+async function loadAdminPresenceOnline() {
+  const content = $('adminPresenceContent');
+  if (content) content.innerHTML = '<div class="empty-panel">Loading…</div>';
+  try {
+    const res = await fetch('/api/admin/presence', { headers: authHeaders() });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to load presence.');
+    if ($('adminStatOnlineCount')) $('adminStatOnlineCount').textContent = data.count ?? '—';
+    const rows = data.online || [];
+    if (!content) return;
+    if (!rows.length) { content.innerHTML = '<div class="empty-panel">No one is currently online.</div>'; return; }
+    content.innerHTML = rows.map(r => `
+      <div style="padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface2);margin-bottom:6px;display:flex;justify-content:space-between;align-items:center;gap:8px;">
+        <div>
+          <strong style="font-size:0.52rem;color:var(--text);">${r.username || 'guest'}</strong>
+          <div style="font-size:0.42rem;color:var(--text-muted);margin-top:2px;">Online since ${adminFormatTimestamp(r.first_seen_at)}</div>
+        </div>
+        <span style="font-size:0.4rem;color:var(--accent3);text-transform:uppercase;letter-spacing:0.05em;">● online</span>
+      </div>`).join('');
+  } catch (err) {
+    if (content) content.innerHTML = `<div class="empty-panel">${String(err.message || err)}</div>`;
+  }
+}
+
+async function loadAdminPresenceHistory() {
+  const content = $('adminPresenceContent');
+  if (content) content.innerHTML = '<div class="empty-panel">Loading…</div>';
+  try {
+    const res = await fetch('/api/admin/presence/history?limit=150', { headers: authHeaders() });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to load history.');
+    const rows = data.history || [];
+    if (!content) return;
+    if (!rows.length) { content.innerHTML = '<div class="empty-panel">No presence history yet.</div>'; return; }
+    content.innerHTML = rows.map(r => `
+      <div style="padding:7px 10px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface2);margin-bottom:6px;">
+        <strong style="font-size:0.5rem;color:var(--text);">${r.username || 'guest'}</strong>
+        <div style="font-size:0.42rem;color:var(--text-muted);margin-top:3px;">Joined ${adminFormatTimestamp(r.first_seen_at)} · Left ${adminFormatTimestamp(r.ended_at)}</div>
+      </div>`).join('');
+  } catch (err) {
+    if (content) content.innerHTML = `<div class="empty-panel">${String(err.message || err)}</div>`;
+  }
+}
+
+async function loadAdminPageViews() {
+  const content = $('adminPresenceContent');
+  if (content) content.innerHTML = '<div class="empty-panel">Loading…</div>';
+  try {
+    const res = await fetch('/api/admin/page-views?limit=200', { headers: authHeaders() });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to load page views.');
+    const rows = data.pageViews || [];
+    if (!content) return;
+    if (!rows.length) { content.innerHTML = '<div class="empty-panel">No page views logged yet.</div>'; return; }
+    content.innerHTML = rows.map(r => `
+      <div style="padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface2);margin-bottom:5px;display:flex;justify-content:space-between;gap:8px;">
+        <span style="font-size:0.48rem;color:var(--text);">${r.path}</span>
+        <span style="font-size:0.42rem;color:var(--text-muted);">${r.username || 'guest'} · ${adminFormatTimestamp(r.viewed_at)}</span>
+      </div>`).join('');
+  } catch (err) {
+    if (content) content.innerHTML = `<div class="empty-panel">${String(err.message || err)}</div>`;
+  }
+}
+
+async function loadAdminActivity() {
+  const content = $('adminPresenceContent');
+  if (content) content.innerHTML = '<div class="empty-panel">Loading…</div>';
+  try {
+    const res = await fetch('/api/admin/activity?limit=100', { headers: authHeaders() });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to load activity.');
+    const rows = data.activity || [];
+    if (!content) return;
+    if (!rows.length) { content.innerHTML = '<div class="empty-panel">No activity logged yet.</div>'; return; }
+    content.innerHTML = rows.map(r => `
+      <div style="padding:7px 10px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface2);margin-bottom:6px;">
+        <strong style="font-size:0.5rem;color:var(--text);">${r.actor}</strong>
+        <span style="font-size:0.46rem;color:var(--text-dim);"> · ${String(r.event_type || '').replace(/_/g, ' ')}</span>
+        <div style="font-size:0.42rem;color:var(--text-muted);margin-top:3px;">${adminFormatTimestamp(r.created_at)}${r.target_user ? ' · target: ' + r.target_user : ''}</div>
+      </div>`).join('');
+  } catch (err) {
+    if (content) content.innerHTML = `<div class="empty-panel">${String(err.message || err)}</div>`;
   }
 }
 
