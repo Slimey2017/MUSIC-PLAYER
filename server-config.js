@@ -46,6 +46,24 @@ function createFallbackSupabaseClient(options = {}) {
   const createQueryBuilder = (table, state, rows = [], pendingPatch = null, pendingError = null) => {
     const currentRows = normalizeRows(rows);
 
+    // Applies pendingPatch (set by .update()) to every row in currentRows,
+    // writes the result back into state[table], and persists it. Called
+    // lazily -- only when the query actually resolves (then/single/
+    // maybeSingle) -- so .update(patch).eq(a,1).eq(b,2) can chain as many
+    // filters as needed before anything is written, matching real
+    // Supabase/PostgREST semantics. A no-op when there's no pending patch
+    // (i.e. this is a plain select/read query, not an update).
+    const applyPendingUpdate = () => {
+      if (!pendingPatch) return currentRows;
+      const matchIds = new Set(currentRows.map(row => row.id).filter(Boolean));
+      const updated = normalizeRows(state[table]).map(row => (
+        row.id && matchIds.has(row.id) ? { ...row, ...pendingPatch } : row
+      ));
+      state[table] = updated;
+      saveStore(state);
+      return updated.filter(row => row.id && matchIds.has(row.id));
+    };
+
     const builder = {
       select: () => createQueryBuilder(table, state, currentRows, pendingPatch, pendingError),
       insert: payload => {
@@ -117,14 +135,14 @@ function createFallbackSupabaseClient(options = {}) {
         return Promise.resolve(makeResponse([]));
       },
       eq: (field, value) => {
+        // Always just narrow the row set and hand back another chainable
+        // builder — matching real Supabase/PostgREST semantics where
+        // .update(patch).eq(a, 1).eq(b, 2) chains multiple filters before
+        // anything executes. The actual write (when pendingPatch is set)
+        // happens lazily in applyPendingUpdate below, triggered only once
+        // the query is finally awaited/resolved — not on the first .eq().
         const filtered = currentRows.filter(row => row[field] === value);
-        if (pendingPatch) {
-          const updated = normalizeRows(state[table]).map(row => (filtered.some(match => match.id && row.id && match.id === row.id) ? ({ ...row, ...pendingPatch }) : row));
-          state[table] = updated;
-          saveStore(state);
-          return Promise.resolve(makeResponse(updated.filter(row => filtered.some(match => match.id && row.id && match.id === row.id))));
-        }
-        return createQueryBuilder(table, state, filtered, null, pendingError);
+        return createQueryBuilder(table, state, filtered, pendingPatch, pendingError);
       },
       gte: () => createQueryBuilder(table, state, currentRows, pendingPatch, pendingError),
       lte: () => createQueryBuilder(table, state, currentRows, pendingPatch, pendingError),
@@ -138,11 +156,11 @@ function createFallbackSupabaseClient(options = {}) {
       order: () => createQueryBuilder(table, state, currentRows, pendingPatch, pendingError),
       limit: () => createQueryBuilder(table, state, currentRows, pendingPatch, pendingError),
       range: () => createQueryBuilder(table, state, currentRows, pendingPatch, pendingError),
-      maybeSingle: () => Promise.resolve(pendingError ? makeResponse(null, pendingError) : makeResponse(currentRows[0] || null)),
-      single: () => Promise.resolve(pendingError ? makeResponse(null, pendingError) : makeResponse(currentRows[0] || null)),
-      then: (resolve, reject) => Promise.resolve(pendingError ? makeResponse(null, pendingError) : makeResponse(currentRows)).then(resolve, reject),
-      catch: reject => Promise.resolve(pendingError ? makeResponse(null, pendingError) : makeResponse(currentRows)).catch(reject),
-      finally: cb => Promise.resolve(pendingError ? makeResponse(null, pendingError) : makeResponse(currentRows)).finally(cb),
+      maybeSingle: () => Promise.resolve(pendingError ? makeResponse(null, pendingError) : makeResponse(applyPendingUpdate()[0] || null)),
+      single: () => Promise.resolve(pendingError ? makeResponse(null, pendingError) : makeResponse(applyPendingUpdate()[0] || null)),
+      then: (resolve, reject) => Promise.resolve(pendingError ? makeResponse(null, pendingError) : makeResponse(applyPendingUpdate())).then(resolve, reject),
+      catch: reject => Promise.resolve(pendingError ? makeResponse(null, pendingError) : makeResponse(applyPendingUpdate())).catch(reject),
+      finally: cb => Promise.resolve(pendingError ? makeResponse(null, pendingError) : makeResponse(applyPendingUpdate())).finally(cb),
     };
 
     return builder;
