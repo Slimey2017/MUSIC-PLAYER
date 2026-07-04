@@ -1314,6 +1314,28 @@ textarea.support-field { height:90px;resize:vertical; }
 .pco-step.active { display:block; animation: pcoFadeIn 0.25s ease; }
 @keyframes pcoFadeIn { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:translateY(0); } }
 
+/* FREQ-themed Gumroad overlay chrome. Gumroad's own checkout content loads
+   in a cross-origin iframe (gumroad.com), so none of FREQ's CSS can reach
+   *inside* it — the card/email form itself always looks like Gumroad's
+   own page. What we CAN theme is the chrome Gumroad's embed script builds
+   around that iframe on our page: the dimmed backdrop and the frame/box
+   the iframe sits in. Selectors target Gumroad's actual overlay class
+   names as documented/observed in their embed script (gumroad-overlay /
+   the iframe it injects) — if Gumroad changes these class names in a
+   future version of their script, this block simply stops matching and
+   silently falls back to Gumroad's stock look, it won't break checkout. */
+.gumroad-overlay {
+  background: rgba(0,0,0,0.92) !important;
+  backdrop-filter: blur(8px);
+  animation: pcoFadeIn 0.25s ease;
+}
+.gumroad-overlay iframe {
+  border-radius: 10px !important;
+  border: 1px solid var(--accent) !important;
+  box-shadow: 0 0 0 1px var(--border), 0 0 40px rgba(232,255,71,0.15), 0 20px 60px rgba(0,0,0,0.6) !important;
+  animation: pcoPop 0.4s cubic-bezier(0.34,1.56,0.64,1);
+}
+
 .pco-logo-row {
   display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:4px;
 }
@@ -4441,7 +4463,7 @@ body.oled-mode {
            dispatches a real click on it rather than faking the overlay any
            other way. Kept off-screen, not display:none, since some
            embed scripts skip binding to unrendered elements. -->
-      <a href="https://strickland717.gumroad.com/l/freq-premium" id="pcoGumroadLink" class="gumroad-button" data-gumroad-single-product="true"
+      <a href="https://strickland717.gumroad.com/l/freq-premium" id="pcoGumroadLink" class="gumroad-button" data-gumroad-overlay-checkout="true"
          style="position:absolute;width:1px;height:1px;overflow:hidden;opacity:0;pointer-events:none;">Buy</a>
     </div>
 
@@ -6575,18 +6597,11 @@ async function pcoLaunchGumroad() {
   // redirected instead of staying in-page on some browsers).
   try { localStorage.setItem('freq_pco_pending', '1'); } catch (_e) {}
 
-  // Prefer Gumroad's own overlay-open API when the embed script exposes
-  // it — more reliable than a synthetic click, which some browsers/embed
-  // versions treat as an untrusted event and refuse to intercept, falling
-  // through to native anchor navigation (the exact "sends me to the
-  // website" bug this replaces). Falls back to the click dispatch when
-  // the API isn't present, so this keeps working even if Gumroad changes
-  // or removes window.GumroadOverlay in a future version of their script.
-  if (window.GumroadOverlay && typeof window.GumroadOverlay.open === 'function') {
-    window.GumroadOverlay.open(link.href);
-  } else {
-    link.click();
-  }
+  // Gumroad's script binds its overlay handler to this element because it
+  // has data-gumroad-overlay-checkout="true" plus a real product href set
+  // at page load (see the markup) — a plain click is all that's needed to
+  // trigger the in-page overlay rather than a page navigation.
+  link.click();
   pcoStartPolling();
 }
 
