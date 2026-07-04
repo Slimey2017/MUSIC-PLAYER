@@ -4315,7 +4315,8 @@ body.oled-mode {
          match is found. Hidden once the account is already Premium. -->
     <div id="premiumHubVerifyRow" style="margin-top:10px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface2);">
       <div style="font-size:0.5rem;font-weight:700;color:var(--text);">Already purchased?</div>
-      <div style="font-size:0.44rem;color:var(--text-dim);margin-top:3px;margin-bottom:8px;line-height:1.5;">If you bought FREQ Premium on Gumroad and it hasn't unlocked here yet, verify your purchase.</div>
+      <div style="font-size:0.44rem;color:var(--text-dim);margin-top:3px;margin-bottom:8px;line-height:1.5;">If you bought FREQ Premium on Gumroad and it hasn't unlocked here yet, verify your purchase. If the email you paid with is different from this FREQ account, enter it below first — otherwise you can leave it blank.</div>
+      <input type="email" id="premiumHubVerifyEmail" placeholder="Email used at checkout (optional)" autocomplete="email" style="width:100%;box-sizing:border-box;margin-bottom:8px;padding:7px 9px;font-size:0.5rem;border-radius:var(--radius);border:1px solid var(--border);background:var(--surface);color:var(--text);">
       <button class="pco-btn-secondary" id="premiumHubVerifyBtn" style="margin-top:0;width:100%;" onclick="hubVerifyPurchase()">Verify Purchase</button>
       <div id="premiumHubVerifyResult" style="font-size:0.44rem;margin-top:8px;line-height:1.6;"></div>
     </div>
@@ -6326,18 +6327,30 @@ function closePremiumHubOverlay() {
 
 // "Already purchased? [Verify Purchase]" — calls POST /api/premium/verify,
 // a live Gumroad API lookup (matches by purchaser email or the "FREQ
-// Username" custom field). No webhook involved and no manual approval:
-// if Gumroad reports an active membership for this account, Premium
-// unlocks immediately and AUTH is refreshed in place — no reload, no
-// re-login. Covers someone who bought on Gumroad directly (skipping the
-// in-app checkout flow) or whose in-app purchase didn't auto-activate.
+// Username" custom field). If the optional email box is filled in, that
+// email is sent and takes priority over anything already on file for this
+// one lookup — covers the common case where the Gumroad purchase email
+// differs from this FREQ account's saved email (or nothing is saved yet).
+// No webhook involved and no manual approval: if Gumroad reports an active
+// membership, Premium unlocks immediately and AUTH is refreshed in place —
+// no reload, no re-login. Covers someone who bought on Gumroad directly
+// (skipping the in-app checkout flow) or whose in-app purchase didn't
+// auto-activate.
 async function hubVerifyPurchase() {
   const btn = $('premiumHubVerifyBtn');
   const resultEl = $('premiumHubVerifyResult');
+  const emailInput = $('premiumHubVerifyEmail');
   if (!AUTH.loggedIn || !AUTH.token) {
     showToast('Sign in required', 'Sign in to verify a FREQ Premium purchase.', 'error');
     return;
   }
+  // Optional — only sent if the person typed something. Lets a purchase
+  // made with a different email than this FREQ account still be found;
+  // left blank, verification falls back to username-only matching same
+  // as before. Trimmed client-side; the server re-validates and silently
+  // ignores anything that isn't email-shaped rather than erroring.
+  const email = emailInput ? emailInput.value.trim() : '';
+
   if (btn) { btn.disabled = true; btn.textContent = 'Checking your Gumroad membership…'; }
   if (resultEl) resultEl.innerHTML = '<span class="pco-spinner" style="width:12px;height:12px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:6px;"></span>Checking your Gumroad membership…';
 
@@ -6345,6 +6358,7 @@ async function hubVerifyPurchase() {
     const res = await fetch('/api/premium/verify', {
       method: 'POST',
       headers: authHeaders(),
+      body: JSON.stringify(email ? { email } : {}),
     });
     const data = await res.json().catch(() => ({}));
 
