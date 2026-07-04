@@ -127,6 +127,15 @@ const PORT = process.env.PORT || 3000;
 // webhook delivery.
 const GUMROAD_CHECKOUT_URL = process.env.GUMROAD_CHECKOUT_URL || 'https://strickland717.gumroad.com/l/freq-premium';
 
+// Where a Gumroad customer actually manages/cancels their own membership.
+// Gumroad has no per-seller "customer billing portal" API (unlike Stripe's
+// Billing Portal) — cancellation is entirely self-service on Gumroad's own
+// site, via either the buyer's Library (if they made a Gumroad account) or
+// the "Manage membership" link on their purchase receipt email. This is the
+// one true destination for both, so FREQ points there rather than
+// pretending to offer in-app cancellation it has no API to perform.
+const GUMROAD_MANAGE_URL = 'https://app.gumroad.com/library';
+
 // ─── Middleware ───────────────────────────────────────────────────────────────
 const captureRawBody = (req, _res, buf, encoding) => {
   if (!buf || !buf.length) return;
@@ -306,7 +315,7 @@ async function dbGetPremiumSubscription(provider, providerPurchaseId) {
   return data || null;
 }
 
-async function dbCreatePremiumSubscription({ username, provider, providerCustomerId, providerPurchaseId, purchaserEmail, purchaseDate, plan, isTestPurchase }) {
+async function dbCreatePremiumSubscription({ username, provider, providerCustomerId, providerPurchaseId, purchaserEmail, purchaseDate, plan, recurrence, isTestPurchase }) {
   const { data, error } = await supabase.from('premium_subscriptions').insert({
     username,
     provider,
@@ -315,6 +324,7 @@ async function dbCreatePremiumSubscription({ username, provider, providerCustome
     purchaser_email: purchaserEmail,
     purchase_date: purchaseDate ? new Date(purchaseDate).toISOString() : new Date().toISOString(),
     plan,
+    recurrence: recurrence || null,
     is_test_purchase: !!isTestPurchase,
     created_at: new Date().toISOString(),
   }).select().single();
@@ -339,12 +349,19 @@ async function dbActivatePremiumAccount(username, plan, provider, providerCustom
   if (extra.cancelledAt) patch.premium_cancelled_at = new Date(extra.cancelledAt).toISOString();
   if (extra.failureReason) patch.premium_failure_reason = extra.failureReason;
   if (extra.lastEventType) patch.premium_last_event = extra.lastEventType;
+  // Billing cadence ('monthly'/'yearly'/etc), used only to project an
+  // estimated next-renewal date client-side — never treated as an exact
+  // provider-confirmed charge date. `extra.recurrence` is allowed to be
+  // explicitly null (provider stopped reporting a recognizable interval,
+  // e.g. after switching plans), so this checks `!== undefined` rather
+  // than truthiness like the fields above.
+  if (extra.recurrence !== undefined) patch.premium_recurrence = extra.recurrence;
 
   const { error } = await supabase.from('accounts').update(patch).eq('username', normalizeUsername(username));
   if (error) throw new Error(error.message);
 }
 
-async function dbUpdatePremiumSubscriptionMetadata({ username, provider, providerPurchaseId, status, cancelledAt, expiresAt, graceUntil, trialUntil, failureReason, lastEventType }) {
+async function dbUpdatePremiumSubscriptionMetadata({ username, provider, providerPurchaseId, status, cancelledAt, expiresAt, graceUntil, trialUntil, recurrence, failureReason, lastEventType }) {
   if (!providerPurchaseId) return;
   const patch = {};
   if (status) patch.status = status;
@@ -352,6 +369,7 @@ async function dbUpdatePremiumSubscriptionMetadata({ username, provider, provide
   if (expiresAt) patch.expires_at = new Date(expiresAt).toISOString();
   if (graceUntil) patch.grace_until = new Date(graceUntil).toISOString();
   if (trialUntil) patch.trial_until = new Date(trialUntil).toISOString();
+  if (recurrence !== undefined) patch.recurrence = recurrence;
   if (failureReason) patch.failure_reason = failureReason;
   if (lastEventType) patch.last_event_type = lastEventType;
   if (username) patch.username = normalizeUsername(username);
@@ -381,19 +399,93 @@ async function dbTouchPremiumVerifiedAt(username) {
   if (error) console.warn('[db] touchPremiumVerifiedAt (non-fatal, likely missing column):', error.message);
 }
 
+// Number of calendar months to advance for each recognized recurrence
+// value — used only to *project* a next-renewal date from a known purchase
+// date, never as a substitute for a real provider-reported charge date.
+const RECURRENCE_MONTHS = {
+  monthly: 1,
+  quarterly: 3,
+  biannually: 6,
+  yearly: 12,
+};
+
+// Adds `months` calendar months to `date`, matching the way billing
+// providers roll a subscription forward (e.g. Jan 31 + 1 month → Feb 28,
+// not Mar 3). Used for both the "next renewal" projection (active
+// subscriptions) and the "access ends" projection (cancelled ones), since
+// both are "purchase date advanced by N billing periods."
+function addMonths(date, months) {
+  const d = new Date(date.getTime());
+  const day = d.getUTCDate();
+  d.setUTCMonth(d.getUTCMonth() + months);
+  // If the day rolled over (e.g. Jan 31 -> Mar 3 because Feb has no 31st),
+  // pull back to the last day of the intended month instead.
+  if (d.getUTCDate() !== day) d.setUTCDate(0);
+  return d;
+}
+
+// Projects the next billing-cycle boundary strictly after `now` by walking
+// forward from `purchaseDate` in `intervalMonths`-month steps. Used both to
+// project when an *active* subscription will next renew, and — for a
+// cancelled one — to project when the current (already-paid-for) period
+// runs out, since Gumroad and most providers let a cancelled membership
+// keep access until the end of the period it already paid for.
+function projectNextBillingDate(purchaseDate, intervalMonths, now = new Date()) {
+  if (!purchaseDate || !intervalMonths) return null;
+  const start = new Date(purchaseDate);
+  if (Number.isNaN(start.getTime())) return null;
+
+  let next = start;
+  // Bounded to 1000 iterations (83+ years of monthly cycles) purely as a
+  // sanity backstop against a corrupt/garbage purchase date looping forever
+  // — normal accounts resolve in a handful of steps.
+  for (let i = 0; i < 1000; i++) {
+    next = addMonths(next, intervalMonths);
+    if (next.getTime() > now.getTime()) return next.toISOString();
+  }
+  return null;
+}
+
 function getPremiumStatusFromAccount(account) {
   const status = String(account?.premium_status || account?.premium_state || '').toLowerCase();
+  const recurrence = account?.premium_recurrence || null;
+  const intervalMonths = RECURRENCE_MONTHS[recurrence] || null;
+  const purchaseDate = account?.premium_purchase_date || null;
+  const cancelledAt = account?.premium_cancelled_at || null;
+  const isActive = !!account?.is_premium;
+
+  // Only project a date when we have both a known interval and a purchase
+  // date to project from — otherwise leave it null rather than guessing,
+  // so the frontend can show an honest "unavailable" state instead of a
+  // fabricated one.
+  const projectedDate = (isActive && purchaseDate && intervalMonths)
+    ? projectNextBillingDate(purchaseDate, intervalMonths)
+    : null;
+
   return {
-    isActive: !!account?.is_premium,
-    status: status || (account?.is_premium ? 'active' : 'inactive'),
+    isActive,
+    status: status || (isActive ? 'active' : 'inactive'),
     plan: account?.premium_plan || null,
     provider: account?.premium_provider || null,
+    purchaseDate,
     expiresAt: account?.premium_expires_at || null,
     graceUntil: account?.premium_grace_until || null,
     trialUntil: account?.premium_trial_until || null,
-    canceledAt: account?.premium_cancelled_at || null,
+    canceledAt: cancelledAt,
+    recurrence,
+    // isActive && !cancelledAt  → this is a forward "next charge" projection.
+    // isActive && cancelledAt   → this is "when current access runs out"
+    //                             (same math: purchase date + N periods),
+    //                             since a cancelled Gumroad membership keeps
+    //                             access through its already-paid period.
+    // Either way it's an ESTIMATE derived from purchase date + recurrence,
+    // not a value the provider hands back directly — the frontend must
+    // label it as such.
+    projectedRenewalOrEndDate: projectedDate,
+    isEstimatedDate: !!projectedDate,
     failureReason: account?.premium_failure_reason || null,
     lastEventType: account?.premium_last_event || null,
+    lastVerifiedAt: account?.premium_last_verified_at || null,
   };
 }
 
@@ -3632,6 +3724,52 @@ app.get('/api/premium/history', async (req, res) => {
   } catch (err) {
     console.error('[premium history]', err);
     return res.status(500).json({ error: 'Could not load billing history.' });
+  }
+});
+
+// Powers the Premium "Manage Subscription" dashboard (the Self Serve
+// button). Deliberately read-only and side-effect-free — it does NOT
+// re-verify against Gumroad (that's what "Refresh Subscription" /
+// POST /api/premium/sync is for); this just hands back what FREQ already
+// has on file, plus the one real "manage your subscription" destination
+// that exists for a Gumroad-billed membership. There is no per-customer
+// Gumroad billing-portal API to redirect into (Gumroad's own docs: buyers
+// manage/cancel via their Library or their purchase receipt, not a URL a
+// third-party app can deep-link a specific customer into) — so
+// manageUrl is always the general Gumroad Library, which is accurate for
+// every FREQ Premium customer regardless of which sale/email they used.
+app.get('/api/premium/manage', async (req, res) => {
+  const token = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token.' });
+  try {
+    const acct = await dbGetAccount(sess.username);
+    if (!acct) return res.status(401).json({ error: 'Authentication required.' });
+
+    const premiumStatus = getPremiumStatusFromAccount(acct);
+    const provider = String(acct.premium_provider || '').toLowerCase();
+
+    // Provider-specific management destination. Gumroad is the only
+    // implemented provider today (see lib/premium-providers), so this is
+    // effectively always the Gumroad Library — but kept as a lookup rather
+    // than a hardcoded value so a future Stripe/Paddle provider (which DO
+    // have real per-customer billing-portal APIs) can plug in a proper
+    // session-scoped portal URL here without touching the frontend.
+    const manageUrl = provider === 'gumroad' ? GUMROAD_MANAGE_URL : null;
+
+    return res.json({
+      isPremium: !!acct.is_premium,
+      premiumStatus,
+      manageUrl,
+      // Tells the frontend whether cancellation can happen without leaving
+      // FREQ. False for every provider today (including Gumroad) — kept
+      // explicit rather than inferred from `provider` so the frontend
+      // doesn't need its own copy of "which providers support what."
+      supportsInAppCancellation: false,
+    });
+  } catch (err) {
+    console.error('[premium manage]', err);
+    return res.status(500).json({ error: 'Could not load subscription management info.' });
   }
 });
 
