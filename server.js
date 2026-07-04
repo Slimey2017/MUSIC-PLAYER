@@ -59,6 +59,9 @@
  *                                               provider reports no active membership.
  * GET    /api/premium/history                  ?token=   → { history: [...] }
  * GET    /api/premium/config                                → { checkoutUrl }  (Gumroad product URL, no secrets)
+ * POST   /api/account/email                    Authenticated. { email } → sets/updates accounts.email. Used both
+ *                                               by signup-era accounts adding a required email retroactively and
+ *                                               as the general "change my email" endpoint.
  * GET    /api/charts/tracks                    ?window=all|7d&limit=
  *
  * GET    /api/discover/playlists                ?sort=likes|recent&limit=
@@ -246,6 +249,44 @@ async function dbGetAccount(username) {
   return data || null;
 }
 
+// Normalizes an email the same way for every lookup/write: trimmed,
+// lowercased. Mirrors normalizeUsername's role for usernames — anything
+// that turns raw email input into a comparison/storage value MUST go
+// through this, so "User@X.com" at signup and "user@x.com" at a later
+// lookup are always treated as the same address (this also matches the
+// accounts_email_unique_idx migration, which indexes lower(email)).
+function normalizeEmail(email) {
+  return (email || '').trim().toLowerCase();
+}
+
+// Very loose shape check, shared by signup (where it gates account
+// creation) and premium verify (where it only decides which email to
+// search a provider by). Deliberately not strict RFC 5322 validation —
+// the real confirmation that an email is genuine is that mail sent to it
+// works, which this app doesn't (yet) verify via a confirmation link, and
+// for premium verify the address is never trusted/stored unless a provider
+// itself confirms it as the purchaser email on a matched sale. Just enough
+// to reject empty/garbage input before it goes into a query or a fetch().
+function looksLikeEmail(value) {
+  return typeof value === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim()) && value.trim().length <= 254;
+}
+
+// Used at signup to reject a duplicate email up front with a clean 409,
+// the same pattern dbGetAccount()+the existing-username check already uses
+// — see the accounts_email_unique_idx migration for the DB-level backstop
+// this pre-check is meant to make unnecessary in the common case.
+async function dbGetAccountByEmail(email) {
+  const key = normalizeEmail(email);
+  if (!key) return null;
+  const { data, error } = await supabase
+    .from('accounts')
+    .select('*')
+    .ilike('email', key)
+    .maybeSingle();
+  if (error && error.code !== 'PGRST116') console.error('[db] getAccountByEmail:', error.message);
+  return data || null;
+}
+
 async function dbGetPremiumSubscription(provider, providerPurchaseId) {
   const { data, error } = await supabase
     .from('premium_subscriptions')
@@ -363,9 +404,9 @@ const premiumDb = {
   getPremiumStatusFromAccount,
 };
 
-async function dbCreateAccount(username, displayName, salt, hash) {
+async function dbCreateAccount(username, displayName, salt, hash, email) {
   const { error } = await supabase.from('accounts').insert({
-    username, display_name: displayName, salt, hash, created_at: new Date().toISOString()
+    username, display_name: displayName, salt, hash, email: email || null, created_at: new Date().toISOString()
   });
   if (error) throw new Error(error.message);
 }
@@ -2920,7 +2961,7 @@ app.get('/api/yt/embed-check', rateLimit, async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 app.post('/api/auth/signup', rateLimit, async (req, res) => {
-  const { username, displayName, password } = req.body;
+  const { username, displayName, password, email } = req.body;
   if (!username || !password)
     return res.status(400).json({ error: 'Username and password required.' });
 
@@ -2930,14 +2971,29 @@ app.post('/api/auth/signup', rateLimit, async (req, res) => {
   if (password.length < 4)
     return res.status(400).json({ error: 'Password must be at least 4 characters.' });
 
+  // Email is required going forward — it's the one identifier a Premium
+  // provider (Gumroad, etc.) can actually confirm, and username alone has
+  // proven unreliable for that (see the "Already purchased?" flow in
+  // lib/premiumVerification.js). Existing pre-email accounts are untouched
+  // — this only gates *new* signups, not a forced migration for everyone
+  // already on FREQ.
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail)
+    return res.status(400).json({ error: 'Email is required.' });
+  if (!looksLikeEmail(normalizedEmail))
+    return res.status(400).json({ error: 'Please enter a valid email address.' });
+
   try {
     const existing = await dbGetAccount(key);
     if (existing) return res.status(409).json({ error: 'Username already taken.' });
 
+    const existingEmail = await dbGetAccountByEmail(normalizedEmail);
+    if (existingEmail) return res.status(409).json({ error: 'An account with that email already exists.' });
+
     const salt        = generateSalt();
     const hash        = await hashPassword(password, salt);
     const dName       = (displayName || '').trim() || key;
-    await dbCreateAccount(key, dName, salt, hash);
+    await dbCreateAccount(key, dName, salt, hash, normalizedEmail);
     try {
       await dbCreateProfile(key, dName);
     } catch (profileErr) {
@@ -2955,6 +3011,23 @@ app.post('/api/auth/signup', rateLimit, async (req, res) => {
     }
     await dbSetPlaylists(key, []);
 
+    // Seed premium_email from the account's login email so a brand-new
+    // signup already has an email on file for provider lookups (Gumroad
+    // matches by purchaser email as a fallback to the FREQ Username custom
+    // field — see lib/premium-providers/gumroad.js). This is only a
+    // starting point: activateFromMembership in premiumVerification.js
+    // will overwrite it with whatever email a provider actually confirms
+    // once a real purchase is matched, so the two can diverge later if the
+    // person pays with a different address.
+    try {
+      await supabase.from('accounts').update({ premium_email: normalizedEmail }).eq('username', key);
+    } catch (seedErr) {
+      // Non-fatal — worst case a brand-new account just falls back to
+      // username-only matching until "Already purchased?" or a future
+      // purchase fills premium_email in some other way.
+      console.warn('[signup] could not seed premium_email (non-fatal):', seedErr?.message || seedErr);
+    }
+
     const token     = generateToken();
     const expiresAt = Date.now() + TOKEN_TTL;
     await dbCreateSession(token, key, expiresAt);
@@ -2964,8 +3037,10 @@ app.post('/api/auth/signup', rateLimit, async (req, res) => {
       token,
       username: key,
       displayName: dName,
+      email: normalizedEmail,
       isPremium: !!acct?.is_premium,
       premiumStatus: getPremiumStatusFromAccount(acct),
+      emailRequired: false,
     });
   } catch (err) {
     console.error('[signup]', err);
@@ -2976,22 +3051,39 @@ app.post('/api/auth/signup', rateLimit, async (req, res) => {
 app.post('/api/auth/signin', rateLimit, async (req, res) => {
   const { username, password } = req.body;
   if (!username || !password)
-    return res.status(400).json({ error: 'Username and password required.' });
+    return res.status(400).json({ error: 'Username or email and password required.' });
 
-  const key  = normalizeUsername(username);
+  // Accept either a username or an email in the same field — the frontend
+  // still just calls it "username" (see #signinUsername), but the account
+  // may have been found by whichever identifier the person typed. Try
+  // username first since it's the more common/faster path (single indexed
+  // lookup by primary key) and the shape check is cheap; fall back to an
+  // email lookup only if that first attempt found nothing and the input
+  // actually looks like an email, so a typo'd username doesn't silently
+  // turn into an unnecessary second query for the common failure case.
+  const rawIdentifier = String(username);
+  const key = normalizeUsername(rawIdentifier);
   try {
-    const acct = await dbGetAccount(key);
-    if (!acct) return res.status(401).json({ error: 'No account found with that username.' });
+    let acct = key ? await dbGetAccount(key) : null;
+    if (!acct && looksLikeEmail(rawIdentifier)) {
+      acct = await dbGetAccountByEmail(rawIdentifier);
+    }
+    if (!acct) return res.status(401).json({ error: 'No account found with that username or email.' });
     if (acct.is_banned) return res.status(403).json({ error: 'This account has been suspended.' });
 
     const hash = await hashPassword(password, acct.salt);
     if (hash !== acct.hash) return res.status(401).json({ error: 'Incorrect password.' });
 
+    // The account's own username is the canonical key from here on —
+    // sessions/playlists/etc are all keyed by it regardless of which
+    // identifier was used to sign in.
+    const acctKey = acct.username;
+
     const token     = generateToken();
     const expiresAt = Date.now() + TOKEN_TTL;
-    await dbCreateSession(token, key, expiresAt);
-    const playlists = await dbGetPlaylists(key);
-    dbEnsureProfile(key, acct.display_name); // fire-and-forget self-heal — see dbEnsureProfile's comment
+    await dbCreateSession(token, acctKey, expiresAt);
+    const playlists = await dbGetPlaylists(acctKey);
+    dbEnsureProfile(acctKey, acct.display_name); // fire-and-forget self-heal — see dbEnsureProfile's comment
 
     // Silently re-verify Premium against the provider if it's due (throttled
     // internally — see PREMIUM_REVERIFY_INTERVAL_MS). Covers: a cancelled
@@ -3001,22 +3093,72 @@ app.post('/api/auth/signin', rateLimit, async (req, res) => {
     let acctForResponse = acct;
     try {
       const verifyResult = await verifyPremiumIfDue(premiumDb, acct);
-      if (verifyResult) acctForResponse = await dbGetAccount(key);
+      if (verifyResult) acctForResponse = await dbGetAccount(acctKey);
     } catch (verifyErr) {
       console.error('[signin] premium reverify failed (non-fatal):', verifyErr?.message || verifyErr);
     }
 
     return res.json({
       token,
-      username: key,
+      username: acctKey,
       displayName: acctForResponse.display_name,
       playlists,
       isPremium: !!acctForResponse.is_premium,
       premiumStatus: getPremiumStatusFromAccount(acctForResponse),
+      // True for accounts created before email became required (or that
+      // somehow still lack one) — lets the frontend show a one-time,
+      // non-blocking "add your email" prompt after login rather than
+      // gating sign-in itself. See POST /api/account/email.
+      emailRequired: !acctForResponse.email,
     });
   } catch (err) {
     console.error('[signin]', err);
     return res.status(500).json({ error: 'Server error during sign in.' });
+  }
+});
+
+// Lets an existing (pre-email) account add the now-required email without
+// needing to sign up again or lose any data. Also usable to update an
+// account's email later in general — there's no separate "change email"
+// endpoint, this is that endpoint. Requires an authenticated session;
+// nothing here ever infers or guesses an email on the person's behalf.
+app.post('/api/account/email', rateLimit, async (req, res) => {
+  const token = (req.headers.authorization || '').replace('Bearer ', '') || req.body?.token;
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Authentication required.' });
+
+  const normalizedEmail = normalizeEmail(req.body?.email);
+  if (!normalizedEmail) return res.status(400).json({ error: 'Email is required.' });
+  if (!looksLikeEmail(normalizedEmail)) return res.status(400).json({ error: 'Please enter a valid email address.' });
+
+  try {
+    const acct = await dbGetAccount(sess.username);
+    if (!acct) return res.status(401).json({ error: 'Authentication required.' });
+
+    const existingEmail = await dbGetAccountByEmail(normalizedEmail);
+    if (existingEmail && existingEmail.username !== acct.username) {
+      return res.status(409).json({ error: 'An account with that email already exists.' });
+    }
+
+    const { error } = await supabase.from('accounts').update({ email: normalizedEmail }).eq('username', acct.username);
+    if (error) throw new Error(error.message);
+
+    // Only backfill premium_email if the account doesn't already have one
+    // — an account that's already linked to a confirmed purchaser email
+    // (via activateFromMembership) shouldn't have that silently overwritten
+    // just because the person updated their login email separately.
+    if (!acct.premium_email) {
+      try {
+        await supabase.from('accounts').update({ premium_email: normalizedEmail }).eq('username', acct.username);
+      } catch (seedErr) {
+        console.warn('[account/email] could not seed premium_email (non-fatal):', seedErr?.message || seedErr);
+      }
+    }
+
+    return res.json({ email: normalizedEmail });
+  } catch (err) {
+    console.error('[account/email]', err);
+    return res.status(500).json({ error: 'Could not update email right now. Please try again.' });
   }
 });
 
@@ -3290,6 +3432,7 @@ app.post('/api/auth/token-refresh', async (req, res) => {
     username: sess.username,
     isPremium: !!acct?.is_premium,
     premiumStatus: getPremiumStatusFromAccount(acct),
+    emailRequired: !acct?.email,
   });
 });
 
@@ -3325,16 +3468,6 @@ app.post('/api/auth/sync', async (req, res) => {
 // nothing here ever lets the client set is_premium directly. The only way
 // Premium gets turned on is a provider lookup coming back with an active
 // membership inside verifyPremiumNow/activateFromMembership.
-// Very loose shape check — this is only ever used to pick which email to
-// search a provider by, never stored unless the provider itself confirms
-// it as the purchaser email on a matched sale (see activateFromMembership
-// in lib/premiumVerification.js), so there's no need for strict RFC 5322
-// validation here. Just enough to reject empty/garbage input before it
-// goes anywhere near a fetch() call.
-function looksLikeEmail(value) {
-  return typeof value === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim()) && value.trim().length <= 254;
-}
-
 async function handlePremiumVerifyRequest(req, res, routeLabel) {
   const token = (req.headers.authorization || '').replace('Bearer ', '') || req.body?.token || req.query.token;
   const sess = await dbGetSession(token);
