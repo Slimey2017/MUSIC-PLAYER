@@ -80,6 +80,8 @@ const multer   = require('multer');
 // node-fetch not needed — Node v18+ has native fetch built in
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { createSupabaseClientFromEnv, createFallbackSupabaseClient } = require('./server-config');
+const { verifyPremiumNow, verifyPremiumIfDue } = require('./lib/premiumVerification');
+const { getConfiguredProviders } = require('./lib/premium-providers');
 
 // ─── Supabase client (server-side only — uses service role key) ───────────────
 const supabase = createSupabaseClientFromEnv(process.env) || createFallbackSupabaseClient();
@@ -102,6 +104,12 @@ const PORT = process.env.PORT || 3000;
 // rather than an HTML edit. Falls back to the current live product if the
 // env var isn't set, so checkout doesn't silently break in an environment
 // that hasn't been configured yet.
+//
+// NOTE: this URL is only where the *checkout page itself* lives. Premium
+// activation no longer depends on Gumroad calling back to us at all — see
+// lib/premiumVerification.js and POST /api/premium/verify below, which pull
+// membership status directly from Gumroad's API instead of waiting on a
+// webhook delivery.
 const GUMROAD_CHECKOUT_URL = process.env.GUMROAD_CHECKOUT_URL || 'https://strickland717.gumroad.com/l/freq-premium';
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
@@ -114,169 +122,6 @@ const captureRawBody = (req, _res, buf, encoding) => {
 
 app.use(cors());
 app.get('/health', (_req, res) => res.json({ ok: true, service: 'freq' }));
-app.post('/api/gumroad/webhook',
-  express.raw({
-    type: ['application/json', 'application/x-www-form-urlencoded', 'text/plain', 'application/octet-stream'],
-    limit: '35mb',
-    verify: captureRawBody,
-  }),
-  async (req, res) => {
-    const contentType = req.headers['content-type'] || '';
-    const signatureHeader = getGumroadSignature(req);
-    const rawBodyExists = Boolean(req.rawBodyBuffer || req.rawBody);
-    const bodyKind = Buffer.isBuffer(req.body)
-      ? 'raw-buffer'
-      : (typeof req.body === 'string'
-        ? 'raw-text'
-        : (req.body && typeof req.body === 'object' ? 'parsed-json' : 'empty'));
-
-    console.log('[gumroad webhook] request headers', req.headers);
-    console.log('[gumroad webhook] content-type', contentType);
-    console.log('[gumroad webhook] signature header', signatureHeader);
-    console.log('[gumroad webhook] rawBody exists', rawBodyExists);
-    console.log('[gumroad webhook] req.body kind', bodyKind);
-
-    if (!verifyGumroadWebhook(req)) {
-      console.warn('[gumroad webhook] invalid signature or missing raw body');
-      return res.status(401).json({ error: 'Invalid Gumroad webhook signature.' });
-    }
-
-    const payload = parseGumroadPayload(req);
-    const eventName = payload.event_name || payload.event || payload.type || payload.event_type;
-    const normalizedEvent = String(eventName || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
-    const purchaseId = payload.sale_id || payload.purchase_id || payload.id || payload.purchase?.id || payload.subscription?.id || payload.subscription_id || payload.order_id || null;
-    const purchaserEmail = payload.email || payload.purchaser_email || payload.purchaser_email_address || payload.purchase_email || null;
-    const providerCustomerId = payload.customer_id || payload.buyer_id || payload.purchaser_id || payload.user_id || payload.customer?.id || payload.subscription?.customer_id || null;
-    const purchaseDate = payload.purchase_time || payload.purchased_at || payload.payment_date || payload.purchase_date || payload.created_at || payload.subscription?.started_at || null;
-    const expiresAt = payload.expires_at || payload.expiresAt || payload.ends_at || payload.end_date || payload.subscription?.expires_at || payload.subscription?.ends_at || null;
-    const graceUntil = payload.grace_period_ends_at || payload.grace_until || payload.grace_period_end || payload.subscription?.grace_period_ends_at || null;
-    const trialUntil = payload.trial_ends_at || payload.trial_end || payload.trial_until || payload.subscription?.trial_ends_at || null;
-    const cancelledAt = payload.canceled_at || payload.cancelled_at || payload.subscription?.canceled_at || payload.subscription?.cancelled_at || null;
-    const username = findGumroadUsername(payload);
-    const plan = payload.plan_name || payload.plan || payload.subscription_plan || payload.subscription?.plan_name || payload.subscription?.plan || 'FREQ Premium';
-    const failureReason = payload.failure_reason || payload.reason || payload.error || null;
-
-    if (isGumroadPingPayload(payload)) {
-      console.log('[gumroad webhook] accepted ping', { eventName, purchaseId });
-      return res.json({ ok: true, message: 'Ping accepted.' });
-    }
-
-    const handledEvents = new Set([
-      'sale', 'sale_completed', 'purchase', 'payment', 'payment_succeeded', 'charge_succeeded',
-      'subscription_created', 'subscription_updated', 'subscription_renewed', 'subscription_reactivated',
-      'subscription_cancelled', 'subscription_canceled', 'subscription_ended', 'subscription_expired',
-      'payment_failed', 'charge_failed', 'subscription_failed', 'subscription_period_ending', 'payment_required'
-    ]);
-
-    if (eventName && !handledEvents.has(normalizedEvent)) {
-      return res.json({ ok: true, message: `Ignored event ${eventName}.` });
-    }
-
-    if (!purchaseId) {
-      console.error('[gumroad webhook] missing purchase id', { eventName, payload });
-      return res.status(400).json({ error: 'Missing Gumroad purchase id.' });
-    }
-
-    try {
-      const existing = await dbGetPremiumSubscription('gumroad', String(purchaseId));
-      const isCancellation = ['subscription_cancelled', 'subscription_canceled', 'subscription_ended', 'subscription_expired'].includes(normalizedEvent);
-      const isGracePeriod = ['payment_failed', 'charge_failed', 'subscription_failed', 'subscription_period_ending', 'payment_required'].includes(normalizedEvent);
-      const isRenewal = ['subscription_renewed', 'subscription_reactivated', 'subscription_created', 'subscription_updated', 'sale', 'sale_completed', 'purchase', 'payment', 'payment_succeeded', 'charge_succeeded'].includes(normalizedEvent);
-
-      if (!username) {
-        console.error('[gumroad webhook] missing username for purchase', { purchaseId, purchaserEmail, payload });
-        return res.status(400).json({ error: 'Missing FREQ username in Gumroad purchase.' });
-      }
-
-      const account = await dbGetAccount(username);
-      if (!account) {
-        console.error('[gumroad webhook] account not found', { username, purchaseId, purchaserEmail, providerCustomerId });
-        return res.status(404).json({ error: `No FREQ account found for username "${username}".` });
-      }
-
-      if (isCancellation) {
-        await dbActivatePremiumAccount(username, plan, 'gumroad', providerCustomerId || null, String(purchaseId), purchaserEmail || null, purchaseDate || new Date().toISOString(), {
-          isPremium: false,
-          status: 'canceled',
-          cancelledAt: cancelledAt || new Date().toISOString(),
-          lastEventType: normalizedEvent,
-        });
-        await dbUpdatePremiumSubscriptionMetadata({
-          username,
-          provider: 'gumroad',
-          providerPurchaseId: String(purchaseId),
-          status: 'canceled',
-          cancelledAt: cancelledAt || new Date().toISOString(),
-          lastEventType: normalizedEvent,
-        });
-        console.log('[gumroad webhook] canceled premium', { username: account.username, purchaseId, eventName });
-        return res.json({ ok: true, message: 'Subscription canceled.' });
-      }
-
-      if (isGracePeriod) {
-        await dbActivatePremiumAccount(username, plan, 'gumroad', providerCustomerId || null, String(purchaseId), purchaserEmail || null, purchaseDate || new Date().toISOString(), {
-          isPremium: true,
-          status: 'grace_period',
-          expiresAt: expiresAt || graceUntil || purchaseDate || new Date().toISOString(),
-          graceUntil: graceUntil || expiresAt || purchaseDate || new Date().toISOString(),
-          failureReason,
-          lastEventType: normalizedEvent,
-        });
-        await dbUpdatePremiumSubscriptionMetadata({
-          username,
-          provider: 'gumroad',
-          providerPurchaseId: String(purchaseId),
-          status: 'grace_period',
-          expiresAt: expiresAt || graceUntil || purchaseDate || new Date().toISOString(),
-          graceUntil: graceUntil || expiresAt || purchaseDate || new Date().toISOString(),
-          failureReason,
-          lastEventType: normalizedEvent,
-        });
-        console.log('[gumroad webhook] grace period', { username: account.username, purchaseId, eventName, graceUntil });
-        return res.json({ ok: true, message: 'Renewal issue flagged for grace period.' });
-      }
-
-      if (isRenewal || !existing) {
-        await dbActivatePremiumAccount(username, plan, 'gumroad', providerCustomerId || null, String(purchaseId), purchaserEmail || null, purchaseDate || new Date().toISOString(), {
-          isPremium: true,
-          status: 'active',
-          expiresAt: expiresAt || purchaseDate || new Date().toISOString(),
-          graceUntil: graceUntil || null,
-          trialUntil,
-          lastEventType: normalizedEvent,
-        });
-        if (!existing) {
-          await dbCreatePremiumSubscription({
-            username: account.username,
-            provider: 'gumroad',
-            providerCustomerId: providerCustomerId || null,
-            providerPurchaseId: String(purchaseId),
-            purchaserEmail: purchaserEmail || null,
-            purchaseDate: purchaseDate || new Date().toISOString(),
-            plan,
-          });
-        }
-        await dbUpdatePremiumSubscriptionMetadata({
-          username,
-          provider: 'gumroad',
-          providerPurchaseId: String(purchaseId),
-          status: 'active',
-          expiresAt: expiresAt || purchaseDate || new Date().toISOString(),
-          graceUntil,
-          trialUntil,
-          lastEventType: normalizedEvent,
-        });
-        console.log('[gumroad webhook] activated premium', { username: account.username, purchaseId, eventName });
-        return res.json({ ok: true });
-      }
-
-      return res.json({ ok: true, message: `Handled event ${eventName}.` });
-    } catch (err) {
-      console.error('[gumroad webhook] processing error:', err?.message || err, { purchaseId, username, purchaserEmail });
-      return res.status(500).json({ error: 'Could not process Gumroad purchase at this time.' });
-    }
-  }
-);
 
 app.use(express.json({ limit: '35mb', verify: captureRawBody }));
 app.use(express.urlencoded({ extended: true, limit: '35mb', verify: captureRawBody }));
