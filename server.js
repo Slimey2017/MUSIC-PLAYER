@@ -3325,6 +3325,16 @@ app.post('/api/auth/sync', async (req, res) => {
 // nothing here ever lets the client set is_premium directly. The only way
 // Premium gets turned on is a provider lookup coming back with an active
 // membership inside verifyPremiumNow/activateFromMembership.
+// Very loose shape check — this is only ever used to pick which email to
+// search a provider by, never stored unless the provider itself confirms
+// it as the purchaser email on a matched sale (see activateFromMembership
+// in lib/premiumVerification.js), so there's no need for strict RFC 5322
+// validation here. Just enough to reject empty/garbage input before it
+// goes anywhere near a fetch() call.
+function looksLikeEmail(value) {
+  return typeof value === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim()) && value.trim().length <= 254;
+}
+
 async function handlePremiumVerifyRequest(req, res, routeLabel) {
   const token = (req.headers.authorization || '').replace('Bearer ', '') || req.body?.token || req.query.token;
   const sess = await dbGetSession(token);
@@ -3343,7 +3353,17 @@ async function handlePremiumVerifyRequest(req, res, routeLabel) {
       return res.status(503).json({ error: 'Premium verification is temporarily unavailable. Please try again later.' });
     }
 
-    const result = await verifyPremiumNow(premiumDb, acct);
+    // Optional: the customer typing in the email they actually paid with,
+    // from the "Already purchased?" box. Covers the very common case where
+    // someone's Gumroad purchase email differs from anything FREQ has on
+    // file (e.g. bought with a work email, FREQ account uses a personal
+    // one) — without this there was no way for that person to self-serve
+    // at all. Silently ignored if malformed rather than erroring the whole
+    // request, since the username-based match still gets a chance to run.
+    const rawEmail = typeof req.body?.email === 'string' ? req.body.email.trim() : '';
+    const emailOverride = rawEmail && looksLikeEmail(rawEmail) ? rawEmail.toLowerCase() : null;
+
+    const result = await verifyPremiumNow(premiumDb, acct, { emailOverride });
 
     if (result.erroredWithoutAnswer) {
       // Every configured provider errored out (network/outage/bad token) —
