@@ -4968,8 +4968,8 @@ body.oled-mode {
       </div>
       <div id="authSigninForm" class="auth-form">
         <div class="auth-field">
-          <label class="auth-field-label">Username</label>
-          <input type="text" class="auth-input" id="signinUsername" placeholder="Your username…" autocomplete="username" />
+          <label class="auth-field-label">Username or Email</label>
+          <input type="text" class="auth-input" id="signinUsername" placeholder="Your username or email…" autocomplete="username" />
         </div>
         <div class="auth-field">
           <label class="auth-field-label">Password</label>
@@ -4985,6 +4985,10 @@ body.oled-mode {
           <input type="text" class="auth-input" id="signupUsername" placeholder="e.g. slimey2017" autocomplete="username" />
         </div>
         <div class="auth-field">
+          <label class="auth-field-label">Email</label>
+          <input type="email" class="auth-input" id="signupEmail" placeholder="you@example.com" autocomplete="email" />
+        </div>
+        <div class="auth-field">
           <label class="auth-field-label">Display Name (optional)</label>
           <input type="text" class="auth-input" id="signupName" placeholder="e.g. Slimey2017" autocomplete="off" />
         </div>
@@ -4998,10 +5002,31 @@ body.oled-mode {
         </div>
         <div class="auth-error" id="signupError">Passwords do not match.</div>
         <button class="auth-submit" id="signupSubmit">CREATE ACCOUNT</button>
-        <div class="auth-note">No email required. Username + password is your key. Your playlists sync automatically across all your devices.</div>
+        <div class="auth-note">Email is required — it's how we verify FREQ Premium purchases and help you recover your account. Your playlists sync automatically across all your devices.</div>
       </div>
     </div>
     <button class="auth-close" id="authClose" style="margin-top:16px;background:var(--surface3);color:var(--text-dim);border:1px solid var(--border);border-radius:var(--radius);padding:8px;font-family:'Space Mono',monospace;font-size:0.55rem;cursor:pointer;width:100%;letter-spacing:0.08em;text-transform:uppercase;">CLOSE</button>
+  </div>
+</div>
+
+<!-- Shown once, right after sign-in, only for accounts created before email
+     was required (AUTH.emailRequired). Not a full-screen blocker over the
+     whole app — sign-in already succeeded and the token is already valid —
+     just a focused prompt so those accounts get an email on file without
+     forcing a disruptive one-time "re-verify everything" flow. Dismissible
+     via "Later" (skipEmailPrompt) since existing accounts must keep working
+     even if someone never gets around to it. -->
+<div class="lyrics-overlay" id="addEmailOverlay">
+  <div class="lyrics-panel" style="max-width:400px;">
+    <div class="lyrics-title">📧 Add your email</div>
+    <div class="lyrics-artist" style="margin-bottom:10px;">Your account was created before email was required. Add one now so you can verify FREQ Premium purchases and recover your account if you forget your username.</div>
+    <div class="auth-field">
+      <label class="auth-field-label">Email</label>
+      <input type="email" class="auth-input" id="addEmailInput" placeholder="you@example.com" autocomplete="email" />
+    </div>
+    <div class="auth-error" id="addEmailError">Please enter a valid email address.</div>
+    <button class="auth-submit" id="addEmailSubmit">SAVE EMAIL</button>
+    <button class="support-close-btn" id="addEmailSkip" style="margin-top:8px;">Later</button>
   </div>
 </div>
 
@@ -5185,6 +5210,8 @@ const AUTH = {
   token:       localStorage.getItem('freq_token_v4') || null,
   username:    '',
   name:        '',
+  email:       '',
+  emailRequired: false,
   playlists:   [],
   isAdmin:     false,
   isPremium:   false,
@@ -10987,6 +11014,7 @@ async function authInit() {
     // Attempt token refresh first
     const refRes  = await fetch(`${AUTH_BASE}/token-refresh`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ token: AUTH.token }) });
     if (!refRes.ok) { handleTokenExpiry(); return; }
+    const refData = await refRes.json().catch(() => ({}));
     // Pull current data
     const pullRes = await fetch(`${AUTH_BASE}/pull`, { headers:{ 'Authorization': `Bearer ${AUTH.token}` } });
     if (!pullRes.ok) { handleTokenExpiry(); return; }
@@ -10997,6 +11025,7 @@ async function authInit() {
     AUTH.playlists = data.playlists || [];
     AUTH.isPremium = !!data.isPremium;
     AUTH.premiumStatus = data.premiumStatus || null;
+    AUTH.emailRequired = !!refData.emailRequired;
     // Check admin status separately; premium is already reflected from pull.
     fetch('/api/admin/me', { headers: { 'Authorization': `Bearer ${AUTH.token}` } })
       .then(r => r.json()).then(d => { AUTH.isAdmin = !!d.isAdmin; AUTH.isPremium = AUTH.isPremium || !!d.isPremium; updateAuthUI(); }).catch(() => {});
@@ -11006,6 +11035,10 @@ async function authInit() {
     loadLikedPlaylists();
     activityInit();
     pcoResumeIfPending(); // resume "Activating Premium…" if a checkout was left in-flight
+    // Same one-time, dismissible nudge as fresh sign-in — see the
+    // addEmailOverlay markup comment. Restored sessions can carry this flag
+    // just as much as a fresh login for pre-email accounts.
+    if (AUTH.emailRequired) setTimeout(openAddEmailOverlay, 600);
   } catch (err) {
     // Server offline — gracefully skip, don't nuke the token
     setSyncStatus('Server offline — working locally', 'var(--text-muted)');
@@ -11014,10 +11047,14 @@ async function authInit() {
 
 // ─── Sign In ──────────────────────────────────────────────────────────────────
 $('signinSubmit').addEventListener('click', async () => {
-  const uname = ($('signinUsername').value || '').trim().toLowerCase();
+  // Accepts either a username or an email — the server tries username
+  // first, then falls back to an email lookup (see POST /api/auth/signin).
+  // Not force-lowercased here since that's now the server's job for both
+  // identifier types; just trim whitespace.
+  const uname = ($('signinUsername').value || '').trim();
   const pw    = $('signinPassword').value;
   const errEl = $('signinError');
-  if (!uname || !pw) { errEl.textContent = 'Username and password required.'; errEl.classList.add('show'); return; }
+  if (!uname || !pw) { errEl.textContent = 'Username/email and password required.'; errEl.classList.add('show'); return; }
   $('signinSubmit').disabled = true; $('signinSubmit').textContent = '…';
   try {
     const res  = await fetch(`${AUTH_BASE}/signin`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ username: uname, password: pw }) });
@@ -11030,6 +11067,7 @@ $('signinSubmit').addEventListener('click', async () => {
     AUTH.playlists = data.playlists || [];
     AUTH.isPremium = !!data.isPremium;
     AUTH.premiumStatus = data.premiumStatus || null;
+    AUTH.emailRequired = !!data.emailRequired;
     localStorage.setItem('freq_token_v4', AUTH.token);
     fetch('/api/admin/me', { headers: { 'Authorization': `Bearer ${AUTH.token}` } })
       .then(r => r.json()).then(d => { AUTH.isAdmin = !!d.isAdmin; AUTH.isPremium = !!d.isPremium; updateAuthUI(); }).catch(() => {});
@@ -11040,6 +11078,11 @@ $('signinSubmit').addEventListener('click', async () => {
     errEl.classList.remove('show');
     $('signinPassword').value = ''; $('signinUsername').value = '';
     showToast('Welcome back!', AUTH.name, 'success');
+    // Pre-email accounts get a one-time, dismissible prompt to add one —
+    // see the addEmailOverlay markup comment for why this isn't a harder
+    // gate. Delayed slightly so it doesn't fight the closing auth overlay
+    // for focus/animation.
+    if (AUTH.emailRequired) setTimeout(openAddEmailOverlay, 400);
   } catch (err) {
     errEl.textContent = 'Network error — is the server running?'; errEl.classList.add('show');
   } finally {
@@ -11050,22 +11093,27 @@ $('signinSubmit').addEventListener('click', async () => {
 // ─── Sign Up ──────────────────────────────────────────────────────────────────
 $('signupSubmit').addEventListener('click', async () => {
   const uname = ($('signupUsername').value || '').trim().toLowerCase().replace(/[^a-z0-9_]/g,'');
+  const email = ($('signupEmail').value || '').trim();
   const name  = ($('signupName').value || '').trim() || uname;
   const pw    = $('signupPassword').value;
   const conf  = $('signupConfirm').value;
   const errEl = $('signupError');
   if (!uname) { errEl.textContent = 'Username required (letters, numbers, _).'; errEl.classList.add('show'); return; }
+  if (!email) { errEl.textContent = 'Email is required.'; errEl.classList.add('show'); return; }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { errEl.textContent = 'Please enter a valid email address.'; errEl.classList.add('show'); return; }
   if (!pw || pw !== conf) { errEl.textContent = pw ? 'Passwords do not match.' : 'Password required.'; errEl.classList.add('show'); return; }
   if (pw.length < 4) { errEl.textContent = 'Password must be at least 4 characters.'; errEl.classList.add('show'); return; }
   $('signupSubmit').disabled = true; $('signupSubmit').textContent = '…';
   try {
-    const res  = await fetch(`${AUTH_BASE}/signup`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ username: uname, displayName: name, password: pw }) });
+    const res  = await fetch(`${AUTH_BASE}/signup`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ username: uname, displayName: name, password: pw, email }) });
     const data = await res.json();
     if (!res.ok) { errEl.textContent = data.error || 'Signup failed.'; errEl.classList.add('show'); return; }
     AUTH.loggedIn  = true;
     AUTH.token     = data.token;
     AUTH.username  = data.username;
     AUTH.name      = data.displayName;
+    AUTH.email     = data.email || email;
+    AUTH.emailRequired = false;
     AUTH.playlists = [];
     AUTH.isAdmin = false; // New accounts are never admins
     AUTH.isPremium = !!data.isPremium;
@@ -11073,12 +11121,55 @@ $('signupSubmit').addEventListener('click', async () => {
     localStorage.setItem('freq_token_v4', AUTH.token);
     updateAuthUI();
     errEl.classList.remove('show');
-    ['signupUsername','signupName','signupPassword','signupConfirm'].forEach(id => $(id).value = '');
+    ['signupUsername','signupEmail','signupName','signupPassword','signupConfirm'].forEach(id => $(id).value = '');
     showToast('Account created!', 'Welcome, ' + AUTH.name, 'success');
   } catch (err) {
     errEl.textContent = 'Network error — is the server running?'; errEl.classList.add('show');
   } finally {
     $('signupSubmit').disabled = false; $('signupSubmit').textContent = 'CREATE ACCOUNT';
+  }
+});
+
+// ─── Add Email (existing pre-email accounts) ───────────────────────────────────
+let addEmailPromptDismissed = false; // per-page-load only; not persisted — a real reminder, not a permanent opt-out
+function openAddEmailOverlay() {
+  if (addEmailPromptDismissed) return;
+  $('addEmailOverlay')?.classList.add('open');
+}
+function closeAddEmailOverlay() {
+  $('addEmailOverlay')?.classList.remove('open');
+}
+$('addEmailSkip')?.addEventListener('click', () => {
+  addEmailPromptDismissed = true;
+  closeAddEmailOverlay();
+});
+$('addEmailSubmit')?.addEventListener('click', async () => {
+  const input = $('addEmailInput');
+  const errEl = $('addEmailError');
+  const email = (input?.value || '').trim();
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    if (errEl) { errEl.textContent = 'Please enter a valid email address.'; errEl.classList.add('show'); }
+    return;
+  }
+  const btn = $('addEmailSubmit');
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+  try {
+    const res  = await fetch('/api/account/email', { method: 'POST', headers: authHeaders(), body: JSON.stringify({ email }) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      if (errEl) { errEl.textContent = data.error || 'Could not save email.'; errEl.classList.add('show'); }
+      return;
+    }
+    AUTH.email = data.email || email;
+    AUTH.emailRequired = false;
+    if (errEl) errEl.classList.remove('show');
+    if (input) input.value = '';
+    closeAddEmailOverlay();
+    showToast('Email saved', 'You can now verify Premium purchases and recover your account by email.', 'success');
+  } catch (err) {
+    if (errEl) { errEl.textContent = 'Network error — is the server running?'; errEl.classList.add('show'); }
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'SAVE EMAIL'; }
   }
 });
 
@@ -15291,7 +15382,7 @@ document.addEventListener('keydown', e => {
 })();
 
 // ─── Patch: Close new overlays via clicking outside ──────────────────────────
-['supportOverlay','aboutOverlay','settingsOverlay','lyricsOverlay','userProfileOverlay','artistProfileOverlay','becomeArtistOverlay','editArtistBioOverlay','manageCollaboratorsOverlay','publishTrackOverlay','trackAnalyticsOverlay','createReleaseOverlay','djBoomOverlay','premiumHubOverlay','premiumCheckoutOverlay'].forEach(id => {
+['supportOverlay','aboutOverlay','settingsOverlay','lyricsOverlay','userProfileOverlay','artistProfileOverlay','becomeArtistOverlay','editArtistBioOverlay','manageCollaboratorsOverlay','publishTrackOverlay','trackAnalyticsOverlay','createReleaseOverlay','djBoomOverlay','premiumHubOverlay','premiumCheckoutOverlay','addEmailOverlay'].forEach(id => {
   const el = $(id);
   if (!el) return;
   el.addEventListener('click', e => { if (e.target === el) el.classList.remove('open'); });
