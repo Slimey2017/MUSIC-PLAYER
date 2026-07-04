@@ -51,8 +51,12 @@
  * GET    /api/playlists/liked                  ?token=    → playlists I've liked
  *
  * POST   /api/plays                            { originalUrl, platform?, title?, token? }
- * POST   /api/gumroad/webhook                  Gumroad webhook for premium purchases
  * GET    /api/premium/status                   ?token=   → { isPremium, premiumStatus }  (checkout-return polling)
+ * POST   /api/premium/verify                   Authenticated. Live provider lookup — activates Premium if an active
+ *                                               membership is found for this account. No webhook dependency.
+ * POST   /api/premium/sync                     Authenticated. Same live provider lookup as /verify, framed as
+ *                                               "refresh my subscription state" — also revokes Premium if the
+ *                                               provider reports no active membership.
  * GET    /api/premium/history                  ?token=   → { history: [...] }
  * GET    /api/premium/config                                → { checkoutUrl }  (Gumroad product URL, no secrets)
  * GET    /api/charts/tracks                    ?window=all|7d&limit=
@@ -310,6 +314,23 @@ async function dbUpdatePremiumSubscriptionMetadata({ username, provider, provide
   if (error) console.warn('[db] updatePremiumSubscriptionMetadata:', error.message);
 }
 
+// Stamps accounts.premium_last_verified_at so verifyPremiumIfDue knows when
+// an account was last checked against its provider. Best-effort by design:
+// if the premium_last_verified_at column hasn't been migrated into the
+// accounts table yet, Supabase returns a column-not-found error here, which
+// is swallowed rather than thrown — every login simply re-verifies (correct
+// behavior, just unthrottled) until the migration lands, instead of the
+// whole login/pull path breaking on a missing column.
+async function dbTouchPremiumVerifiedAt(username) {
+  const key = normalizeUsername(username);
+  if (!key) return;
+  const { error } = await supabase
+    .from('accounts')
+    .update({ premium_last_verified_at: new Date().toISOString() })
+    .eq('username', key);
+  if (error) console.warn('[db] touchPremiumVerifiedAt (non-fatal, likely missing column):', error.message);
+}
+
 function getPremiumStatusFromAccount(account) {
   const status = String(account?.premium_status || account?.premium_state || '').toLowerCase();
   return {
@@ -325,6 +346,22 @@ function getPremiumStatusFromAccount(account) {
     lastEventType: account?.premium_last_event || null,
   };
 }
+
+// Small bundle of DB helpers handed to lib/premiumVerification.js, so that
+// module can stay free of any direct Supabase/schema knowledge — it only
+// ever calls these named functions, never touches `supabase` itself. Every
+// key here is required by premiumVerification.js's destructuring; adding a
+// new field there means adding the matching function/property here too.
+const premiumDb = {
+  normalizeUsername,
+  dbGetAccount,
+  dbGetPremiumSubscription,
+  dbCreatePremiumSubscription,
+  dbActivatePremiumAccount,
+  dbUpdatePremiumSubscriptionMetadata,
+  dbTouchPremiumVerifiedAt,
+  getPremiumStatusFromAccount,
+};
 
 async function dbCreateAccount(username, displayName, salt, hash) {
   const { error } = await supabase.from('accounts').insert({
@@ -2956,13 +2993,26 @@ app.post('/api/auth/signin', rateLimit, async (req, res) => {
     const playlists = await dbGetPlaylists(key);
     dbEnsureProfile(key, acct.display_name); // fire-and-forget self-heal — see dbEnsureProfile's comment
 
+    // Silently re-verify Premium against the provider if it's due (throttled
+    // internally — see PREMIUM_REVERIFY_INTERVAL_MS). Covers: a cancelled
+    // membership that should no longer show as Premium, and a purchase made
+    // on another device that hasn't been pulled down here yet. Best-effort —
+    // a provider hiccup here must never block sign-in.
+    let acctForResponse = acct;
+    try {
+      const verifyResult = await verifyPremiumIfDue(premiumDb, acct);
+      if (verifyResult) acctForResponse = await dbGetAccount(key);
+    } catch (verifyErr) {
+      console.error('[signin] premium reverify failed (non-fatal):', verifyErr?.message || verifyErr);
+    }
+
     return res.json({
       token,
       username: key,
-      displayName: acct.display_name,
+      displayName: acctForResponse.display_name,
       playlists,
-      isPremium: !!acct.is_premium,
-      premiumStatus: getPremiumStatusFromAccount(acct),
+      isPremium: !!acctForResponse.is_premium,
+      premiumStatus: getPremiumStatusFromAccount(acctForResponse),
     });
   } catch (err) {
     console.error('[signin]', err);
@@ -3220,7 +3270,20 @@ app.post('/api/auth/token-refresh', async (req, res) => {
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token.' });
   const expiresAt = Date.now() + TOKEN_TTL;
   await dbRefreshSession(token, expiresAt);
-  const acct = await dbGetAccount(sess.username);
+  let acct = await dbGetAccount(sess.username);
+
+  // This fires on every app load/session-restore, which is exactly the
+  // "restore Premium on a new device / after reinstall / detect a
+  // cancellation" path the automatic-verification requirement calls for.
+  // verifyPremiumIfDue is internally throttled, so this doesn't turn into a
+  // provider API call on every single page load — only when due.
+  try {
+    const verifyResult = await verifyPremiumIfDue(premiumDb, acct);
+    if (verifyResult) acct = await dbGetAccount(sess.username);
+  } catch (verifyErr) {
+    console.error('[token-refresh] premium reverify failed (non-fatal):', verifyErr?.message || verifyErr);
+  }
+
   return res.json({
     ok: true,
     expiresAt,
@@ -3246,116 +3309,96 @@ app.post('/api/auth/sync', async (req, res) => {
   }
 });
 
-function getGumroadSignature(req) {
-  const rawSignature = req.headers['gumroad-signature'] || req.headers['x-gumroad-signature'] || req.headers['signature'];
-  if (!rawSignature || typeof rawSignature !== 'string') return null;
-  const match = rawSignature.match(/(?:sha256=|HMAC-SHA256=|signature=)?\s*([A-Za-z0-9+/=]+)$/i);
-  return match ? match[1] : rawSignature.trim();
-}
+// ─── Premium verification (POST /api/premium/verify, POST /api/premium/sync) ──
+// Both routes do the same underlying thing — call verifyPremiumNow, which
+// does a live provider lookup and applies whatever it finds — but exist as
+// two names for two different mental models the frontend needs:
+//
+//   /verify — "I just paid, activate my account." User-initiated from the
+//             Premium Hub's "Verify Purchase" button. Framed around success.
+//   /sync   — "Check if my subscription is still valid." Can be triggered
+//             from anywhere Premium status might need a manual refresh
+//             (e.g. a future "Refresh subscription" control). Framed around
+//             confirming current state, including a cancellation.
+//
+// Both require an authenticated session — there is no guest path, and
+// nothing here ever lets the client set is_premium directly. The only way
+// Premium gets turned on is a provider lookup coming back with an active
+// membership inside verifyPremiumNow/activateFromMembership.
+async function handlePremiumVerifyRequest(req, res, routeLabel) {
+  const token = (req.headers.authorization || '').replace('Bearer ', '') || req.body?.token || req.query.token;
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Authentication required.' });
 
-function timingSafeEqualStrings(a, b) {
-  const bufA = Buffer.from(String(a), 'utf8');
-  const bufB = Buffer.from(String(b), 'utf8');
-  if (bufA.length !== bufB.length) return false;
-  return crypto.timingSafeEqual(bufA, bufB);
-}
+  try {
+    const acct = await dbGetAccount(sess.username);
+    if (!acct) return res.status(401).json({ error: 'Authentication required.' });
 
-function verifyGumroadWebhook(req) {
-  const secret = process.env.GUMROAD_WEBHOOK_SECRET;
-  if (!secret) return false;
-  const signature = getGumroadSignature(req);
-  const rawBodyBuffer = req.rawBodyBuffer || (typeof req.rawBody === 'string' ? Buffer.from(req.rawBody, req.rawBodyEncoding || 'utf8') : null);
-  if (!signature || !rawBodyBuffer || !rawBodyBuffer.length) return false;
-  const digest = crypto.createHmac('sha256', secret).update(rawBodyBuffer).digest();
-  const expectedHex = digest.toString('hex');
-  const expectedBase64 = digest.toString('base64');
-  return timingSafeEqualStrings(signature, expectedHex) || timingSafeEqualStrings(signature, expectedBase64);
-}
-
-function isGumroadPingPayload(payload) {
-  if (!payload || typeof payload !== 'object') return false;
-  const eventName = String(payload.event_name || payload.event || payload.type || payload.event_type || '').toLowerCase();
-  return ['ping', 'pings', 'test', 'test_ping', 'ping_test'].includes(eventName)
-    || payload.ping === true
-    || payload.test === true;
-}
-
-function findGumroadUsername(payload) {
-  if (!payload || typeof payload !== 'object') return null;
-  if (typeof payload.username === 'string' && payload.username.trim()) return payload.username.trim();
-  if (typeof payload.buyer_username === 'string' && payload.buyer_username.trim()) return payload.buyer_username.trim();
-  if (typeof payload.purchaser_username === 'string' && payload.purchaser_username.trim()) return payload.purchaser_username.trim();
-
-  for (const key of Object.keys(payload)) {
-    if (/^custom_fields\[\d+\]\[name\]$/i.test(key) && typeof payload[key] === 'string') {
-      const index = key.match(/^custom_fields\[(\d+)\]\[name\]$/i)?.[1];
-      if (!index) continue;
-      if (payload[key].trim().toLowerCase() === 'freq username' || payload[key].trim().toLowerCase() === 'username') {
-        const valueKey = `custom_fields[${index}][value]`;
-        const value = payload[valueKey];
-        if (typeof value === 'string' && value.trim()) return value.trim();
-      }
+    if (!getConfiguredProviders().length) {
+      // No provider has its env vars set in this deployment — nothing to
+      // check against. Distinguish this from "checked and found nothing"
+      // so the frontend doesn't show a misleading "no membership found"
+      // when the real issue is server configuration.
+      console.error(`[${routeLabel}] no premium providers configured`);
+      return res.status(503).json({ error: 'Premium verification is temporarily unavailable. Please try again later.' });
     }
-  }
 
-  if (Array.isArray(payload.custom_fields)) {
-    for (const field of payload.custom_fields) {
-      if (field && typeof field === 'object' && typeof field.name === 'string' && typeof field.value === 'string') {
-        if (field.name.trim().toLowerCase() === 'freq username' || field.name.trim().toLowerCase() === 'username') {
-          return field.value.trim();
-        }
-      }
+    const result = await verifyPremiumNow(premiumDb, acct);
+
+    if (result.erroredWithoutAnswer) {
+      // Every configured provider errored out (network/outage/bad token) —
+      // never expose that detail to the client; the spec is explicit that
+      // API errors must not leak. Existing Premium status (if any) was left
+      // untouched by verifyPremiumNow in this case.
+      return res.status(502).json({
+        error: 'Could not reach the payment provider right now. Please try again in a moment.',
+        isPremium: result.isPremium,
+        premiumStatus: result.premiumStatus,
+      });
     }
-  }
 
-  if (payload.custom_fields && typeof payload.custom_fields === 'object') {
-    const inner = findGumroadUsername(payload.custom_fields);
-    if (inner) return inner;
+    return res.json({
+      verified: true,
+      isPremium: result.isPremium,
+      premiumStatus: result.premiumStatus,
+      provider: result.provider,
+    });
+  } catch (err) {
+    console.error(`[${routeLabel}]`, err?.message || err);
+    return res.status(500).json({ error: 'Could not verify Premium status right now. Please try again.' });
   }
-
-  return null;
 }
 
-function parseGumroadPayload(req) {
-  if (req.body && typeof req.body === 'object' && !Buffer.isBuffer(req.body) && Object.keys(req.body).length) return req.body;
+// User-initiated "I just paid" flow — deliberately eager and un-throttled,
+// matching verifyPremiumNow's own doc comment: this is low-frequency by
+// nature (one click after paying) so there's no need to rate-limit beyond
+// the global per-IP limiter already applied via app-wide middleware.
+app.post('/api/premium/verify', rateLimit, (req, res) => handlePremiumVerifyRequest(req, res, 'premium verify'));
 
-  const rawText = Buffer.isBuffer(req.rawBodyBuffer)
-    ? req.rawBodyBuffer.toString('utf8')
-    : (typeof req.rawBody === 'string' ? req.rawBody : (typeof req.body === 'string' ? req.body : ''));
-
-  if (typeof rawText === 'string' && rawText.trim()) {
-    const trimmed = rawText.trim();
-    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-      try {
-        return JSON.parse(trimmed);
-      } catch (_err) {
-        // fall through to form parsing
-      }
-    }
-    const contentType = String(req.headers['content-type'] || '').toLowerCase();
-    if (contentType.includes('application/x-www-form-urlencoded') || trimmed.includes('=')) {
-      try {
-        const params = new URLSearchParams(trimmed);
-        const body = {};
-        for (const [key, value] of params.entries()) body[key] = value;
-        return body;
-      } catch (_err) {
-        return {};
-      }
-    }
-  }
-
-  return {};
-}
+// Same underlying check, framed as "refresh my subscription state" rather
+// than "activate my purchase" — see the comment above handlePremiumVerifyRequest.
+app.post('/api/premium/sync', rateLimit, (req, res) => handlePremiumVerifyRequest(req, res, 'premium sync'));
 
 app.get('/api/auth/pull', async (req, res) => {
   const token = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
   const sess  = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
   try {
-    const acct      = await dbGetAccount(sess.username);
+    let acct        = await dbGetAccount(sess.username);
     const playlists = await dbGetPlaylists(sess.username);
     dbEnsureProfile(sess.username, acct?.display_name || sess.username); // fire-and-forget self-heal
+
+    // Same throttled auto-reverify as token-refresh — pull is the other
+    // "session restore" call site (authInit() calls token-refresh then pull
+    // back to back), so covering both means Premium restoration/cancellation
+    // detection doesn't depend on which one happens to run the check.
+    try {
+      const verifyResult = await verifyPremiumIfDue(premiumDb, acct);
+      if (verifyResult) acct = await dbGetAccount(sess.username);
+    } catch (verifyErr) {
+      console.error('[pull] premium reverify failed (non-fatal):', verifyErr?.message || verifyErr);
+    }
+
     return res.json({
       username:    sess.username,
       displayName: acct?.display_name || sess.username,
