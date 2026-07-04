@@ -149,7 +149,17 @@ function createFallbackSupabaseClient(options = {}) {
       gt: () => createQueryBuilder(table, state, currentRows, pendingPatch, pendingError),
       lt: () => createQueryBuilder(table, state, currentRows, pendingPatch, pendingError),
       like: () => createQueryBuilder(table, state, currentRows, pendingPatch, pendingError),
-      ilike: () => createQueryBuilder(table, state, currentRows, pendingPatch, pendingError),
+      // Real Postgres ilike supports % wildcards; every current caller
+      // (dbGetAccountByEmail) only ever passes a bare value for an exact
+      // case-insensitive match, so that's all this stub needs to support —
+      // it was previously a complete no-op (returned every row unfiltered),
+      // which would have silently broken email lookups in local-fallback
+      // mode. If a future caller needs wildcard ilike, extend this then.
+      ilike: (field, value) => {
+        const needle = String(value ?? '').toLowerCase();
+        const filtered = currentRows.filter(row => String(row[field] ?? '').toLowerCase() === needle);
+        return createQueryBuilder(table, state, filtered, pendingPatch, pendingError);
+      },
       in: () => createQueryBuilder(table, state, currentRows, pendingPatch, pendingError),
       contains: () => createQueryBuilder(table, state, currentRows, pendingPatch, pendingError),
       overlaps: () => createQueryBuilder(table, state, currentRows, pendingPatch, pendingError),
