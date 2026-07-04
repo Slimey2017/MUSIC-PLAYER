@@ -298,7 +298,7 @@ async function dbGetPremiumSubscription(provider, providerPurchaseId) {
   return data || null;
 }
 
-async function dbCreatePremiumSubscription({ username, provider, providerCustomerId, providerPurchaseId, purchaserEmail, purchaseDate, plan }) {
+async function dbCreatePremiumSubscription({ username, provider, providerCustomerId, providerPurchaseId, purchaserEmail, purchaseDate, plan, isTestPurchase }) {
   const { data, error } = await supabase.from('premium_subscriptions').insert({
     username,
     provider,
@@ -307,6 +307,7 @@ async function dbCreatePremiumSubscription({ username, provider, providerCustome
     purchaser_email: purchaserEmail,
     purchase_date: purchaseDate ? new Date(purchaseDate).toISOString() : new Date().toISOString(),
     plan,
+    is_test_purchase: !!isTestPurchase,
     created_at: new Date().toISOString(),
   }).select().single();
   if (error) throw new Error(error.message);
