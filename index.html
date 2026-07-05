@@ -1325,6 +1325,123 @@ textarea.support-field { height:90px;resize:vertical; }
 .pm-timeline-label { font-size:0.5rem;color:var(--text);font-weight:700; }
 .pm-timeline-sub { font-size:0.42rem;color:var(--text-muted);margin-top:2px; }
 
+/* ─── Real-Life Radio (PTB) ──────────────────────────────────────────────
+   Premium-only live internet radio, backed by the Radio Browser directory
+   (see /api/radio/* in server.js). Shares the .lyrics-overlay/.lyrics-panel
+   shell like every other overlay in the app, and reuses .premium-lock-wrap/
+   .premium-lock-card for the non-Premium upsell state — same "show it,
+   don't hide it" pattern as DJ BOOM. PTB = Public Testing Beta. */
+.ptb-tag {
+  font-size:0.32rem;background:rgba(255,107,107,0.18);color:#ff6b6b;
+  border:1px solid rgba(255,107,107,0.4);padding:1px 4px;border-radius:3px;
+  letter-spacing:0.04em;margin-left:3px;vertical-align:middle;font-weight:700;
+}
+.radio-panel { max-width:640px; }
+.radio-experimental-banner {
+  display:flex;align-items:center;gap:8px;padding:8px 10px;margin-bottom:12px;
+  border:1px solid rgba(255,107,107,0.3);border-radius:var(--radius);
+  background:rgba(255,107,107,0.07);font-size:0.44rem;color:var(--text-dim);line-height:1.6;
+}
+.radio-experimental-banner .ptb-tag { flex-shrink:0; }
+.radio-tabs {
+  display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap;border-bottom:1px solid var(--border);padding-bottom:10px;
+}
+.radio-tab-btn {
+  background:none;border:1px solid var(--border);color:var(--text-muted);
+  font-family:'Space Mono',monospace;font-size:0.44rem;letter-spacing:0.05em;
+  text-transform:uppercase;padding:6px 10px;border-radius:var(--radius);cursor:pointer;
+}
+.radio-tab-btn.active { border-color:#ff6b6b;color:#ff6b6b;background:rgba(255,107,107,0.08); }
+.radio-search-row { display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap; }
+.radio-search-row input[type="text"] {
+  flex:1;min-width:140px;padding:7px 10px;font-size:0.5rem;border-radius:var(--radius);
+  border:1px solid var(--border);background:var(--surface);color:var(--text);
+  font-family:'Space Mono',monospace;
+}
+.radio-search-row select {
+  padding:7px 8px;font-size:0.46rem;border-radius:var(--radius);border:1px solid var(--border);
+  background:var(--surface);color:var(--text);font-family:'Space Mono',monospace;max-width:130px;
+}
+.radio-chip-row { display:flex;gap:5px;flex-wrap:wrap;margin-bottom:12px; }
+.radio-chip {
+  background:none;border:1px solid var(--border);color:var(--text-muted);
+  font-family:'Space Mono',monospace;font-size:0.4rem;padding:4px 8px;
+  border-radius:12px;cursor:pointer;letter-spacing:0.02em;
+}
+.radio-chip:hover, .radio-chip.active { border-color:#ff6b6b;color:#ff6b6b; }
+.radio-section-title {
+  font-size:0.44rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.08em;
+  margin:14px 0 8px;display:flex;align-items:center;justify-content:space-between;
+}
+.radio-station-grid {
+  display:grid;grid-template-columns:repeat(2,1fr);gap:8px;max-height:420px;overflow-y:auto;
+  scrollbar-width:thin;scrollbar-color:var(--border) transparent;padding-right:2px;
+}
+@media (max-width:560px) { .radio-station-grid { grid-template-columns:1fr; } }
+.radio-station-card {
+  border:1px solid var(--border);border-radius:var(--radius);background:var(--surface2);
+  padding:9px 10px;display:flex;gap:8px;align-items:flex-start;position:relative;
+}
+.radio-station-card.playing { border-color:#ff6b6b;background:rgba(255,107,107,0.06); }
+.radio-station-favicon {
+  width:34px;height:34px;border-radius:6px;object-fit:cover;flex-shrink:0;background:var(--surface3);
+}
+.radio-station-favicon-fallback {
+  width:34px;height:34px;border-radius:6px;flex-shrink:0;background:var(--surface3);
+  display:flex;align-items:center;justify-content:center;font-size:0.7rem;color:var(--text-muted);
+}
+.radio-station-info { flex:1;min-width:0; }
+.radio-station-name {
+  font-size:0.52rem;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;
+}
+.radio-station-meta {
+  font-size:0.38rem;color:var(--text-muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.radio-station-tags {
+  font-size:0.36rem;color:var(--text-dim);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.radio-station-actions { display:flex;flex-direction:column;gap:5px;flex-shrink:0; }
+.radio-card-btn {
+  width:24px;height:24px;border-radius:50%;border:1px solid var(--border);background:var(--surface3);
+  color:var(--text);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:0.5rem;
+}
+.radio-card-btn.play-btn { border-color:#ff6b6b;color:#ff6b6b; }
+.radio-card-btn.play-btn.is-playing { background:#ff6b6b;color:#0a0a0a; }
+.radio-card-btn.fav-btn.is-fav { border-color:var(--accent);color:var(--accent); }
+.radio-empty-panel { text-align:center;padding:24px 10px;color:var(--text-muted);font-size:0.5rem; }
+.radio-loading-panel { text-align:center;padding:24px 10px;color:var(--text-muted);font-size:0.5rem; }
+
+/* Now-playing bar — its own isolated player, deliberately NOT part of
+   state.queue/PlaybackManager (see openRadioOverlay's header comment in
+   the script section for why): live radio must never be logged as a
+   track play or affect charts, and reusing the music queue's playback
+   pipeline would risk exactly that by accident. */
+.radio-now-playing-bar {
+  display:none;align-items:center;gap:10px;padding:9px 12px;margin-bottom:12px;
+  border:1px solid #ff6b6b;border-radius:var(--radius);background:rgba(255,107,107,0.08);
+}
+.radio-now-playing-bar.active { display:flex; }
+.radio-live-badge {
+  background:#ff6b6b;color:#0a0a0a;font-size:0.36rem;font-weight:700;padding:2px 6px;
+  border-radius:3px;letter-spacing:0.06em;flex-shrink:0;display:flex;align-items:center;gap:3px;
+}
+.radio-live-badge::before {
+  content:'';width:5px;height:5px;border-radius:50%;background:#0a0a0a;
+  animation:radioLivePulse 1.4s ease-in-out infinite;
+}
+@keyframes radioLivePulse { 0%,100% { opacity:1; } 50% { opacity:0.25; } }
+.radio-now-playing-info { flex:1;min-width:0; }
+.radio-now-playing-name { font-size:0.52rem;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+.radio-now-playing-meta { font-size:0.4rem;color:var(--text-muted);margin-top:1px; }
+.radio-now-playing-controls { display:flex;gap:6px;align-items:center;flex-shrink:0; }
+.radio-station-error {
+  font-size:0.42rem;color:var(--accent2);margin-top:8px;padding:8px 10px;
+  border:1px solid rgba(255,71,87,0.3);border-radius:var(--radius);background:rgba(255,71,87,0.06);
+  display:none;
+}
+.radio-station-error.show { display:block; }
+
 /* ─── Premium Checkout Modal ─────────────────────────────────────────────
    Launched from the Premium Hub (and the DJ BOOM lock card, via the Hub).
    Reuses .lyrics-overlay/.lyrics-panel like every other modal in the app —
@@ -2508,6 +2625,7 @@ body.oled-mode {
     <button class="header-tag" id="discoverBtn" style="cursor:pointer;background:none;color:var(--accent3);border-color:rgba(0,212,255,0.3);" title="Discover — trending tracks, playlists, people">⊛ Discover</button>
     <button class="header-tag" id="djBoomBtn" onclick="openDjBoomOverlay()" style="cursor:pointer;background:none;color:#ffb454;border-color:rgba(255,180,84,0.35);" title="DJ BOOM — AI music assistant">🤖 DJ BOOM</button>
     <button class="header-tag" id="premiumHubBtn" onclick="openPremiumHubOverlay()" style="cursor:pointer;background:none;color:#ffb454;border-color:rgba(255,180,84,0.35);" title="FREQ Premium">⭐ Premium</button>
+    <button class="header-tag" id="radioBtn" onclick="openRadioOverlay()" style="cursor:pointer;background:none;color:#ff6b6b;border-color:rgba(255,107,107,0.35);" title="Real-Life Radio — live internet radio (Premium)">📡 Radio <span class="ptb-tag">PTB</span></button>
     <button class="header-tag" id="settingsBtn" style="cursor:pointer;background:none;" title="Settings">⊞ Settings</button>
     <button class="header-tag" id="lyricsBtn" style="cursor:pointer;background:none;" title="Lyrics">♪ Lyrics</button>
     <button class="header-tag" id="audioQualityBtn" style="cursor:pointer;background:none;" title="Audio Quality & EQ">⚙ Audio</button>
@@ -4399,6 +4517,92 @@ body.oled-mode {
     </div>
 
     <button class="support-close-btn" onclick="closePremiumHubOverlay()" style="margin-top:12px;">Close</button>
+  </div>
+</div>
+
+<!-- ─── Real-Life Radio (PTB) ───────────────────────────────────────────────
+     Premium-only live internet radio, backed by the free Radio Browser
+     directory via /api/radio/* (server-side only — the client never talks
+     to Radio Browser directly). Non-Premium/signed-out accounts see the
+     same panel with the browse body blurred+disabled and an upgrade card
+     on top, exactly like DJ BOOM — "show it, don't hide it". Runs its own
+     isolated <audio> element (radioAudioEl below, NOT localAudio/
+     PlaybackManager/state.queue) so live radio can never be logged as a
+     track play, added to Community Charts, or otherwise mixed into music
+     playback history. -->
+<div class="lyrics-overlay" id="radioOverlay">
+  <div class="lyrics-panel radio-panel">
+    <div class="lyrics-title">📡 Real-Life Radio <span class="ptb-tag">PTB</span></div>
+    <div class="lyrics-artist" style="margin-bottom:4px;">Browse and play real internet radio stations, right inside FREQ.</div>
+
+    <div class="radio-experimental-banner">
+      <span class="ptb-tag">PTB</span>
+      <span>Real-Life Radio is experimental. Station data comes from a free public directory — some stations may be slow, offline, or blocked. If one won't play, try another.</span>
+    </div>
+
+    <div class="premium-lock-wrap" id="radioLockWrap">
+      <div class="premium-lock-target" id="radioBody">
+
+        <audio id="radioAudioEl" preload="none" crossorigin="anonymous" style="display:none;"></audio>
+
+        <div class="radio-now-playing-bar" id="radioNowPlayingBar">
+          <span class="radio-live-badge">LIVE</span>
+          <div class="radio-now-playing-info">
+            <div class="radio-now-playing-name" id="radioNowPlayingName">—</div>
+            <div class="radio-now-playing-meta" id="radioNowPlayingMeta">—</div>
+          </div>
+          <div class="radio-now-playing-controls">
+            <button class="radio-card-btn fav-btn" id="radioNowPlayingFavBtn" onclick="radioToggleFavoriteCurrent()" title="Favorite this station">☆</button>
+            <button class="radio-card-btn" id="radioNowPlayingToggleBtn" onclick="radioTogglePlayPause()" title="Play/Pause">⏸</button>
+            <button class="radio-card-btn" onclick="radioStop()" title="Stop">⏹</button>
+          </div>
+        </div>
+        <div class="radio-station-error" id="radioStationError"></div>
+
+        <div class="radio-tabs">
+          <button class="radio-tab-btn active" data-radio-tab="home" onclick="setRadioTab('home')">Home</button>
+          <button class="radio-tab-btn" data-radio-tab="search" onclick="setRadioTab('search')">Search</button>
+          <button class="radio-tab-btn" data-radio-tab="favorites" onclick="setRadioTab('favorites')">Favorites</button>
+        </div>
+
+        <!-- Home: featured / popular / recent / favorites preview -->
+        <div id="radioPaneHome" class="radio-pane">
+          <div class="radio-section-title">Featured Stations</div>
+          <div class="radio-station-grid" id="radioFeaturedGrid"><div class="radio-loading-panel">Loading…</div></div>
+
+          <div class="radio-section-title">Popular Stations</div>
+          <div class="radio-station-grid" id="radioPopularGrid"><div class="radio-loading-panel">Loading…</div></div>
+
+          <div class="radio-section-title">Recently Played</div>
+          <div class="radio-station-grid" id="radioRecentGrid"><div class="radio-empty-panel">No stations played yet.</div></div>
+        </div>
+
+        <!-- Search -->
+        <div id="radioPaneSearch" class="radio-pane" style="display:none;">
+          <div class="radio-search-row">
+            <input type="text" id="radioSearchName" placeholder="Search by station name…" onkeydown="if(event.key==='Enter')radioRunSearch()">
+            <select id="radioSearchCountry"><option value="">Any country</option></select>
+          </div>
+          <div class="radio-chip-row" id="radioTagChips"></div>
+          <div class="radio-section-title" style="margin-top:2px;">Results <button class="radio-tab-btn" style="font-size:0.4rem;padding:4px 8px;" onclick="radioRunSearch()">🔍 Search</button></div>
+          <div class="radio-station-grid" id="radioSearchGrid"><div class="radio-empty-panel">Search by name, tap a genre tag, or pick a country.</div></div>
+        </div>
+
+        <!-- Favorites -->
+        <div id="radioPaneFavorites" class="radio-pane" style="display:none;">
+          <div class="radio-section-title">Your Favorite Stations</div>
+          <div class="radio-station-grid" id="radioFavoritesGrid"><div class="radio-loading-panel">Loading…</div></div>
+        </div>
+
+      </div>
+      <div class="premium-lock-card" id="radioLockCard" style="display:none;">
+        <div class="lock-icon">🔒</div>
+        <div class="lock-msg">Real-Life Radio is available with FREQ Premium.</div>
+        <button class="premium-upgrade-btn" onclick="closeRadioOverlay(); openPremiumHubOverlay();">See Premium</button>
+      </div>
+    </div>
+
+    <button class="support-close-btn" onclick="closeRadioOverlay()" style="margin-top:14px;">Close</button>
   </div>
 </div>
 
@@ -6430,6 +6634,426 @@ async function djBoomQueueFromSearchTerms(terms, { replace = false, play = false
   save(); renderQueue();
   if (play && state.queue.length) playItem(0);
 }
+
+// ─── Real-Life Radio (PTB) ────────────────────────────────────────────────
+// Premium-only live internet radio, backed by /api/radio/* (server-side
+// Radio Browser client — see lib/radio.js). This is DELIBERATELY isolated
+// from state.queue/PlaybackManager/localAudio: live radio streams must
+// never be logged as a track play (logPlay), pushed into history
+// (pushHistory), or counted toward Community Charts, all of which are
+// wired directly into playItem()/state.queue. Giving radio its own
+// <audio id="radioAudioEl"> and its own tiny play/pause/stop control set
+// keeps that guarantee structural rather than relying on remembering to
+// skip those calls in a dozen different code paths.
+//
+// Also deliberately does NOT touch the main queue UI, the "Now Playing"
+// topbar meta, or MediaSession — radio gets its own now-playing bar
+// (.radio-now-playing-bar) scoped inside the Radio overlay itself, so
+// starting a station never clobbers what the music player is showing.
+const RADIO = {
+  tab: 'home',
+  currentStation: null,   // shape: { stationUuid, name, streamUrl, homepageUrl, faviconUrl, country, tags, codec, bitrate }
+  favoriteUuids: new Set(),
+  homeLoaded: false,
+  countriesLoaded: false,
+  tagsLoaded: false,
+  searchToken: 0, // invalidates stale search responses if the user re-searches quickly
+};
+
+function radioAuthedFetch(url, options = {}) {
+  const hasQuery = url.includes('?');
+  const withToken = AUTH.token ? `${url}${hasQuery ? '&' : '?'}token=${encodeURIComponent(AUTH.token)}` : url;
+  return fetch(withToken, options);
+}
+
+function openRadioOverlay() {
+  $('radioOverlay')?.classList.add('open');
+  const locked = !AUTH.isPremium;
+  $('radioLockCard').style.display = locked ? 'flex' : 'none';
+  $('radioBody').classList.toggle('premium-lock-target', locked);
+  if (!AUTH.loggedIn) {
+    $('radioLockCard').style.display = 'flex';
+    $('radioBody').classList.add('premium-lock-target');
+    $('radioLockCard').querySelector('.lock-msg').textContent = 'Sign in with a FREQ Premium account to use Real-Life Radio.';
+    return;
+  }
+  $('radioLockCard').querySelector('.lock-msg').textContent = 'Real-Life Radio is available with FREQ Premium.';
+  if (locked) return;
+
+  if (!RADIO.homeLoaded) {
+    RADIO.homeLoaded = true;
+    loadRadioFeatured();
+    loadRadioPopular();
+    loadRadioRecent();
+    loadRadioFavorites(); // also populates RADIO.favoriteUuids for star states everywhere
+  }
+  if (!RADIO.countriesLoaded) { RADIO.countriesLoaded = true; loadRadioCountries(); }
+  if (!RADIO.tagsLoaded) { RADIO.tagsLoaded = true; loadRadioTags(); }
+}
+
+function closeRadioOverlay() {
+  $('radioOverlay')?.classList.remove('open');
+}
+
+function setRadioTab(tab) {
+  RADIO.tab = tab;
+  document.querySelectorAll('.radio-tab-btn').forEach(btn => btn.classList.toggle('active', btn.dataset.radioTab === tab));
+  $('radioPaneHome').style.display      = tab === 'home' ? '' : 'none';
+  $('radioPaneSearch').style.display    = tab === 'search' ? '' : 'none';
+  $('radioPaneFavorites').style.display = tab === 'favorites' ? '' : 'none';
+  if (tab === 'favorites') loadRadioFavorites();
+}
+
+// ─── Rendering ──────────────────────────────────────────────────────────
+function radioFaviconHtml(station) {
+  if (station.faviconUrl) {
+    return `<img class="radio-station-favicon" src="${escapeHtml(station.faviconUrl)}" alt="" onerror="this.outerHTML='<div class=&quot;radio-station-favicon-fallback&quot;>📡</div>';">`;
+  }
+  return `<div class="radio-station-favicon-fallback">📡</div>`;
+}
+
+function radioMetaLine(station) {
+  const parts = [];
+  if (station.country) parts.push(escapeHtml(station.country));
+  if (station.codec) parts.push(station.codec.toUpperCase());
+  if (station.bitrate) parts.push(`${station.bitrate}kbps`);
+  return parts.join(' · ') || '—';
+}
+
+function radioTagsLine(station) {
+  if (!station.tags) return '';
+  return String(station.tags).split(',').map(t => t.trim()).filter(Boolean).slice(0, 4).join(', ');
+}
+
+function radioStationCardHtml(station, opts = {}) {
+  const isFav = RADIO.favoriteUuids.has(station.stationUuid);
+  const isPlaying = RADIO.currentStation?.stationUuid === station.stationUuid;
+  const dataStation = escapeHtml(JSON.stringify(station)).replace(/'/g, '&#39;');
+  return `
+    <div class="radio-station-card${isPlaying ? ' playing' : ''}" data-station-uuid="${escapeHtml(station.stationUuid || '')}">
+      ${radioFaviconHtml(station)}
+      <div class="radio-station-info">
+        <div class="radio-station-name" title="${escapeHtml(station.name)}">${escapeHtml(station.name)}</div>
+        <div class="radio-station-meta">${radioMetaLine(station)}</div>
+        ${radioTagsLine(station) ? `<div class="radio-station-tags">${escapeHtml(radioTagsLine(station))}</div>` : ''}
+      </div>
+      <div class="radio-station-actions">
+        <button class="radio-card-btn play-btn${isPlaying ? ' is-playing' : ''}" onclick='radioPlayStationFromCard(this)' data-station='${dataStation}' title="Play">${isPlaying ? '⏸' : '▶'}</button>
+        <button class="radio-card-btn fav-btn${isFav ? ' is-fav' : ''}" onclick='radioToggleFavoriteFromCard(this)' data-station='${dataStation}' title="Favorite">${isFav ? '★' : '☆'}</button>
+      </div>
+    </div>`;
+}
+
+function renderRadioGrid(elId, stations, emptyMsg) {
+  const el = $(elId);
+  if (!el) return;
+  if (!stations || !stations.length) {
+    el.innerHTML = `<div class="radio-empty-panel">${escapeHtml(emptyMsg || 'No stations found.')}</div>`;
+    return;
+  }
+  el.innerHTML = stations.map(s => radioStationCardHtml(s)).join('');
+}
+
+// Refreshes play/favorite button states across every rendered grid at once
+// (home/search/favorites can each show the same station simultaneously),
+// rather than re-fetching, so switching stations or favoriting updates
+// every visible card immediately.
+function radioRefreshAllCardStates() {
+  document.querySelectorAll('.radio-station-card').forEach(card => {
+    const uuid = card.dataset.stationUuid;
+    if (!uuid) return;
+    const isPlaying = RADIO.currentStation?.stationUuid === uuid;
+    const isFav = RADIO.favoriteUuids.has(uuid);
+    card.classList.toggle('playing', isPlaying);
+    const playBtn = card.querySelector('.play-btn');
+    const favBtn = card.querySelector('.fav-btn');
+    if (playBtn) { playBtn.classList.toggle('is-playing', isPlaying); playBtn.textContent = isPlaying ? '⏸' : '▶'; }
+    if (favBtn) { favBtn.classList.toggle('is-fav', isFav); favBtn.textContent = isFav ? '★' : '☆'; }
+  });
+}
+
+// ─── Data loading ───────────────────────────────────────────────────────
+async function loadRadioFeatured() {
+  try {
+    const res = await radioAuthedFetch('/api/radio/featured?limit=8');
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to load');
+    renderRadioGrid('radioFeaturedGrid', data.stations, 'No featured stations right now.');
+  } catch (err) {
+    $('radioFeaturedGrid').innerHTML = `<div class="radio-empty-panel">Could not load featured stations.</div>`;
+  }
+}
+
+async function loadRadioPopular() {
+  try {
+    const res = await radioAuthedFetch('/api/radio/popular?limit=8');
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to load');
+    renderRadioGrid('radioPopularGrid', data.stations, 'No popular stations right now.');
+  } catch (err) {
+    $('radioPopularGrid').innerHTML = `<div class="radio-empty-panel">Could not load popular stations.</div>`;
+  }
+}
+
+async function loadRadioRecent() {
+  try {
+    const res = await radioAuthedFetch('/api/radio/recent?limit=8');
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to load');
+    renderRadioGrid('radioRecentGrid', data.recent, 'No stations played yet.');
+  } catch (err) {
+    $('radioRecentGrid').innerHTML = `<div class="radio-empty-panel">Could not load recently played stations.</div>`;
+  }
+}
+
+async function loadRadioFavorites() {
+  try {
+    const res = await radioAuthedFetch('/api/radio/favorites');
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to load');
+    RADIO.favoriteUuids = new Set((data.favorites || []).map(f => f.stationUuid));
+    renderRadioGrid('radioFavoritesGrid', data.favorites, 'No favorites yet — tap the ☆ on any station to save it here.');
+    radioRefreshAllCardStates();
+  } catch (err) {
+    $('radioFavoritesGrid').innerHTML = `<div class="radio-empty-panel">Could not load favorites.</div>`;
+  }
+}
+
+async function loadRadioCountries() {
+  try {
+    const res = await fetch('/api/radio/countries?limit=80');
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to load');
+    const sel = $('radioSearchCountry');
+    if (!sel) return;
+    (data.countries || []).forEach(c => {
+      const opt = document.createElement('option');
+      opt.value = c.name;
+      opt.textContent = `${c.name} (${c.stationCount})`;
+      sel.appendChild(opt);
+    });
+  } catch (_err) { /* non-critical — search still works without the dropdown populated */ }
+}
+
+async function loadRadioTags() {
+  try {
+    const res = await fetch('/api/radio/tags?limit=24');
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to load');
+    const wrap = $('radioTagChips');
+    if (!wrap) return;
+    wrap.innerHTML = (data.tags || []).map(t =>
+      `<button class="radio-chip" data-tag="${escapeHtml(t.name)}" onclick="radioSearchByTag(this)">${escapeHtml(t.name)}</button>`
+    ).join('');
+  } catch (_err) { /* non-critical */ }
+}
+
+// ─── Search ─────────────────────────────────────────────────────────────
+async function radioRunSearch() {
+  const name = $('radioSearchName')?.value.trim() || '';
+  const country = $('radioSearchCountry')?.value || '';
+  const grid = $('radioSearchGrid');
+  const myToken = ++RADIO.searchToken;
+  grid.innerHTML = `<div class="radio-loading-panel">Searching…</div>`;
+  document.querySelectorAll('#radioTagChips .radio-chip').forEach(c => c.classList.remove('active'));
+  try {
+    const params = new URLSearchParams();
+    if (name) params.set('name', name);
+    if (country) params.set('country', country);
+    params.set('limit', '30');
+    const res = await radioAuthedFetch(`/api/radio/search?${params.toString()}`);
+    const data = await res.json();
+    if (myToken !== RADIO.searchToken) return; // superseded by a newer search
+    if (!res.ok) throw new Error(data.error || 'Search failed');
+    renderRadioGrid('radioSearchGrid', data.stations, 'No stations matched your search.');
+  } catch (err) {
+    if (myToken !== RADIO.searchToken) return;
+    grid.innerHTML = `<div class="radio-empty-panel">${escapeHtml(err.message || 'Search failed. Please try again.')}</div>`;
+  }
+}
+
+async function radioSearchByTag(btnEl) {
+  const tag = btnEl.dataset.tag;
+  document.querySelectorAll('#radioTagChips .radio-chip').forEach(c => c.classList.toggle('active', c === btnEl));
+  setRadioTab('search');
+  const grid = $('radioSearchGrid');
+  const myToken = ++RADIO.searchToken;
+  grid.innerHTML = `<div class="radio-loading-panel">Loading “${escapeHtml(tag)}” stations…</div>`;
+  try {
+    const res = await radioAuthedFetch(`/api/radio/search?tag=${encodeURIComponent(tag)}&limit=30`);
+    const data = await res.json();
+    if (myToken !== RADIO.searchToken) return;
+    if (!res.ok) throw new Error(data.error || 'Search failed');
+    renderRadioGrid('radioSearchGrid', data.stations, `No stations found for "${tag}".`);
+  } catch (err) {
+    if (myToken !== RADIO.searchToken) return;
+    grid.innerHTML = `<div class="radio-empty-panel">Could not load stations for "${escapeHtml(tag)}".</div>`;
+  }
+}
+
+// ─── Playback (isolated from the music player entirely) ─────────────────
+function radioShowError(msg) {
+  const el = $('radioStationError');
+  if (!el) return;
+  el.textContent = msg;
+  el.classList.add('show');
+}
+function radioClearError() {
+  $('radioStationError')?.classList.remove('show');
+}
+
+function radioPlayStationFromCard(btnEl) {
+  let station;
+  try { station = JSON.parse(btnEl.dataset.station); } catch (_e) { return; }
+  radioPlayStation(station);
+}
+
+// The one place that actually starts a radio stream. Re-verifies the
+// station server-side via POST /api/radio/play (requirePremium-gated —
+// see server.js) rather than trusting the client-held streamUrl blindly;
+// this also registers the click with Radio Browser and gives us a fresh
+// URL if the station's stream address changed since it was last fetched.
+async function radioPlayStation(station) {
+  if (!station?.stationUuid) return;
+  radioClearError();
+
+  // Toggle: clicking the currently-playing station's Play button pauses it
+  // instead of restarting the stream from scratch.
+  if (RADIO.currentStation?.stationUuid === station.stationUuid && !radioAudioEl.paused) {
+    radioTogglePlayPause();
+    return;
+  }
+
+  try {
+    const res = await radioAuthedFetch('/api/radio/play', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: AUTH.token, stationUuid: station.stationUuid }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.station) {
+      radioShowError(data.error || 'This station is currently unavailable. Try another station.');
+      return;
+    }
+    const resolved = data.station;
+    RADIO.currentStation = resolved;
+
+    radioAudioEl.pause();
+    radioAudioEl.src = resolved.streamUrl;
+    radioAudioEl.load();
+    const playPromise = radioAudioEl.play();
+    if (playPromise && typeof playPromise.catch === 'function') {
+      playPromise.catch(() => {
+        radioShowError('This station is currently unavailable. Try another station.');
+      });
+    }
+
+    radioUpdateNowPlayingBar();
+    radioRefreshAllCardStates();
+    radioLogRecentPlay(resolved); // fire-and-forget
+  } catch (err) {
+    radioShowError('This station is currently unavailable. Try another station.');
+  }
+}
+
+async function radioLogRecentPlay(station) {
+  try {
+    await radioAuthedFetch('/api/radio/recent', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: AUTH.token, station }),
+    });
+    // Only refresh the Recent rail if the user is looking at Home — no
+    // need to yank focus or re-render grids they're not viewing.
+    if (RADIO.tab === 'home') loadRadioRecent();
+  } catch (_err) { /* non-critical — a missed recent-play log isn't worth surfacing an error for */ }
+}
+
+function radioUpdateNowPlayingBar() {
+  const bar = $('radioNowPlayingBar');
+  const s = RADIO.currentStation;
+  if (!s) { bar.classList.remove('active'); return; }
+  bar.classList.add('active');
+  $('radioNowPlayingName').textContent = s.name;
+  $('radioNowPlayingMeta').textContent = radioMetaLine(s);
+  $('radioNowPlayingFavBtn').classList.toggle('is-fav', RADIO.favoriteUuids.has(s.stationUuid));
+  $('radioNowPlayingFavBtn').textContent = RADIO.favoriteUuids.has(s.stationUuid) ? '★' : '☆';
+  $('radioNowPlayingToggleBtn').textContent = radioAudioEl.paused ? '▶' : '⏸';
+}
+
+function radioTogglePlayPause() {
+  if (!RADIO.currentStation) return;
+  if (radioAudioEl.paused) {
+    const p = radioAudioEl.play();
+    if (p && typeof p.catch === 'function') p.catch(() => radioShowError('This station is currently unavailable. Try another station.'));
+  } else {
+    radioAudioEl.pause();
+  }
+}
+
+function radioStop() {
+  radioAudioEl.pause();
+  radioAudioEl.removeAttribute('src');
+  radioAudioEl.load();
+  RADIO.currentStation = null;
+  radioUpdateNowPlayingBar();
+  radioRefreshAllCardStates();
+  radioClearError();
+}
+
+// ─── Favorites ──────────────────────────────────────────────────────────
+function radioToggleFavoriteFromCard(btnEl) {
+  let station;
+  try { station = JSON.parse(btnEl.dataset.station); } catch (_e) { return; }
+  radioToggleFavorite(station);
+}
+
+function radioToggleFavoriteCurrent() {
+  if (RADIO.currentStation) radioToggleFavorite(RADIO.currentStation);
+}
+
+async function radioToggleFavorite(station) {
+  if (!station?.stationUuid) return;
+  const isFav = RADIO.favoriteUuids.has(station.stationUuid);
+  try {
+    if (isFav) {
+      const res = await radioAuthedFetch(`/api/radio/favorites/${encodeURIComponent(station.stationUuid)}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: AUTH.token }),
+      });
+      if (!res.ok) throw new Error('Could not remove favorite.');
+      RADIO.favoriteUuids.delete(station.stationUuid);
+    } else {
+      const res = await radioAuthedFetch('/api/radio/favorites', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: AUTH.token, station }),
+      });
+      if (!res.ok) throw new Error('Could not save favorite.');
+      RADIO.favoriteUuids.add(station.stationUuid);
+    }
+    radioRefreshAllCardStates();
+    radioUpdateNowPlayingBar();
+    if (RADIO.tab === 'favorites') loadRadioFavorites();
+    showToast(isFav ? 'Removed from Favorites' : 'Added to Favorites', station.name, 'info');
+  } catch (err) {
+    showToast('Favorites', err.message || 'Could not update favorite.', 'error');
+  }
+}
+
+// ─── Playback error handling — never crash, always a friendly message ───
+const radioAudioEl = $('radioAudioEl');
+if (radioAudioEl) {
+  radioAudioEl.addEventListener('error', () => {
+    if (!RADIO.currentStation) return;
+    radioShowError('This station is currently unavailable. Try another station.');
+    radioUpdateNowPlayingBar();
+  });
+  radioAudioEl.addEventListener('playing', radioUpdateNowPlayingBar);
+  radioAudioEl.addEventListener('pause', radioUpdateNowPlayingBar);
+}
+
 
 // ─── Premium Hub ────────────────────────────────────────────────────────────
 async function loadPremiumBillingHistory() {
@@ -15984,7 +16608,7 @@ document.addEventListener('keydown', e => {
 })();
 
 // ─── Patch: Close new overlays via clicking outside ──────────────────────────
-['supportOverlay','aboutOverlay','settingsOverlay','lyricsOverlay','userProfileOverlay','artistProfileOverlay','becomeArtistOverlay','editArtistBioOverlay','manageCollaboratorsOverlay','publishTrackOverlay','trackAnalyticsOverlay','createReleaseOverlay','djBoomOverlay','premiumHubOverlay','premiumCheckoutOverlay','premiumManageOverlay','addEmailOverlay'].forEach(id => {
+['supportOverlay','aboutOverlay','settingsOverlay','lyricsOverlay','userProfileOverlay','artistProfileOverlay','becomeArtistOverlay','editArtistBioOverlay','manageCollaboratorsOverlay','publishTrackOverlay','trackAnalyticsOverlay','createReleaseOverlay','djBoomOverlay','premiumHubOverlay','premiumCheckoutOverlay','premiumManageOverlay','addEmailOverlay','radioOverlay'].forEach(id => {
   const el = $(id);
   if (!el) return;
   el.addEventListener('click', e => { if (e.target === el) el.classList.remove('open'); });
