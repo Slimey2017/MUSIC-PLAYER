@@ -138,6 +138,34 @@ section:last-of-type{ border-bottom:none; }
 .card h3{ font-size:.92rem; text-transform:uppercase; letter-spacing:.04em; }
 .card p{ font-size:.78rem; color:var(--text-dim); margin:0; }
 
+/* premium */
+.premium-section{ position:relative; overflow:hidden; }
+.premium-section::before{
+  content:''; position:absolute; top:-20%; left:-10%; width:480px; height:480px;
+  background:radial-gradient(circle, rgba(232,255,71,.09), transparent 65%); pointer-events:none;
+}
+.premium-panel{
+  border:1px solid var(--yellow); border-radius:10px; background:var(--surface);
+  padding:40px; position:relative; box-shadow:0 30px 70px -30px rgba(232,255,71,.15);
+}
+.premium-badge{
+  display:inline-flex; align-items:center; gap:6px; font-size:.62rem; letter-spacing:.16em;
+  text-transform:uppercase; color:#0a0a0a; background:var(--yellow); padding:5px 11px;
+  border-radius:20px; font-weight:700; margin-bottom:18px;
+}
+.premium-head{ display:flex; justify-content:space-between; align-items:flex-start; gap:24px; flex-wrap:wrap; margin-bottom:28px; }
+.premium-head h2{ font-size:1.9rem; margin-bottom:10px; }
+.premium-head p{ color:var(--text-dim); max-width:48ch; margin:0; }
+.premium-grid{ display:grid; grid-template-columns:repeat(4,1fr); gap:20px; margin-bottom:30px; }
+.premium-item{ display:flex; flex-direction:column; gap:6px; }
+.premium-item .ic{ color:var(--yellow); font-size:1rem; }
+.premium-item h4{ font-family:'Unbounded',sans-serif; font-size:.82rem; text-transform:uppercase; letter-spacing:.03em; }
+.premium-item p{ font-size:.75rem; color:var(--text-dim); margin:0; }
+.premium-foot{ display:flex; align-items:center; justify-content:space-between; gap:20px; flex-wrap:wrap; padding-top:24px; border-top:1px solid var(--border); }
+.premium-billing{ font-size:.68rem; color:var(--text-mute); letter-spacing:.03em; max-width:44ch; }
+@media (max-width:860px){ .premium-grid{ grid-template-columns:1fr 1fr; } }
+@media (max-width:520px){ .premium-grid{ grid-template-columns:1fr; } .premium-panel{ padding:26px; } }
+
 /* screenshots */
 .shots{ display:grid; grid-template-columns:1.3fr 1fr; gap:18px; }
 .shot{ border:1px solid var(--border); border-radius:8px; overflow:hidden; background:var(--surface); }
@@ -218,6 +246,7 @@ footer{ padding:56px 0 40px; }
     <div class="logo">FREQ<span>Universal Music Player</span></div>
     <nav class="links">
       <a href="#features">Features</a>
+      <a href="#premium">Premium</a>
       <a href="#screens">Screens</a>
       <a href="#changelog">Changelog</a>
       <a href="#rules">Rules</a>
@@ -354,6 +383,47 @@ footer{ padding:56px 0 40px; }
   </div>
 </section>
 
+<section id="premium" class="premium-section">
+  <div class="wrap">
+    <div class="premium-panel">
+      <span class="premium-badge">★ FREQ Premium</span>
+      <div class="premium-head">
+        <div>
+          <h2>Everything in FREQ, then more room to make things.</h2>
+          <p>An optional subscription on top of the free platform — more cloud storage, an AI assistant that knows your session, and a couple of things that just wouldn't make sense as defaults.</p>
+        </div>
+        <a class="btn btn-primary" href="https://music-player-0v87.onrender.com" target="_blank" rel="noopener">▶ Go Premium</a>
+      </div>
+      <div class="premium-grid">
+        <div class="premium-item">
+          <span class="ic">☁</span>
+          <h4>75GB cloud storage</h4>
+          <p>A big jump from the free tier for artists uploading tracks and videos.</p>
+        </div>
+        <div class="premium-item">
+          <span class="ic">✦</span>
+          <h4>DJ BOOM</h4>
+          <p>An AI assistant grounded in your live session — queue, playback, and player state — not a generic chatbot bolted on the side.</p>
+        </div>
+        <div class="premium-item">
+          <span class="ic">📻</span>
+          <h4>Real-Life Radio</h4>
+          <p>A Premium-only radio mode built into the deck.</p>
+        </div>
+        <div class="premium-item">
+          <span class="ic">⚑</span>
+          <h4>Premium badge</h4>
+          <p>Shows on your profile and posts across the platform.</p>
+        </div>
+      </div>
+      <div class="premium-foot">
+        <span class="premium-billing">Billed and managed entirely through Gumroad — FREQ never sees your card details. Cancel any time from your Premium dashboard or Gumroad directly.</span>
+        <a class="btn btn-ghost" href="freq-tos.html#s4">Billing terms →</a>
+      </div>
+    </div>
+  </div>
+</section>
+
 <section id="screens">
   <div class="wrap">
     <div class="eyebrow"><span class="dot"></span> SCREENS</div>
@@ -394,6 +464,10 @@ footer{ padding:56px 0 40px; }
     <div class="log">
       <div class="log-row">
         <span class="log-tag"><span class="log-prompt">&gt;</span> latest</span>
+        <div><div class="log-title">FREQ Premium</div><p class="log-desc">An optional subscription tier — expanded cloud storage, the DJ BOOM assistant, Real-Life Radio, and a Premium badge — billed through Gumroad. Signing up now requires an email address to verify purchases and enable account recovery.</p></div>
+      </div>
+      <div class="log-row">
+        <span class="log-tag"><span class="log-prompt">&gt;</span> recent</span>
         <div><div class="log-title">Music video system</div><p class="log-desc">Direct browser-to-storage uploads, a custom video overlay player, and video plays tracked right alongside audio.</p></div>
       </div>
       <div class="log-row">
@@ -472,7 +546,11 @@ footer{ padding:56px 0 40px; }
       </details>
       <details>
         <summary>Do I need an email address to sign up?</summary>
-        <p>No. A FREQ account only needs a username, display name, and password. Passwords are hashed with PBKDF2-SHA256 and never stored in plain text — but that also means account recovery is limited if you don't have an email on file, so pick a password you'll remember.</p>
+        <p>Yes. A FREQ account needs a username, email address, display name, and password. The email is what lets you recover your account and verify a FREQ Premium purchase — passwords are hashed with PBKDF2-SHA256 and never stored in plain text, so we can't recover a lost password without one.</p>
+      </details>
+      <details>
+        <summary>What does FREQ Premium include, and how does billing work?</summary>
+        <p>Premium adds expanded cloud storage, the DJ BOOM assistant, Real-Life Radio, and a Premium badge. It's an optional recurring subscription billed and managed entirely through Gumroad — FREQ never sees your card details, and you can cancel any time directly on Gumroad.</p>
       </details>
       <details>
         <summary>What can I upload as an artist?</summary>
@@ -492,7 +570,7 @@ footer{ padding:56px 0 40px; }
       </details>
       <details>
         <summary>What data does FREQ actually store about me?</summary>
-        <p>Your account record is just username, display name, and hashed password. Things like your queue, play history, theme, and player settings stay in your browser's local storage and are never sent to FREQ's servers unless a specific synced feature (like cloud playlists) needs them.</p>
+        <p>Your account record is username, email, display name, hashed password, and (if you're a Premium subscriber) your subscription status — never your card details, which Gumroad holds. Things like your queue, play history, theme, and player settings stay in your browser's local storage and are never sent to FREQ's servers unless a specific synced feature (like cloud playlists) needs them.</p>
       </details>
       <details>
         <summary>Can I delete my account and everything in it?</summary>
