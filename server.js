@@ -97,6 +97,7 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { createSupabaseClientFromEnv, createFallbackSupabaseClient } = require('./server-config');
 const { verifyPremiumNow, verifyPremiumIfDue } = require('./lib/premiumVerification');
 const { getConfiguredProviders } = require('./lib/premium-providers');
+const radio = require('./lib/radio');
 
 // ─── Supabase client (server-side only — uses service role key) ───────────────
 const supabase = createSupabaseClientFromEnv(process.env) || createFallbackSupabaseClient();
@@ -1982,7 +1983,11 @@ async function requirePremium(req, res, next) {
   const token = (req.headers.authorization || '').replace('Bearer ', '') || req.body?.token || req.query.token;
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Authentication required.' });
-  if (!sess.isPremium) return res.status(403).json({ error: 'DJ BOOM is available with FREQ Premium.' });
+  // Generic message since this middleware now gates more than one feature
+  // (DJ BOOM, Real-Life Radio) — callers that want feature-specific upsell
+  // copy show their own lock-card text client-side; the API response just
+  // needs to be an unambiguous 403, not a marketing line.
+  if (!sess.isPremium) return res.status(403).json({ error: 'This feature is available with FREQ Premium.' });
   req._premiumSession = sess;
   next();
 }
@@ -3770,6 +3775,332 @@ app.get('/api/premium/manage', async (req, res) => {
   } catch (err) {
     console.error('[premium manage]', err);
     return res.status(500).json({ error: 'Could not load subscription management info.' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  REAL-LIFE RADIO (PTB) — Premium-only live internet radio
+//  Backed by the free Radio Browser directory (lib/radio.js) — FREQ never
+//  stores the station catalog itself, only per-user favorites/recent-plays
+//  rows that reference a station by its Radio Browser stationuuid.
+//
+//  Every route that can hand back a playable stream URL (search, popular,
+//  favorites, recent, and the play/click endpoint) is gated by
+//  requirePremium — per the "do not rely only on frontend locking"
+//  requirement, a non-Premium session gets a 403 from the API itself, not
+//  just a blurred panel. countries/tags are metadata-only (no stream URLs)
+//  and are left open so the upgrade prompt can show real genre/country
+//  browse chips before someone subscribes, same "show it, don't hide it"
+//  spirit as the DJ BOOM lock card.
+//
+//  Radio plays are DELIBERATELY never written to tracks/track_plays — see
+//  radio_recent_plays in the migration — so Real-Life Radio never counts
+//  toward artist/track play counts or Community Charts.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Same rolling-window shape as djBoomRateLimit — search/browse calls hit
+// Radio Browser's free public API, so this exists to keep FREQ a well-
+// behaved consumer of it (and to keep one user from hammering it through
+// FREQ), not because it costs FREQ money the way an LLM call does.
+const radioRateLimitHits = new Map();
+function radioRateLimit(req, res, next) {
+  const sess = req._premiumSession;
+  const key = sess?.username || req.ip;
+  const now = Date.now();
+  const times = (radioRateLimitHits.get(key) || []).filter(t => now - t < 60_000);
+  times.push(now);
+  radioRateLimitHits.set(key, times);
+  if (times.length > 60) {
+    return res.status(429).json({ error: 'Too many radio requests — please slow down.' });
+  }
+  next();
+}
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, times] of radioRateLimitHits) {
+    const fresh = times.filter(t => now - t < 60_000);
+    if (!fresh.length) radioRateLimitHits.delete(key); else radioRateLimitHits.set(key, fresh);
+  }
+}, 300_000);
+
+function shapeStationForClient(s) {
+  return {
+    stationUuid: s.stationUuid,
+    name: s.name,
+    streamUrl: s.streamUrl,
+    homepageUrl: s.homepageUrl,
+    faviconUrl: s.faviconUrl,
+    country: s.country,
+    countryCode: s.countryCode,
+    language: s.language,
+    tags: s.tags,
+    codec: s.codec,
+    bitrate: s.bitrate,
+    votes: s.votes,
+  };
+}
+
+// GET /api/radio/search?token=&name=&tag=&country=&countryCode=&language=&limit=&offset=
+app.get('/api/radio/search', requirePremium, radioRateLimit, async (req, res) => {
+  try {
+    const stations = await radio.searchStations({
+      name: req.query.name,
+      tag: req.query.tag,
+      country: req.query.country,
+      countryCode: req.query.countryCode,
+      language: req.query.language,
+      limit: req.query.limit,
+      offset: req.query.offset,
+    });
+    return res.json({ stations: stations.map(shapeStationForClient) });
+  } catch (err) {
+    console.error('[radio search]', err?.message || err);
+    return res.status(502).json({ error: 'Could not reach the radio directory. Please try again.' });
+  }
+});
+
+// GET /api/radio/popular?token=&limit=
+app.get('/api/radio/popular', requirePremium, radioRateLimit, async (req, res) => {
+  try {
+    const stations = await radio.getPopularStations({ limit: req.query.limit });
+    return res.json({ stations: stations.map(shapeStationForClient) });
+  } catch (err) {
+    console.error('[radio popular]', err?.message || err);
+    return res.status(502).json({ error: 'Could not reach the radio directory. Please try again.' });
+  }
+});
+
+// GET /api/radio/featured?token=&limit=  — top-voted stations, used for the
+// Radio Home "Featured" rail, kept distinct from Popular (clickcount) since
+// they're different signals (community votes vs. actual live listens).
+app.get('/api/radio/featured', requirePremium, radioRateLimit, async (req, res) => {
+  try {
+    const stations = await radio.getTopVotedStations({ limit: req.query.limit });
+    return res.json({ stations: stations.map(shapeStationForClient) });
+  } catch (err) {
+    console.error('[radio featured]', err?.message || err);
+    return res.status(502).json({ error: 'Could not reach the radio directory. Please try again.' });
+  }
+});
+
+// GET /api/radio/countries?limit=  — metadata only (names + counts), no
+// stream URLs, so this is intentionally left open (not requirePremium) to
+// power genre/country browse chips on the upgrade-prompt view for signed-
+// out / non-Premium visitors. Matches DJ BOOM's "show it, don't hide it".
+app.get('/api/radio/countries', rateLimit, async (req, res) => {
+  try {
+    const countries = await radio.getCountries({ limit: req.query.limit });
+    return res.json({ countries });
+  } catch (err) {
+    console.error('[radio countries]', err?.message || err);
+    return res.status(502).json({ error: 'Could not reach the radio directory. Please try again.' });
+  }
+});
+
+// GET /api/radio/tags?limit=  — same "metadata only, left open" reasoning
+// as /api/radio/countries above.
+app.get('/api/radio/tags', rateLimit, async (req, res) => {
+  try {
+    const tags = await radio.getTags({ limit: req.query.limit });
+    return res.json({ tags });
+  } catch (err) {
+    console.error('[radio tags]', err?.message || err);
+    return res.status(502).json({ error: 'Could not reach the radio directory. Please try again.' });
+  }
+});
+
+// POST /api/radio/play   { token, stationUuid }
+// Called right when the user hits Play (not on every search result render).
+// Re-fetches the station by UUID server-side — never trusts a client-
+// supplied streamUrl — so the actual stream link handed back always comes
+// from Radio Browser directly, and registers the click with Radio Browser
+// per their own usage guidance. This is the one route whose entire purpose
+// is handing back a playable URL, so it's the most important to keep
+// behind requirePremium regardless of what the frontend does.
+app.post('/api/radio/play', requirePremium, radioRateLimit, async (req, res) => {
+  const { stationUuid } = req.body || {};
+  if (!stationUuid) return res.status(400).json({ error: 'stationUuid is required.' });
+  try {
+    const station = await radio.getStationByUuid(stationUuid);
+    if (!station) {
+      return res.status(404).json({ error: 'This station is currently unavailable. Try another station.' });
+    }
+    radio.registerClick(stationUuid); // fire-and-forget, see lib/radio.js
+    return res.json({ station: shapeStationForClient(station) });
+  } catch (err) {
+    console.error('[radio play]', err?.message || err);
+    return res.status(502).json({ error: 'This station is currently unavailable. Try another station.' });
+  }
+});
+
+// ─── Favorites ──────────────────────────────────────────────────────────
+
+// GET /api/radio/favorites?token=
+app.get('/api/radio/favorites', requirePremium, radioRateLimit, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('radio_favorites')
+      .select('station_uuid, station_name, station_url, station_favicon, homepage_url, country, tags, codec, bitrate, created_at')
+      .eq('owner', req._premiumSession.username)
+      .order('created_at', { ascending: false });
+    if (error) throw new Error(error.message);
+    return res.json({
+      favorites: (data || []).map(f => ({
+        stationUuid: f.station_uuid,
+        name: f.station_name,
+        streamUrl: f.station_url,
+        faviconUrl: f.station_favicon,
+        homepageUrl: f.homepage_url,
+        country: f.country,
+        tags: f.tags,
+        codec: f.codec,
+        bitrate: f.bitrate,
+        favoritedAt: f.created_at,
+      })),
+    });
+  } catch (err) {
+    console.error('[radio favorites get]', err?.message || err);
+    return res.status(500).json({ error: 'Could not load favorites.' });
+  }
+});
+
+// POST /api/radio/favorites   { token, station: { stationUuid, name, streamUrl, homepageUrl, faviconUrl, country, tags, codec, bitrate } }
+// Takes the full station object from the client (as returned by search/
+// popular/play above) rather than re-fetching by UUID — a station a user
+// wants to favorite was already resolved once by one of those routes, and
+// Radio Browser has no bulk "get station snapshot to persist" endpoint
+// that would make a second round-trip meaningful here. Premium-gated like
+// everything else radio, even though it doesn't hand back a stream URL
+// itself, since favoriting is part of the same Premium feature surface.
+app.post('/api/radio/favorites', requirePremium, radioRateLimit, async (req, res) => {
+  const { station } = req.body || {};
+  const stationUuid = station?.stationUuid;
+  const name = station?.name;
+  const streamUrl = station?.streamUrl;
+  if (!stationUuid || !name || !streamUrl) {
+    return res.status(400).json({ error: 'station.stationUuid, station.name, and station.streamUrl are required.' });
+  }
+  try {
+    const row = {
+      owner: req._premiumSession.username,
+      station_uuid: String(stationUuid).slice(0, 200),
+      station_name: String(name).slice(0, 300),
+      station_url: String(streamUrl).slice(0, 1000),
+      station_favicon: station.faviconUrl ? String(station.faviconUrl).slice(0, 1000) : null,
+      homepage_url: station.homepageUrl ? String(station.homepageUrl).slice(0, 1000) : null,
+      country: station.country ? String(station.country).slice(0, 120) : null,
+      tags: station.tags ? String(station.tags).slice(0, 500) : null,
+      codec: station.codec ? String(station.codec).slice(0, 20) : null,
+      bitrate: Number.isFinite(Number(station.bitrate)) ? Number(station.bitrate) : null,
+      updated_at: new Date().toISOString(),
+    };
+    const { error } = await supabase
+      .from('radio_favorites')
+      .upsert(row, { onConflict: 'owner,station_uuid' });
+    if (error) throw new Error(error.message);
+    return res.json({ favorited: true });
+  } catch (err) {
+    console.error('[radio favorites post]', err?.message || err);
+    return res.status(500).json({ error: 'Could not save favorite.' });
+  }
+});
+
+// DELETE /api/radio/favorites/:stationId   { token }
+app.delete('/api/radio/favorites/:stationId', requirePremium, radioRateLimit, async (req, res) => {
+  try {
+    const { error } = await supabase
+      .from('radio_favorites')
+      .delete()
+      .eq('owner', req._premiumSession.username)
+      .eq('station_uuid', req.params.stationId);
+    if (error) throw new Error(error.message);
+    return res.json({ favorited: false });
+  } catch (err) {
+    console.error('[radio favorites delete]', err?.message || err);
+    return res.status(500).json({ error: 'Could not remove favorite.' });
+  }
+});
+
+// ─── Recently Played ────────────────────────────────────────────────────
+
+// GET /api/radio/recent?token=&limit=
+// Returns distinct stations, most-recently-played first — a user bouncing
+// between the same three stations shouldn't see the list clogged with
+// repeats of the same station at different timestamps. Deduping is done
+// in JS after a slightly larger fetch rather than in SQL (no DISTINCT ON
+// helper on the query builder used elsewhere in this codebase — see
+// server-config.js — so this stays consistent with how every other route
+// here shapes results after a plain .select()).
+app.get('/api/radio/recent', requirePremium, radioRateLimit, async (req, res) => {
+  const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 100);
+  try {
+    const { data, error } = await supabase
+      .from('radio_recent_plays')
+      .select('station_uuid, station_name, stream_url, homepage_url, favicon_url, country, tags, codec, bitrate, played_at')
+      .eq('owner', req._premiumSession.username)
+      .order('played_at', { ascending: false })
+      .limit(limit * 3); // over-fetch a bit to have enough left after de-duping by station
+    if (error) throw new Error(error.message);
+
+    const seen = new Set();
+    const deduped = [];
+    for (const row of (data || [])) {
+      if (seen.has(row.station_uuid)) continue;
+      seen.add(row.station_uuid);
+      deduped.push(row);
+      if (deduped.length >= limit) break;
+    }
+
+    return res.json({
+      recent: deduped.map(r => ({
+        stationUuid: r.station_uuid,
+        name: r.station_name,
+        streamUrl: r.stream_url,
+        homepageUrl: r.homepage_url,
+        faviconUrl: r.favicon_url,
+        country: r.country,
+        tags: r.tags,
+        codec: r.codec,
+        bitrate: r.bitrate,
+        playedAt: r.played_at,
+      })),
+    });
+  } catch (err) {
+    console.error('[radio recent get]', err?.message || err);
+    return res.status(500).json({ error: 'Could not load recently played stations.' });
+  }
+});
+
+// POST /api/radio/recent   { token, station: {...} }
+// Logs one play event. Called by the frontend right after a station
+// actually starts playing (not on hover/search-result-render) — same
+// timing as /api/radio/play, and typically fired alongside it.
+app.post('/api/radio/recent', requirePremium, radioRateLimit, async (req, res) => {
+  const { station } = req.body || {};
+  const stationUuid = station?.stationUuid;
+  const name = station?.name;
+  const streamUrl = station?.streamUrl;
+  if (!stationUuid || !name || !streamUrl) {
+    return res.status(400).json({ error: 'station.stationUuid, station.name, and station.streamUrl are required.' });
+  }
+  try {
+    const { error } = await supabase.from('radio_recent_plays').insert({
+      owner: req._premiumSession.username,
+      station_uuid: String(stationUuid).slice(0, 200),
+      station_name: String(name).slice(0, 300),
+      stream_url: String(streamUrl).slice(0, 1000),
+      homepage_url: station.homepageUrl ? String(station.homepageUrl).slice(0, 1000) : null,
+      favicon_url: station.faviconUrl ? String(station.faviconUrl).slice(0, 1000) : null,
+      country: station.country ? String(station.country).slice(0, 120) : null,
+      tags: station.tags ? String(station.tags).slice(0, 500) : null,
+      codec: station.codec ? String(station.codec).slice(0, 20) : null,
+      bitrate: Number.isFinite(Number(station.bitrate)) ? Number(station.bitrate) : null,
+    });
+    if (error) throw new Error(error.message);
+    return res.json({ logged: true });
+  } catch (err) {
+    console.error('[radio recent post]', err?.message || err);
+    return res.status(500).json({ error: 'Could not log recently played station.' });
   }
 });
 
