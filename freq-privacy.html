@@ -307,7 +307,7 @@ footer {
     <h1 class="tos-title">Privacy<br><span class="accent">Policy</span></h1>
     <div class="tos-meta">
       <span><span class="dot">●</span> Effective: June 29, 2026</span>
-      <span><span class="dot">●</span> Last Updated: June 2026</span>
+      <span><span class="dot">●</span> Last Updated: July 2026</span>
       <span><span class="dot">●</span> Platform: FREQ Universal Music Player</span>
     </div>
   </div>
@@ -319,20 +319,21 @@ footer {
       <li><a href="#s1">Overview</a></li>
       <li><a href="#s2">Information We Collect</a></li>
       <li><a href="#s3">Account &amp; Authentication Data</a></li>
-      <li><a href="#s4">Content You Upload</a></li>
-      <li><a href="#s5">Local Device Storage</a></li>
-      <li><a href="#s6">Listening &amp; Usage Data</a></li>
-      <li><a href="#s7">Cookies &amp; Tracking Technologies</a></li>
-      <li><a href="#s8">How We Use Your Information</a></li>
-      <li><a href="#s9">How We Share Information</a></li>
-      <li><a href="#s10">Third-Party Platforms</a></li>
-      <li><a href="#s11">Data Storage &amp; Security</a></li>
-      <li><a href="#s12">Data Retention</a></li>
-      <li><a href="#s13">Your Choices &amp; Rights</a></li>
-      <li><a href="#s14">Children's Privacy</a></li>
-      <li><a href="#s15">International Users</a></li>
-      <li><a href="#s16">Changes to This Policy</a></li>
-      <li><a href="#s17">Contact</a></li>
+      <li><a href="#s4">Payment &amp; Subscription Data</a></li>
+      <li><a href="#s5">Content You Upload</a></li>
+      <li><a href="#s6">Local Device Storage</a></li>
+      <li><a href="#s7">Listening &amp; Usage Data</a></li>
+      <li><a href="#s8">Cookies &amp; Tracking Technologies</a></li>
+      <li><a href="#s9">How We Use Your Information</a></li>
+      <li><a href="#s10">How We Share Information</a></li>
+      <li><a href="#s11">Third-Party Platforms</a></li>
+      <li><a href="#s12">Data Storage &amp; Security</a></li>
+      <li><a href="#s13">Data Retention</a></li>
+      <li><a href="#s14">Your Choices &amp; Rights</a></li>
+      <li><a href="#s15">Children's Privacy</a></li>
+      <li><a href="#s16">International Users</a></li>
+      <li><a href="#s17">Changes to This Policy</a></li>
+      <li><a href="#s18">Contact</a></li>
     </ul>
   </nav>
 
@@ -345,7 +346,7 @@ footer {
       <div class="callout-label">Note</div>
       <p>FREQ is an independent platform operated by a solo developer. It is not affiliated with YouTube, Spotify, Tidal, SoundCloud, Apple Music, or any other third-party streaming service referenced in this Policy.</p>
     </div>
-    <p>FREQ is built around a simple principle: collect what's needed to run the Platform, and nothing more. Accounts don't require an email address. Most of your personal settings — queue, history, favorites, theme — never leave your device. The sections below explain exactly what does.</p>
+    <p>FREQ is built around a simple principle: collect what's needed to run the Platform, and nothing more. Creating an account requires an email address, used for account recovery and to verify FREQ Premium purchases. Most of your personal settings — queue, history, favorites, theme — never leave your device. The sections below explain exactly what does.</p>
   </section>
 
   <!-- §2 Information We Collect -->
@@ -365,8 +366,13 @@ footer {
         <tbody>
           <tr>
             <td><strong>Account credentials</strong></td>
-            <td>Username, display name, password (hashed)</td>
+            <td>Username, display name, email address, password (hashed)</td>
             <td>FREQ database (Supabase)</td>
+          </tr>
+          <tr>
+            <td><strong>Payment &amp; subscription data</strong></td>
+            <td>Premium subscription status, renewal date, purchase-verification email (billing details themselves are held by Gumroad, not FREQ)</td>
+            <td>FREQ database (status only) + Gumroad</td>
           </tr>
           <tr>
             <td><strong>Profile content</strong></td>
@@ -396,39 +402,76 @@ footer {
         </tbody>
       </table>
     </div>
-    <p>We do not collect government ID, payment card numbers, biometric data, or precise location data. FREQ does not currently process payments of any kind.</p>
+    <p>We do not collect government ID, payment card numbers, biometric data, or precise location data. FREQ Premium purchases are processed by Gumroad; FREQ never receives or stores your card details — see <a href="#s4">Payment &amp; Subscription Data</a> below.</p>
   </section>
 
   <!-- §3 Account & Authentication Data -->
   <section class="tos-section" id="s3">
     <div class="section-num">Section 03</div>
     <h2 class="section-heading">Account &amp; Authentication Data</h2>
-    <p>Creating a FREQ account only requires a <strong>username</strong>, a <strong>display name</strong>, and a <strong>password</strong>.</p>
+    <p>Creating a FREQ account requires a <strong>username</strong>, an <strong>email address</strong>, a <strong>display name</strong>, and a <strong>password</strong>.</p>
     <div class="callout info">
-      <div class="callout-label">ℹ No Email Required</div>
-      <p>FREQ accounts do not require an email address. Your username and password are your only credentials, and your library syncs automatically across devices using them. If you choose to provide an email — for example, as an optional reply-to address on a support ticket — it is used only to respond to that specific request and is not attached to your account record.</p>
+      <div class="callout-label">ℹ Email Address Required</div>
+      <p>A valid email address is required to create a FREQ account. It's used to help you recover your account, to verify FREQ Premium purchases against Gumroad's records, and to send important account or service notices. Accounts created before this requirement was introduced may be prompted to add an email address, including when accessing Premium features. We do not use your account email for marketing without your consent.</p>
     </div>
-    <p>Passwords are hashed using <strong>PBKDF2-SHA256</strong> before storage. We never store your password in plain text, and we cannot recover it for you — account recovery without an email on file is limited, so choose a password you'll remember.</p>
+    <p>Passwords are hashed using <strong>PBKDF2-SHA256</strong> before storage. We never store your password in plain text and cannot recover it for you directly, but we can send an account-recovery message to the email on file.</p>
     <p>When you sign in, FREQ issues a session token that your browser stores locally to keep you authenticated. This token is sent with API requests that require your identity (publishing tracks, liking, following, reporting, and similar actions) and is not used to track you across other websites.</p>
   </section>
 
-  <!-- §4 Content You Upload -->
+  <!-- §4 Payment & Subscription Data -->
   <section class="tos-section" id="s4">
     <div class="section-num">Section 04</div>
+    <h2 class="section-heading">Payment &amp; Subscription Data</h2>
+    <p>FREQ offers an optional paid tier, <strong>FREQ Premium</strong>. Payments for Premium are handled entirely by <strong>Gumroad</strong>, an independent third-party payment processor — FREQ never receives, transmits, or stores your card number, billing address, or other payment card details.</p>
+    <div class="priv-table-wrap">
+      <table class="priv-table">
+        <thead>
+          <tr>
+            <th>Category</th>
+            <th>Examples</th>
+            <th>Where It Lives</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Subscription status</strong></td>
+            <td>Whether Premium is active, plan type, renewal/expiration date</td>
+            <td>FREQ database (Supabase)</td>
+          </tr>
+          <tr>
+            <td><strong>Purchase-verification email</strong></td>
+            <td>The email address used at Gumroad checkout, if different from your account email</td>
+            <td>FREQ database (Supabase), used only to query Gumroad's API</td>
+          </tr>
+          <tr>
+            <td><strong>Billing &amp; card details</strong></td>
+            <td>Card numbers, billing address, transaction history</td>
+            <td>Held solely by Gumroad — never sent to or stored by FREQ</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p>To keep your Premium status current, FREQ periodically queries Gumroad's API using the email address tied to your subscription and stores only the resulting status (active, cancelled, expired, renewal date). We do not have access to your Gumroad account, payment method, or full transaction history — cancellations, refunds, and payment-method changes are all managed directly on Gumroad.</p>
+    <p>Gumroad's own handling of your payment data is governed by Gumroad's privacy policy and terms, not this one.</p>
+  </section>
+
+  <!-- §5 Content You Upload -->
+  <section class="tos-section" id="s5">
+    <div class="section-num">Section 05</div>
     <h2 class="section-heading">Content You Upload</h2>
     <p>If you upload audio files, music videos, cover art, an avatar, or a banner image, that content is stored in our cloud storage provider (Supabase Storage) and associated with your account.</p>
     <ul class="tos-list">
       <li><strong>Private cloud files</strong> (your personal library) are delivered only to you via time-limited signed URLs — they are not publicly accessible.</li>
       <li><strong>Published tracks and music videos</strong> are intentionally public once you publish them, and are streamable by anyone via a public endpoint, consistent with the visibility setting (public, unlisted, or private) you choose at publish time.</li>
       <li><strong>File metadata</strong> we store includes filename, file size, upload date, and — where available — embedded audio metadata such as ID3 tags (title, artist, album art).</li>
-      <li>If you delete a published track or your account, associated files are removed from cloud storage, subject to the retention notes in Section 12.</li>
+      <li>If you delete a published track or your account, associated files are removed from cloud storage, subject to the retention notes in Section 13.</li>
     </ul>
-    <p>See our Terms of Service, Section 10, for additional detail on cloud storage limits and availability.</p>
+    <p>See our Terms of Service, Section 11, for additional detail on cloud storage limits and availability.</p>
   </section>
 
   <!-- §5 Local Device Storage -->
-  <section class="tos-section" id="s5">
-    <div class="section-num">Section 05</div>
+  <section class="tos-section" id="s6">
+    <div class="section-num">Section 06</div>
     <h2 class="section-heading">Local Device Storage</h2>
     <p>A large part of FREQ's functionality is powered by your browser's local storage rather than our servers. The following stay entirely on your device and are <strong>never transmitted to FREQ</strong>:</p>
     <ul class="tos-list">
@@ -443,8 +486,8 @@ footer {
   </section>
 
   <!-- §6 Listening & Usage Data -->
-  <section class="tos-section" id="s6">
-    <div class="section-num">Section 06</div>
+  <section class="tos-section" id="s7">
+    <div class="section-num">Section 07</div>
     <h2 class="section-heading">Listening &amp; Usage Data</h2>
     <p>To power features like Community Charts, track analytics, and your own listening history, FREQ records play events when you listen to a track.</p>
     <ul class="tos-list">
@@ -457,20 +500,20 @@ footer {
   </section>
 
   <!-- §7 Cookies & Tracking Technologies -->
-  <section class="tos-section" id="s7">
-    <div class="section-num">Section 07</div>
+  <section class="tos-section" id="s8">
+    <div class="section-num">Section 08</div>
     <h2 class="section-heading">Cookies &amp; Tracking Technologies</h2>
     <p>FREQ does not use third-party advertising cookies and does not sell or share your data with advertisers. The Platform primarily relies on browser local storage (see Section 5) rather than cookies for its own functionality.</p>
     <ul class="tos-list">
       <li>FREQ does not run cross-site tracking pixels, ad networks, or fingerprinting scripts of its own.</li>
-      <li>Embedded third-party players (YouTube, Spotify, SoundCloud, etc.) may set their own cookies when you stream through them, governed entirely by that platform's own policy — see Section 10.</li>
+      <li>Embedded third-party players (YouTube, Spotify, SoundCloud, etc.) may set their own cookies when you stream through them, governed entirely by that platform's own policy — see Section 11.</li>
       <li>A "Nocookie Mode" is offered for YouTube embeds specifically to reduce cookie usage from that embed where YouTube supports it.</li>
     </ul>
   </section>
 
   <!-- §8 How We Use Your Information -->
-  <section class="tos-section" id="s8">
-    <div class="section-num">Section 08</div>
+  <section class="tos-section" id="s9">
+    <div class="section-num">Section 09</div>
     <h2 class="section-heading">How We Use Your Information</h2>
     <p>We use the information described above to:</p>
     <ul class="tos-list">
@@ -485,14 +528,14 @@ footer {
   </section>
 
   <!-- §9 How We Share Information -->
-  <section class="tos-section" id="s9">
-    <div class="section-num">Section 09</div>
+  <section class="tos-section" id="s10">
+    <div class="section-num">Section 10</div>
     <h2 class="section-heading">How We Share Information</h2>
     <p>FREQ does not sell your personal information. We share information only in the following limited circumstances:</p>
     <ul class="tos-list">
       <li><strong>Public by design:</strong> content you choose to make public — published tracks, artist profiles, posts, comments, follower lists — is visible to anyone using the Platform, by definition.</li>
       <li><strong>Collaborators:</strong> if you're tagged as a collaborator on a release, your username and credit role are displayed alongside that release.</li>
-      <li><strong>Service providers:</strong> we use Supabase (database and file storage) and EmailJS (transactional email delivery for support tickets and moderation notifications) to operate the Platform. These providers process data on our behalf and are not authorized to use it for their own purposes.</li>
+      <li><strong>Service providers:</strong> we use Supabase (database and file storage), EmailJS (transactional email delivery for support tickets and moderation notifications), and Gumroad (Premium subscription checkout and billing) to operate the Platform. These providers process data on our behalf and are not authorized to use it for their own purposes, except that Gumroad independently controls payment data as described in <a href="#s4">Payment &amp; Subscription Data</a>.</li>
       <li><strong>Moderation &amp; reports:</strong> if you submit a report, the report's content (reason, details, and your username) is shared with FREQ's moderation system and, via email, with the FREQ administrator who reviews it.</li>
       <li><strong>Legal requirements:</strong> we may disclose information if required by law, subpoena, or other legal process, or to protect the rights, safety, or property of FREQ, our users, or the public.</li>
       <li><strong>Business transfers:</strong> if FREQ is ever involved in a merger, acquisition, or sale of assets, user information may be transferred as part of that transaction, subject to this Policy.</li>
@@ -500,8 +543,8 @@ footer {
   </section>
 
   <!-- §10 Third-Party Platforms -->
-  <section class="tos-section" id="s10">
-    <div class="section-num">Section 10</div>
+  <section class="tos-section" id="s11">
+    <div class="section-num">Section 11</div>
     <h2 class="section-heading">Third-Party Platforms</h2>
     <p>FREQ integrates with and embeds content from third-party platforms including YouTube, YouTube Music, Spotify, Tidal, SoundCloud, Apple Music, Amazon Music, Qobuz, and Deezer.</p>
     <ul class="tos-list">
@@ -513,8 +556,8 @@ footer {
   </section>
 
   <!-- §11 Data Storage & Security -->
-  <section class="tos-section" id="s11">
-    <div class="section-num">Section 11</div>
+  <section class="tos-section" id="s12">
+    <div class="section-num">Section 12</div>
     <h2 class="section-heading">Data Storage &amp; Security</h2>
     <p>Account and platform data is stored in a Supabase-hosted PostgreSQL database. Uploaded files are stored in Supabase Storage and delivered via signed, time-limited URLs rather than public, permanent links.</p>
     <ul class="tos-list">
@@ -529,8 +572,8 @@ footer {
   </section>
 
   <!-- §12 Data Retention -->
-  <section class="tos-section" id="s12">
-    <div class="section-num">Section 12</div>
+  <section class="tos-section" id="s13">
+    <div class="section-num">Section 13</div>
     <h2 class="section-heading">Data Retention</h2>
     <p>We retain account and content data for as long as your account remains active, or as needed to provide the Platform's features.</p>
     <ul class="tos-list">
@@ -543,30 +586,30 @@ footer {
   </section>
 
   <!-- §13 Your Choices & Rights -->
-  <section class="tos-section" id="s13">
-    <div class="section-num">Section 13</div>
+  <section class="tos-section" id="s14">
+    <div class="section-num">Section 14</div>
     <h2 class="section-heading">Your Choices &amp; Rights</h2>
     <p>You have meaningful control over your information on FREQ:</p>
     <ul class="tos-list">
       <li><strong>Access &amp; export:</strong> you can export your local settings at any time from Settings → Data Management.</li>
       <li><strong>Correction:</strong> you can edit your display name, bio, avatar, banner, and other profile fields directly from your account or artist page settings.</li>
-      <li><strong>Deletion:</strong> you can delete individual uploads, posts, or releases, or delete your entire account, as described in Section 12.</li>
+      <li><strong>Deletion:</strong> you can delete individual uploads, posts, or releases, or delete your entire account, as described in Section 13.</li>
       <li><strong>Local data control:</strong> you can clear all locally-stored data for FREQ (queue, history, favorites, settings) at any time via the <strong>Clear All Local Data</strong> button in Settings.</li>
       <li><strong>Opting out of tracking:</strong> you can disable local History Tracking and anonymous Analytics independently in Settings → Notifications &amp; Privacy.</li>
       <li><strong>Visibility controls:</strong> you choose whether each release is public, unlisted, or private at the time you publish it.</li>
     </ul>
-    <p>If you are located in a jurisdiction that grants additional statutory privacy rights (such as the EU/UK GDPR or US state privacy laws), you may also have rights to request a copy of your data, object to certain processing, or lodge a complaint with your local data protection authority. Contact us using the details in Section 17 to make such a request.</p>
+    <p>If you are located in a jurisdiction that grants additional statutory privacy rights (such as the EU/UK GDPR or US state privacy laws), you may also have rights to request a copy of your data, object to certain processing, or lodge a complaint with your local data protection authority. Contact us using the details in Section 18 to make such a request.</p>
   </section>
 
   <!-- §14 Children's Privacy -->
-  <section class="tos-section" id="s14">
-    <div class="section-num">Section 14</div>
+  <section class="tos-section" id="s15">
+    <div class="section-num">Section 15</div>
     <h2 class="section-heading">Children's Privacy</h2>
     <p>FREQ requires users to be at least <strong>13 years of age</strong>, consistent with our Terms of Service, Section 2. We do not knowingly collect personal information from children under 13.</p>
     <ul class="tos-list">
       <li>If we become aware that an account belongs to a user under 13, we will take steps to delete that account and associated data.</li>
       <li>Users aged 13–17 are restricted to Clean-rated content by default. A Parental Controls system, allowing parents or guardians to manage what their child can access, is in development — see our Terms of Service, Section 7, for current status.</li>
-      <li>Parents or guardians who believe their child has provided personal information to FREQ, or has misrepresented their age, should contact us using the details in Section 17 to request account review or deletion.</li>
+      <li>Parents or guardians who believe their child has provided personal information to FREQ, or has misrepresented their age, should contact us using the details in Section 18 to request account review or deletion.</li>
     </ul>
     <div class="callout warn">
       <div class="callout-label">⚠ Zero Tolerance — Minors</div>
@@ -575,24 +618,24 @@ footer {
   </section>
 
   <!-- §15 International Users -->
-  <section class="tos-section" id="s15">
-    <div class="section-num">Section 15</div>
+  <section class="tos-section" id="s16">
+    <div class="section-num">Section 16</div>
     <h2 class="section-heading">International Users</h2>
     <p>FREQ is operated from, and its infrastructure providers (Supabase, Render) may process and store data in, locations outside your country of residence. By using FREQ, you understand that your information may be transferred to, stored, and processed in a country that may have different data protection laws than your own.</p>
     <p>We take reasonable steps to ensure your information is treated securely and in accordance with this Policy regardless of where it is processed.</p>
   </section>
 
   <!-- §16 Changes to This Policy -->
-  <section class="tos-section" id="s16">
-    <div class="section-num">Section 16</div>
+  <section class="tos-section" id="s17">
+    <div class="section-num">Section 17</div>
     <h2 class="section-heading">Changes to This Policy</h2>
     <p>We may update this Privacy Policy from time to time. When material changes are made, we will update the "Last Updated" date at the top of this document. Where reasonably practicable, we may notify users via a Platform announcement or banner.</p>
     <p>Your continued use of the Platform after any changes constitutes acceptance of the updated Policy. If you do not agree with the updated Policy, you should stop using the Platform and may delete your account at any time.</p>
   </section>
 
   <!-- §17 Contact -->
-  <section class="tos-section" id="s17">
-    <div class="section-num">Section 17</div>
+  <section class="tos-section" id="s18">
+    <div class="section-num">Section 18</div>
     <h2 class="section-heading">Contact</h2>
     <p>For questions, concerns, data requests, or to report a suspected child-safety issue, please use the <strong>Support</strong> panel within the FREQ Platform (located in the About / Settings section). Support requests are routed directly to the FREQ developer.</p>
     <p>FREQ is an independent, solo-operated project. We aim to respond to all inquiries within a reasonable timeframe, though response times are not guaranteed.</p>
