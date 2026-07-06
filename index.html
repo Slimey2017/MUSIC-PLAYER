@@ -4668,6 +4668,11 @@ body.oled-mode {
       <span>Real-Life Radio is experimental. Station data comes from a free public directory — some stations may be slow, offline, or blocked. If one won't play, try another.</span>
     </div>
 
+    <!-- Experimental Labs: Spin The Globe. Hidden unless the user has
+         enabled it in Labs — labsMaybeShowSpinButton() checked on radio
+         overlay open and after any Labs toggle change. -->
+    <button class="labs-persona-chip" id="radioSpinGlobeBtn" onclick="labsSpinTheGlobe()" style="display:none;margin-bottom:10px;">🌍 Spin The Globe</button>
+
     <div class="premium-lock-wrap" id="radioLockWrap">
       <div class="premium-lock-target" id="radioBody">
 
@@ -6875,6 +6880,7 @@ function openRadioOverlay() {
   }
   if (!RADIO.countriesLoaded) { RADIO.countriesLoaded = true; loadRadioCountries(); }
   if (!RADIO.tagsLoaded) { RADIO.tagsLoaded = true; loadRadioTags(); }
+  labsMaybeShowSpinButton();
 }
 
 function closeRadioOverlay() {
@@ -7406,12 +7412,42 @@ function labsFeedbackRowHtml(feature) {
   `;
 }
 
+// Feature-specific "go try it" shortcut for experiments that are actually
+// wired to real behavior (see server.js: DJ BOOM system prompt overlay,
+// /api/radio/spin-globe). Every other experiment is an honest placeholder —
+// the toggle saves real state, but there's no real behavior change yet, so
+// no test action renders for them. Keeping this as an explicit whitelist
+// (rather than inferring from status) means a new experiment defaults to
+// "no test button" until someone deliberately wires it up here.
+const LABS_TEST_ACTIONS = {
+  'dj-boom-personalities': {
+    label: 'Test it in DJ BOOM →',
+    run: 'closeLabsOverlay(); openDjBoomOverlay();',
+  },
+  'spin-the-globe': {
+    label: 'Spin the globe →',
+    run: 'closeLabsOverlay(); openRadioOverlay(); labsSpinTheGlobe();',
+  },
+};
+
+function labsTestActionHtml(feature) {
+  if (!feature.enabled) return ''; // only show once the experiment is actually on
+  const action = LABS_TEST_ACTIONS[feature.featureId];
+  if (!action) return '';
+  return `<button class="labs-persona-chip" style="align-self:flex-start;" onclick="${action.run}">${escapeHtml(action.label)}</button>`;
+}
+
 function labsCardHtml(feature) {
   const categoryLabel = LABS_CATEGORY_LABELS[feature.category] || feature.category;
   // "Coming Soon" experiments have nothing behind them yet — disable the
   // toggle rather than let someone flip a switch that persists but does
   // nothing, which would read as a bug rather than an honest placeholder.
   const comingSoon = feature.status === 'coming_soon';
+  // Everything except the whitelisted LABS_TEST_ACTIONS entries above is an
+  // honest placeholder today: the toggle persists real state, but nothing
+  // in the app changes yet. Said plainly on the card so it doesn't read as
+  // broken — this label is the fix for that exact confusion.
+  const isPlaceholder = feature.enabled && !comingSoon && !LABS_TEST_ACTIONS[feature.featureId];
   return `
     <div class="labs-card" data-feature-id="${escapeHtml(feature.featureId)}" data-labs-category="${escapeHtml(feature.category)}">
       <div class="labs-card-head">
@@ -7427,6 +7463,8 @@ function labsCardHtml(feature) {
           <span class="labs-toggle-track"></span>
         </label>
       </div>
+      ${isPlaceholder ? '<div style="font-size:0.38rem;color:var(--text-muted);font-style:italic;">Saved — this experiment doesn\'t change app behavior yet.</div>' : ''}
+      ${labsTestActionHtml(feature)}
       ${labsDevNotesHtml(feature)}
       ${labsFeedbackRowHtml(feature)}
     </div>
@@ -7461,10 +7499,53 @@ async function labsToggleFeature(featureId, enabled) {
     feature.enabled = !!data.enabled;
     feature.persona = data.persona || feature.persona;
     showToast(feature.featureName, enabled ? 'Enabled' : 'Disabled', 'info');
+    if (featureId === 'spin-the-globe') labsMaybeShowSpinButton();
   } catch (err) {
     feature.enabled = previous; // revert
     renderLabsGrid();
     showToast('Experimental Labs', err.message || 'Could not save that setting.', 'error');
+  }
+}
+
+// Shows/hides the 🌍 Spin The Globe button inside the Radio panel based on
+// whether the user currently has that Labs experiment enabled. Safe to call
+// even if LABS.features hasn't loaded yet (e.g. user opens Radio without
+// ever opening Labs first) — falls back to a lightweight direct check.
+async function labsMaybeShowSpinButton() {
+  const btn = $('radioSpinGlobeBtn');
+  if (!btn || !AUTH.isPremium) return;
+  const known = LABS.features.find(f => f.featureId === 'spin-the-globe');
+  if (known) {
+    btn.style.display = known.enabled ? 'inline-flex' : 'none';
+    return;
+  }
+  try {
+    const res = await labsAuthedFetch('/api/labs/features');
+    if (!res.ok) return;
+    const data = await res.json();
+    const feature = (data.features || []).find(f => f.featureId === 'spin-the-globe');
+    btn.style.display = feature?.enabled ? 'inline-flex' : 'none';
+  } catch (_err) {
+    // Non-fatal — button just stays hidden if this check fails.
+  }
+}
+
+async function labsSpinTheGlobe() {
+  const btn = $('radioSpinGlobeBtn');
+  if (btn) { btn.disabled = true; btn.textContent = '🌍 Spinning…'; }
+  try {
+    const res = await labsAuthedFetch('/api/radio/spin-globe');
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not spin the globe.');
+    showToast('🌍 Spin The Globe', `Landed on ${data.country || 'somewhere new'}!`, 'success');
+    // radioPlayStation is the one function that actually starts playback
+    // (re-verifies server-side, sets the audio src, updates the now-playing
+    // bar) — same path a normal station card's Play button uses.
+    if (data.station) radioPlayStation(data.station);
+  } catch (err) {
+    showToast('🌍 Spin The Globe', err.message || 'Could not spin the globe.', 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '🌍 Spin The Globe'; }
   }
 }
 
