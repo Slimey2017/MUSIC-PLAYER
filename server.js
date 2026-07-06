@@ -5394,6 +5394,201 @@ async function dbGetUnreadCount(username, since) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+//  🔄 CROSS-DEVICE SYNC — Experimental Labs: "Faster Sync Engine"
+//
+//  Explicitly opt-in handoff, not continuous mirroring — nothing here ever
+//  pushes a change to another device automatically. Each signed-in device
+//  periodically reports its own now-playing snapshot (whole queue + active
+//  index + position, per the product decision this replaced background
+//  push/pull with), and a device only ever adopts another device's state
+//  when the user deliberately picks it from a "Continue on this device"
+//  list — the same mental model as Spotify Connect. That's also why this
+//  needs no SSE/Realtime channel like Shared Playlists or the Activity
+//  Feed below: reporting is a plain upsert, and pulling is a plain read,
+//  both on request rather than pushed.
+//
+//  Local-file queue items carry blob: URLs that only exist on the device
+//  that added them — those obviously can't follow to another device, so a
+//  snapshot only stores durable identity (freqTrackId / cloudFileId / a
+//  streaming platform + originalUrl for YouTube etc.), never a blobUrl.
+//  The device pulling a snapshot is responsible for resolving each item
+//  back into something playable (or skipping it) using its own normal
+//  track-resolution paths — this endpoint doesn't guess playability.
+//
+//  Backed by a single now_playing_snapshots table, one row per
+//  (username, device_id), upserted on every report. device_id is a
+//  client-generated UUID persisted in that browser's localStorage (see
+//  index.html) — there's no server-side device/user-agent tracking here,
+//  the device supplies its own human-readable label.
+//
+//  Every route below is gated by requirePremium, same as DJ BOOM / Real-
+//  Life Radio / the rest of Experimental Labs — a non-Premium session gets
+//  a 403 straight from the API, not just a locked-looking panel.
+//
+//  POST /api/sync/now-playing         { deviceId, deviceLabel, queue, activeIndex, positionSeconds } (+ token)
+//  GET  /api/sync/devices             ?token=&deviceId=   → this user's other reporting devices
+//  POST /api/sync/now-playing/pull    { deviceId } (+ token)  → marks deviceId's snapshot consumed (best-effort housekeeping only)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Cheap guardrails on report size — a queue is a JSON array of lightweight
+// identity objects (no blobUrls), so 500KB is already generous; this just
+// stops a client bug from writing something pathological.
+const SYNC_MAX_QUEUE_BYTES = 500_000;
+const SYNC_MAX_QUEUE_ITEMS = 2000;
+// Snapshots older than this are considered stale and excluded from the
+// device list — a device that's been closed for two weeks isn't a
+// meaningful "continue here" target, and this also bounds table growth
+// somewhat without a hard cron job (see dbPruneStaleNowPlayingSnapshots).
+const SYNC_STALE_MS = 14 * 24 * 60 * 60 * 1000;
+
+// Strips each queue item down to durable identity fields only — this is
+// the enforcement point for "never store a blobUrl," rather than trusting
+// the client to have omitted it. Unknown/malformed items are dropped
+// rather than rejecting the whole report, since one bad item shouldn't
+// block every other device from seeing an otherwise-good snapshot.
+function sanitizeSyncQueueItem(item) {
+  if (!item || typeof item !== 'object') return null;
+  const platform = typeof item.platform === 'string' ? item.platform : null;
+  if (!platform) return null;
+  const base = {
+    platform,
+    title: typeof item.title === 'string' ? item.title.slice(0, 300) : '',
+    customLabel: typeof item.customLabel === 'string' ? item.customLabel.slice(0, 300) : undefined,
+  };
+  if (platform === 'freq' && typeof item.freqTrackId === 'string') {
+    return { ...base, freqTrackId: item.freqTrackId };
+  }
+  if (platform === 'local' && typeof item.cloudFileId === 'string') {
+    // Only cloud-backed local files are resolvable on another device —
+    // a true on-disk local file (no cloudFileId) has nothing durable to
+    // sync, so it's dropped from the snapshot rather than stored as a
+    // dead entry another device can never play.
+    return { ...base, cloudFileId: item.cloudFileId };
+  }
+  if ((platform === 'youtube' || platform === 'ytmusic' || platform === 'spotify' || platform === 'tidal' || platform === 'soundcloud' || platform === 'applemusic')
+      && typeof item.originalUrl === 'string') {
+    return { ...base, originalUrl: item.originalUrl.slice(0, 2000) };
+  }
+  return null; // local blob-only file, or anything else with no durable identity
+}
+
+async function dbUpsertNowPlayingSnapshot(username, { deviceId, deviceLabel, queue, activeIndex, positionSeconds }) {
+  const { error } = await supabase.from('now_playing_snapshots').upsert({
+    username, device_id: deviceId,
+    device_label: (deviceLabel || 'Unknown device').slice(0, 80),
+    queue, active_index: activeIndex, position_seconds: positionSeconds,
+    updated_at: new Date().toISOString(),
+  }, { onConflict: 'username,device_id' });
+  if (error) throw new Error(error.message);
+}
+
+async function dbGetOtherNowPlayingSnapshots(username, excludeDeviceId) {
+  const staleCutoff = new Date(Date.now() - SYNC_STALE_MS).toISOString();
+  let q = supabase.from('now_playing_snapshots').select('*')
+    .eq('username', username)
+    .gte('updated_at', staleCutoff)
+    .order('updated_at', { ascending: false });
+  if (excludeDeviceId) q = q.neq('device_id', excludeDeviceId);
+  const { data, error } = await q;
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+
+// Best-effort only — deletes the *puller's own* row after they've pulled
+// someone else's snapshot into it, so a device that just adopted another
+// device's queue doesn't immediately show up as its own separate stale
+// "continue here" entry the next time it lists devices. Not deleting the
+// *source* snapshot: the same source device staying in its own list (still
+// playing, unaffected by someone else pulling a copy of its state) is
+// correct — pulling is a copy, not a move.
+async function dbDeleteNowPlayingSnapshot(username, deviceId) {
+  await supabase.from('now_playing_snapshots').delete().eq('username', username).eq('device_id', deviceId);
+}
+
+// POST /api/sync/now-playing — report this device's current now-playing
+// state. Called by the client on play/pause/track-change and on a slow
+// interval while playing (see syncReportNowPlaying in index.html) — never
+// on every timeupdate tick, to keep write volume sane. Premium-gated to
+// match every other Experimental Labs feature being locked at the API
+// layer, not just the panel UI (see requirePremium doc comment above).
+app.post('/api/sync/now-playing', requirePremium, async (req, res) => {
+  const { deviceId, deviceLabel, queue, activeIndex, positionSeconds } = req.body;
+  const sess = req._premiumSession;
+  if (typeof deviceId !== 'string' || !deviceId.trim() || deviceId.length > 100)
+    return res.status(400).json({ error: '"deviceId" is required.' });
+  if (!Array.isArray(queue)) return res.status(400).json({ error: '"queue" must be an array.' });
+  if (queue.length > SYNC_MAX_QUEUE_ITEMS)
+    return res.status(413).json({ error: `Queue exceeds ${SYNC_MAX_QUEUE_ITEMS} items.` });
+
+  const sanitizedQueue = queue.map(sanitizeSyncQueueItem).filter(Boolean);
+  if (JSON.stringify(sanitizedQueue).length > SYNC_MAX_QUEUE_BYTES)
+    return res.status(413).json({ error: 'Queue data too large to sync.' });
+
+  const safeActiveIndex = Number.isInteger(activeIndex) && activeIndex >= 0 && activeIndex < sanitizedQueue.length
+    ? activeIndex : -1;
+  const safePosition = Number.isFinite(positionSeconds) && positionSeconds >= 0 ? positionSeconds : 0;
+
+  try {
+    await dbUpsertNowPlayingSnapshot(sess.username, {
+      deviceId: deviceId.trim(),
+      deviceLabel: typeof deviceLabel === 'string' ? deviceLabel : null,
+      queue: sanitizedQueue,
+      activeIndex: safeActiveIndex,
+      positionSeconds: safePosition,
+    });
+    return res.json({ ok: true, synced: sanitizedQueue.length, syncedAt: Date.now() });
+  } catch (err) {
+    console.error('[sync now-playing]', err?.message || err);
+    return res.status(500).json({ error: 'Could not sync now-playing state.' });
+  }
+});
+
+// GET /api/sync/devices?token=&deviceId= — list this user's *other*
+// recently-active devices with their last-reported snapshot, for a
+// "Continue on this device" picker. deviceId (this device's own id) is
+// excluded from the results so a device never offers to hand off to
+// itself.
+app.get('/api/sync/devices', requirePremium, async (req, res) => {
+  const sess = req._premiumSession;
+  try {
+    const rows = await dbGetOtherNowPlayingSnapshots(sess.username, req.query.deviceId);
+    return res.json({
+      devices: rows.map(r => ({
+        deviceId: r.device_id,
+        deviceLabel: r.device_label,
+        queue: r.queue || [],
+        activeIndex: r.active_index,
+        positionSeconds: r.position_seconds,
+        updatedAt: r.updated_at,
+      })),
+    });
+  } catch (err) {
+    console.error('[sync devices]', err?.message || err);
+    return res.status(500).json({ error: 'Could not load other devices.' });
+  }
+});
+
+// POST /api/sync/now-playing/pull — housekeeping only (see
+// dbDeleteNowPlayingSnapshot doc comment above). The actual "load this
+// queue into my player" logic is entirely client-side once GET
+// /api/sync/devices has already handed over the snapshot data; this call
+// doesn't return playback state, it just cleans up the puller's own prior
+// row. Safe to fire-and-forget from the client.
+app.post('/api/sync/now-playing/pull', requirePremium, async (req, res) => {
+  const { deviceId } = req.body;
+  const sess = req._premiumSession;
+  if (typeof deviceId !== 'string' || !deviceId.trim())
+    return res.status(400).json({ error: '"deviceId" is required.' });
+  try {
+    await dbDeleteNowPlayingSnapshot(sess.username, deviceId.trim());
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('[sync now-playing pull]', err?.message || err);
+    return res.status(500).json({ error: 'Could not complete handoff cleanup.' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
 //  SHARED PLAYLISTS — collaboration invites, roles, realtime SSE
 //
 //  POST   /api/playlists/:id/collaborators          { token, username, role }
