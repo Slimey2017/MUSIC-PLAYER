@@ -3964,7 +3964,51 @@ app.get('/api/radio/tags', rateLimit, async (req, res) => {
   }
 });
 
-// POST /api/radio/play   { token, stationUuid }
+// GET /api/radio/spin-globe?token=  — Experimental Labs: Spin The Globe.
+// Picks a random country from Radio Browser's own country list (weighted
+// naturally by whichever countries have stations at all, since we only
+// pick from countries that actually appear in getCountries()), then a
+// random lastCheckOk station within it. Gated on requirePremium (like
+// every Radio route) AND on the user having 'spin-the-globe' enabled in
+// Experimental Labs — this is the one Labs experiment wired to a real
+// backend route, so it enforces its own toggle rather than trusting the
+// frontend to only call it when the switch is on.
+app.get('/api/radio/spin-globe', requirePremium, radioRateLimit, async (req, res) => {
+  try {
+    const { data: setting, error: settingErr } = await supabase
+      .from('experimental_user_settings')
+      .select('enabled')
+      .eq('username', req._premiumSession.username)
+      .eq('feature_id', 'spin-the-globe')
+      .maybeSingle();
+    if (settingErr) throw new Error(settingErr.message);
+    if (!setting?.enabled) {
+      return res.status(403).json({ error: "Turn on 'Spin The Globe' in Experimental Labs first." });
+    }
+
+    const countries = await radio.getCountries({ limit: 100 });
+    if (!countries.length) return res.status(502).json({ error: 'Radio directory has no countries listed right now.' });
+
+    // Try a handful of random countries in case the first pick has only
+    // dead/offline stations after searchStations' own lastCheckOk filter —
+    // bounded so a genuinely bad run of luck fails fast instead of hanging.
+    const MAX_ATTEMPTS = 5;
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+      const country = countries[Math.floor(Math.random() * countries.length)];
+      const stations = await radio.searchStations({ country: country.name, limit: 20 });
+      if (stations.length) {
+        const station = stations[Math.floor(Math.random() * stations.length)];
+        return res.json({ station, country: country.name });
+      }
+    }
+    return res.status(502).json({ error: 'Could not find a live station after a few spins — try again.' });
+  } catch (err) {
+    console.error('[radio spin-globe]', err?.message || err);
+    return res.status(502).json({ error: 'Could not reach the radio directory. Please try again.' });
+  }
+});
+
+
 // Called right when the user hits Play (not on every search result render).
 // Re-fetches the station by UUID server-side — never trusts a client-
 // supplied streamUrl — so the actual stream link handed back always comes
