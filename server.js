@@ -3307,6 +3307,34 @@ const DJ_BOOM_ACTION_TYPES = new Set([
   'setRepeatMode',                   // { mode: 'off'|'all'|'one' }
 ]);
 
+// ─── Experimental Labs hook: DJ BOOM Personalities ─────────────────────────
+// The one Labs toggle wired to real behavior (see EXPERIMENTAL LABS section
+// below). When a Premium user has enabled the 'dj-boom-personalities'
+// experiment AND picked a persona (stored in experimental_user_settings'
+// same enabled flag isn't enough to pick *which* persona, so the persona
+// choice itself is persisted as experimental_user_settings.feature_id
+// 'dj-boom-personalities' with a `persona` field tucked into a small JSON
+// note -- see dbGetDjBoomPersona below), this text is appended to the base
+// system prompt. Purely a tone/voice change -- it never alters the hard
+// rules, the action whitelist, or the JSON response contract above it.
+const DJ_BOOM_PERSONALITIES = {
+  hype_mc: {
+    label: 'Hype Hype MC',
+    prompt: `PERSONA OVERLAY — Hype Hype MC:
+Talk like a hype-man MC on a live mic — high energy, short punchy lines, occasional ad-libs ("let's go!", "yeah!"). Still follow every hard rule and the JSON response format exactly; this only changes tone, never substance.`,
+  },
+  lofi_host: {
+    label: 'Chill Lo-Fi Host',
+    prompt: `PERSONA OVERLAY — Chill Lo-Fi Host:
+Talk like a laid-back late-night lo-fi radio host — unhurried, warm, a little dreamy. Still follow every hard rule and the JSON response format exactly; this only changes tone, never substance.`,
+  },
+  oldschool_dj: {
+    label: 'Old-School Radio DJ',
+    prompt: `PERSONA OVERLAY — Old-School Radio DJ:
+Talk like a classic AM radio DJ from decades past — smooth, a little theatrical, calls the listener "folks" now and then. Still follow every hard rule and the JSON response format exactly; this only changes tone, never substance.`,
+  },
+};
+
 const DJ_BOOM_SYSTEM_PROMPT_BASE = `You are DJ BOOM, FREQ's built-in in-app music assistant.
 FREQ is a music streaming and social platform. You are not a generic chatbot
 — you are wired into the user's live FREQ session and can see (via the
@@ -3402,6 +3430,28 @@ ${JSON.stringify(safeContext, null, 2)}
 END FREQ SESSION CONTEXT`;
 }
 
+// Reads the user's chosen DJ BOOM persona, if the 'dj-boom-personalities'
+// Labs experiment is both enabled for them AND they've picked a specific
+// persona. Returns null on any missing/malformed state (experiment off,
+// row missing, unrecognized persona key) rather than throwing — DJ BOOM
+// chat should never fail because a Labs toggle read hiccupped.
+async function dbGetDjBoomPersona(username) {
+  if (!username) return null;
+  try {
+    const { data, error } = await supabase
+      .from('experimental_user_settings')
+      .select('enabled, persona')
+      .eq('username', username)
+      .eq('feature_id', 'dj-boom-personalities')
+      .maybeSingle();
+    if (error || !data || !data.enabled) return null;
+    const persona = String(data.persona || '').trim();
+    return DJ_BOOM_PERSONALITIES[persona] ? persona : null;
+  } catch (_err) {
+    return null;
+  }
+}
+
 // Same rolling-window shape as artistFollowRateLimit above, but its own
 // bucket and a tighter ceiling — LLM calls cost real money per request,
 // unlike a follow/unfollow row write, so this deliberately throttles harder.
@@ -3447,7 +3497,12 @@ app.post('/api/djboom/chat', requirePremium, djBoomRateLimit, async (req, res) =
   }
 
   const contextBlock = buildDjBoomContextBlock(context);
-  const systemInstruction = `${DJ_BOOM_SYSTEM_PROMPT_BASE}\n\n${contextBlock}`;
+  // Experimental Labs hook: if this Premium user has 'dj-boom-personalities'
+  // enabled and has picked a persona, layer its overlay onto the base
+  // prompt. req._premiumSession is set by requirePremium above.
+  const personaKey = await dbGetDjBoomPersona(req._premiumSession?.username);
+  const personaOverlay = personaKey ? `\n\n${DJ_BOOM_PERSONALITIES[personaKey].prompt}` : '';
+  const systemInstruction = `${DJ_BOOM_SYSTEM_PROMPT_BASE}${personaOverlay}\n\n${contextBlock}`;
 
   try {
     const model = gemini.getGenerativeModel({ model: 'gemini-2.5-flash' });
@@ -4101,6 +4156,234 @@ app.post('/api/radio/recent', requirePremium, radioRateLimit, async (req, res) =
   } catch (err) {
     console.error('[radio recent post]', err?.message || err);
     return res.status(500).json({ error: 'Could not log recently played station.' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  🧪 EXPERIMENTAL LABS — Premium-only preview of upcoming FREQ features.
+//  Backed by experimental_features (catalog), experimental_user_settings
+//  (per-user toggle state + persona choice), experimental_feedback (log).
+//
+//  Every route below is gated by requirePremium — per "Protect every Labs
+//  endpoint with requirePremium. Do not allow frontend-only protection,"
+//  a non-Premium session gets a 403 straight from the API, not just a
+//  blurred panel (same pattern as DJ BOOM / Real-Life Radio above).
+//
+//  Adding a new experiment is a database INSERT into experimental_features
+//  (see the seed migration) — GET /api/labs/features reads that table
+//  directly, so a new row appears in the UI with no frontend deploy.
+//
+//  GET  /api/labs                 → labs metadata (build badge info) + catalog + user state, in one call
+//  GET  /api/labs/features        → catalog + this user's toggle state (no metadata wrapper)
+//  POST /api/labs/toggle          { token, featureId, enabled, persona? }
+//  POST /api/labs/feedback        { token, featureId, rating, feedback? }
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const LABS_BUILD_INFO = { label: 'Internal Build', version: 'FREQ v2.8.0-dev' };
+
+// Same rolling-window shape as radioRateLimit — Labs itself is just reads/
+// writes against Supabase (cheap), but toggle/feedback spam from a client
+// bug shouldn't be free to hammer the DB either.
+const labsRateLimitHits = new Map();
+function labsRateLimit(req, res, next) {
+  const sess = req._premiumSession;
+  const key = sess?.username || req.ip;
+  const now = Date.now();
+  const times = (labsRateLimitHits.get(key) || []).filter(t => now - t < 60_000);
+  times.push(now);
+  labsRateLimitHits.set(key, times);
+  if (times.length > 60) {
+    return res.status(429).json({ error: 'Too many requests — please slow down.' });
+  }
+  next();
+}
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, times] of labsRateLimitHits) {
+    const fresh = times.filter(t => now - t < 60_000);
+    if (!fresh.length) labsRateLimitHits.delete(key); else labsRateLimitHits.set(key, fresh);
+  }
+}, 300_000);
+
+function shapeLabsFeatureForClient(row, userSetting) {
+  return {
+    featureId: row.feature_id,
+    featureName: row.feature_name,
+    category: row.category,
+    emoji: row.emoji,
+    description: row.description,
+    status: row.status,
+    sortOrder: row.sort_order,
+    whatsNew: row.whats_new,
+    knownIssues: row.known_issues,
+    version: row.version,
+    lastUpdated: row.last_updated_note || row.updated_at,
+    enabled: userSetting ? !!userSetting.enabled : !!row.default_enabled,
+    persona: userSetting?.persona || null,
+  };
+}
+
+// Loads the full active catalog plus this user's settings, merged into the
+// client-facing shape above. Shared by GET /api/labs and GET /api/labs/features
+// so both routes stay in sync by construction rather than by convention.
+async function loadLabsFeaturesForUser(username) {
+  const { data: features, error: featuresErr } = await supabase
+    .from('experimental_features')
+    .select('*')
+    .eq('is_active', true)
+    .order('sort_order', { ascending: true });
+  if (featuresErr) throw new Error(featuresErr.message);
+
+  const { data: settings, error: settingsErr } = await supabase
+    .from('experimental_user_settings')
+    .select('feature_id, enabled, persona, acknowledged_warning')
+    .eq('username', username);
+  if (settingsErr) throw new Error(settingsErr.message);
+
+  const settingsByFeature = new Map((settings || []).map(s => [s.feature_id, s]));
+  const acknowledgedWarning = (settings || []).some(s => s.acknowledged_warning);
+
+  return {
+    features: (features || []).map(row => shapeLabsFeatureForClient(row, settingsByFeature.get(row.feature_id))),
+    acknowledgedWarning,
+  };
+}
+
+// GET /api/labs?token=  — everything the Labs Home screen needs in one call:
+// build badge metadata, the full catalog, and this user's toggle/persona
+// state and warning-acknowledgement status.
+app.get('/api/labs', requirePremium, labsRateLimit, async (req, res) => {
+  try {
+    const { features, acknowledgedWarning } = await loadLabsFeaturesForUser(req._premiumSession.username);
+    return res.json({ build: LABS_BUILD_INFO, features, acknowledgedWarning });
+  } catch (err) {
+    console.error('[labs get]', err?.message || err);
+    return res.status(500).json({ error: 'Could not load Experimental Labs right now.' });
+  }
+});
+
+// GET /api/labs/features?token=  — catalog + user state only, no build
+// metadata wrapper. Kept separate from GET /api/labs so a future
+// lighter-weight "just refresh the cards" call doesn't need to re-fetch
+// the build badge every time.
+app.get('/api/labs/features', requirePremium, labsRateLimit, async (req, res) => {
+  try {
+    const { features } = await loadLabsFeaturesForUser(req._premiumSession.username);
+    return res.json({ features });
+  } catch (err) {
+    console.error('[labs features get]', err?.message || err);
+    return res.status(500).json({ error: 'Could not load experiments right now.' });
+  }
+});
+
+// POST /api/labs/toggle   { token, featureId, enabled, persona?, acknowledgedWarning? }
+// Upserts the user's per-feature toggle state. `persona` only does anything
+// for feature_id === 'dj-boom-personalities' (validated against the known
+// persona keys below) — sent as null/omitted for every other feature.
+// `acknowledgedWarning`, when true, is written across this call only (not
+// retroactively to other rows) — loadLabsFeaturesForUser treats "any row
+// acknowledged" as "user has seen the warning," so one write is enough.
+app.post('/api/labs/toggle', requirePremium, labsRateLimit, async (req, res) => {
+  const { featureId, enabled, persona, acknowledgedWarning } = req.body || {};
+  const username = req._premiumSession.username;
+
+  if (typeof featureId !== 'string' || !featureId.trim()) {
+    return res.status(400).json({ error: 'featureId is required.' });
+  }
+  if (typeof enabled !== 'boolean') {
+    return res.status(400).json({ error: 'enabled must be a boolean.' });
+  }
+
+  try {
+    // Confirm the feature exists and is active before writing a settings
+    // row for it — prevents orphaned settings rows for a typo'd or
+    // deactivated featureId (the FK would also catch a truly nonexistent
+    // one, but this gives a clean 404 instead of a raw constraint error).
+    const { data: feature, error: featureErr } = await supabase
+      .from('experimental_features')
+      .select('feature_id, is_active, status')
+      .eq('feature_id', featureId)
+      .maybeSingle();
+    if (featureErr) throw new Error(featureErr.message);
+    if (!feature || !feature.is_active) {
+      return res.status(404).json({ error: 'This experiment is not available.' });
+    }
+    // Mirrors the disabled toggle in the UI: a 'coming_soon' experiment has
+    // nothing behind it yet, so it can't be turned on server-side either —
+    // not just a frontend-only lock, which the brief explicitly calls out.
+    if (feature.status === 'coming_soon' && enabled) {
+      return res.status(409).json({ error: 'This experiment isn\'t available to enable yet.' });
+    }
+
+    let personaToStore = null;
+    if (featureId === 'dj-boom-personalities' && typeof persona === 'string' && DJ_BOOM_PERSONALITIES[persona]) {
+      personaToStore = persona;
+    }
+
+    const patch = {
+      username,
+      feature_id: featureId,
+      enabled,
+      updated_at: new Date().toISOString(),
+    };
+    if (personaToStore) patch.persona = personaToStore;
+    if (acknowledgedWarning === true) patch.acknowledged_warning = true;
+
+    const { data, error } = await supabase
+      .from('experimental_user_settings')
+      .upsert(patch, { onConflict: 'username,feature_id' })
+      .select('feature_id, enabled, persona, acknowledged_warning')
+      .single();
+    if (error) throw new Error(error.message);
+
+    return res.json({
+      featureId: data.feature_id,
+      enabled: !!data.enabled,
+      persona: data.persona || null,
+      acknowledgedWarning: !!data.acknowledged_warning,
+    });
+  } catch (err) {
+    console.error('[labs toggle]', err?.message || err);
+    return res.status(500).json({ error: 'Could not save that setting. Please try again.' });
+  }
+});
+
+// POST /api/labs/feedback   { token, featureId, rating: 'love_it'|'needs_work', feedback? }
+// Every submission is its own row (see migration comment) — this is a log,
+// not a single mutable per-user rating.
+app.post('/api/labs/feedback', requirePremium, labsRateLimit, async (req, res) => {
+  const { featureId, rating, feedback } = req.body || {};
+  const username = req._premiumSession.username;
+
+  if (typeof featureId !== 'string' || !featureId.trim()) {
+    return res.status(400).json({ error: 'featureId is required.' });
+  }
+  if (rating !== 'love_it' && rating !== 'needs_work') {
+    return res.status(400).json({ error: "rating must be 'love_it' or 'needs_work'." });
+  }
+  const cleanFeedback = typeof feedback === 'string' && feedback.trim() ? feedback.trim().slice(0, 1000) : null;
+
+  try {
+    const { data: feature, error: featureErr } = await supabase
+      .from('experimental_features')
+      .select('feature_id')
+      .eq('feature_id', featureId)
+      .maybeSingle();
+    if (featureErr) throw new Error(featureErr.message);
+    if (!feature) return res.status(404).json({ error: 'This experiment is not available.' });
+
+    const { error } = await supabase.from('experimental_feedback').insert({
+      username,
+      feature_id: featureId,
+      rating,
+      feedback: cleanFeedback,
+    });
+    if (error) throw new Error(error.message);
+
+    return res.json({ submitted: true });
+  } catch (err) {
+    console.error('[labs feedback]', err?.message || err);
+    return res.status(500).json({ error: 'Could not submit feedback. Please try again.' });
   }
 });
 
