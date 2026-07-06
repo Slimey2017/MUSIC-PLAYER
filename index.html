@@ -14541,6 +14541,12 @@ const PlaybackManager = (() => {
 
 async function playItem(index) {
   if (index < 0 || index >= state.queue.length) return;
+  // A real track change always wins over an in-progress crossfade — cancel
+  // it up front so e.g. a manual "Next" click during a fade doesn't leave a
+  // stray temp <audio> element or a ramped-down main gain behind. This is a
+  // no-op when CrossfadeManager itself called playItem() as the natural
+  // conclusion of a fade it already tore down.
+  if (typeof CrossfadeManager !== 'undefined' && CrossfadeManager.isActive()) CrossfadeManager.cancel(false);
   state.activeIndex = index;
   const item = state.queue[index];
   const cfg  = PLATFORM_CONFIG[item.platform] || { label:'Unknown' };
@@ -14714,6 +14720,12 @@ function advanceTrack() {
 
 // ─── Local audio auto-advance ─────────────────────────────────────────────────
 localAudio.addEventListener('ended', () => {
+  // Crossfade Beta lets the outgoing track's <audio> element keep playing
+  // silently (gain ramped to 0) in the background while the temp element
+  // takes over, rather than pausing it — so it still naturally fires
+  // 'ended' a few seconds after CrossfadeManager already advanced the
+  // queue via playItem(). Without this guard that would double-advance.
+  if (typeof CrossfadeManager !== 'undefined' && CrossfadeManager.consumeHandoff()) return;
   const doAdvance = () => {
     if (state.repeat === 2) { localAudio.currentTime = 0; PlaybackManager.requestPlay(); }
     else if (state.repeat === 1) playItem((state.activeIndex + 1) % state.queue.length);
@@ -14773,6 +14785,195 @@ localAudio.addEventListener('timeupdate', () => {
   const remaining = localAudio.duration - localAudio.currentTime;
   if (remaining <= 15) refreshUpcomingCloudUrl();
 });
+
+// ─── Crossfade Beta (Experimental Labs) ────────────────────────────────────
+// Real crossfade between consecutive local/freq tracks. Gated purely by the
+// existing Audio Quality "Crossfade Between Tracks" toggle (AQ_DEFAULTS.crossfade)
+// — the Experimental Labs card for this feature is informational/feedback-only
+// and never gates the behavior itself.
+//
+// localAudio is wired into a full Web Audio graph via createMediaElementSource
+// (see connectAudioGraph), which can only be attached to one <audio> element
+// once, ever — so we can't just play two tracks on two graph-connected
+// elements. Instead CrossfadeManager creates a lightweight *temporary* second
+// <audio> element for the upcoming track, routed through its own bare
+// GainNode straight to audioCtx.destination (no EQ/compressor/delay chain —
+// those are cosmetic during the ~[crossfadeDur]s overlap and would need a
+// second full graph to replicate exactly for no audible benefit). The main
+// track's existing gainNode ramps down over the same window. When the
+// overlap completes, control is handed back to the *real* playItem(), which
+// reconnects everything through the normal graph/queue/UI path — the temp
+// element is just a bridge across the gap, never the system of record.
+//
+// Any manual skip, pause, seek, or the temp element itself erroring cancels
+// the crossfade immediately and restores normal single-track playback, so a
+// user action always wins over an in-progress fade.
+const CrossfadeManager = (() => {
+  let tempAudio = null;
+  let tempGain = null;
+  let active = false;
+  let startedForIndex = -1; // guards against re-triggering the same track's fade every timeupdate tick
+  let handoffPending = false; // true right after finish() advances the queue, until the old element's
+                              // own natural 'ended' event fires and consumes it (see consumeHandoff)
+  let pendingFinishTimer = null; // setTimeout handle for the scheduled finish(), cleared if 'ended' wins the race
+  let pendingFinishIndex = -1;   // nextIndex captured for whichever of the two finish() triggers fires first
+
+  function eligible() {
+    if (!AQ_DEFAULTS.crossfade) return false;
+    // autoAdvance off and no repeat means playback would just stop at the
+    // end of this track anyway — nothing to fade into.
+    if (!AQ_DEFAULTS.autoAdvance && state.repeat !== 1) return false;
+    if (state.repeat === 2) return false; // repeat-one: no next track to fade into, just loop
+    const cur = state.activeIndex >= 0 ? state.queue[state.activeIndex] : null;
+    if (!cur || (cur.platform !== 'local' && cur.platform !== 'freq')) return false;
+    const nextIndex = state.repeat === 1 ? (state.activeIndex + 1) % state.queue.length : state.activeIndex + 1;
+    if (nextIndex >= state.queue.length && state.repeat !== 1) return false;
+    const next = state.queue[nextIndex];
+    if (!next || (next.platform !== 'local' && next.platform !== 'freq') || !next.blobUrl) return false;
+    return { next, nextIndex };
+  }
+
+  function showIndicator(on) {
+    $('crossfadeIndicator')?.classList.toggle('show', !!on);
+  }
+
+  // Called on every localAudio timeupdate. Starts the fade once remaining
+  // time drops to the configured crossfadeDur, and only once per track.
+  function tick() {
+    if (active) return;
+    if (!isFinite(localAudio.duration) || !localAudio.duration) return;
+    const dur = Math.max(0.5, Number(AQ_DEFAULTS.crossfadeDur) || 3);
+    const remaining = localAudio.duration - localAudio.currentTime;
+    if (remaining > dur) return;
+    if (startedForIndex === state.activeIndex) return;
+    const info = eligible();
+    if (!info) return;
+    startedForIndex = state.activeIndex;
+    start(info.next, info.nextIndex, dur, remaining);
+  }
+
+  function start(next, nextIndex, dur, remaining) {
+    if (!audioCtx) return; // no graph yet — fall back to normal instant transition
+    active = true;
+    showIndicator(true);
+
+    tempAudio = new Audio();
+    tempAudio.crossOrigin = next.blobUrl.startsWith('blob:') ? null : 'anonymous';
+    tempAudio.src = next.blobUrl;
+    tempAudio.playbackRate = Math.min(9, Math.max(0.25, AQ_DEFAULTS.speed));
+
+    try {
+      const tempSource = audioCtx.createMediaElementSource(tempAudio);
+      tempGain = audioCtx.createGain();
+      tempGain.gain.value = 0;
+      tempSource.connect(tempGain);
+      tempGain.connect(audioCtx.destination);
+    } catch (_) {
+      cancel(false);
+      return;
+    }
+
+    const now = audioCtx.currentTime;
+    const fadeTime = Math.min(dur, Math.max(0.5, remaining));
+    if (gainNode) {
+      gainNode.gain.cancelScheduledValues(now);
+      gainNode.gain.setValueAtTime(gainNode.gain.value, now);
+      gainNode.gain.linearRampToValueAtTime(0, now + fadeTime);
+    }
+    tempGain.gain.setValueAtTime(0, now);
+    tempGain.gain.linearRampToValueAtTime(Math.min(1, AQ_DEFAULTS.volume / 100), now + fadeTime);
+
+    tempAudio.play().catch(() => cancel(false));
+    tempAudio.addEventListener('error', () => cancel(false));
+
+    // Two things can legitimately end this fade: the scheduled fade-out
+    // duration elapsing, or localAudio's own 'ended' event firing first
+    // (e.g. the track's real remaining time was slightly shorter than
+    // `remaining` suggested). Whichever happens first calls finish(); a
+    // guard inside finish() makes the second, later call a no-op.
+    pendingFinishTimer = setTimeout(() => finish(nextIndex), fadeTime * 1000);
+    pendingFinishIndex = nextIndex;
+  }
+
+  // Hands off from the temp element to the real playItem() path, seeding
+  // localAudio's position from wherever the temp element got to so there's
+  // no audible gap or restart glitch.
+  function finish(nextIndex) {
+    if (!active) return; // already finished via the other race path, or cancelled — no-op
+    if (pendingFinishTimer) { clearTimeout(pendingFinishTimer); pendingFinishTimer = null; }
+    const resumeAt = tempAudio ? tempAudio.currentTime : 0;
+    teardownTemp();
+    active = false;
+    showIndicator(false);
+    handoffPending = true;
+    playItem(nextIndex).then(() => {
+      localAudio.currentTime = resumeAt;
+    });
+  }
+
+  // Called by the pre-existing 'ended' auto-advance listener when a fade
+  // was in flight. If our own scheduled finish() hasn't run yet, localAudio's
+  // natural 'ended' event has won the race — finish the handoff right now
+  // using the same nextIndex the timer would have used, instead of falling
+  // through to the normal doAdvance() path and double-advancing.
+  // Returns true if it handled the event (caller should stop), false if
+  // there was nothing in flight to consume.
+  function consumeHandoff() {
+    if (active) {
+      // Natural 'ended' fired before our timer — finish immediately.
+      finish(pendingFinishIndex);
+      return true;
+    }
+    if (handoffPending) {
+      // Our timer already finished first; this is the now-stale natural
+      // 'ended' event for the same transition — swallow it once.
+      handoffPending = false;
+      return true;
+    }
+    return false;
+  }
+
+  // Cancels an in-progress fade — used both internally (temp element error)
+  // and externally (user skips/pauses/seeks mid-fade). restoreVolume=true
+  // snaps the main track's gain back to full so a cancelled fade never
+  // leaves playback quietly stuck at a ramped-down volume.
+  function cancel(restoreVolume = true) {
+    if (!active && !tempAudio) return;
+    if (pendingFinishTimer) { clearTimeout(pendingFinishTimer); pendingFinishTimer = null; }
+    teardownTemp();
+    active = false;
+    showIndicator(false);
+    if (restoreVolume && gainNode && audioCtx) {
+      gainNode.gain.cancelScheduledValues(audioCtx.currentTime);
+      gainNode.gain.setValueAtTime(Math.min(1, AQ_DEFAULTS.volume / 100), audioCtx.currentTime);
+    }
+  }
+
+  function teardownTemp() {
+    if (tempAudio) {
+      try { tempAudio.pause(); } catch (_) {}
+      try { tempAudio.src = ''; } catch (_) {}
+      tempAudio = null;
+    }
+    if (tempGain) {
+      try { tempGain.disconnect(); } catch (_) {}
+      tempGain = null;
+    }
+  }
+
+  // Note: startedForIndex is compared against state.activeIndex, which
+  // playItem() always updates before this module could re-check eligibility
+  // — so the per-track guard resets itself naturally on every real track
+  // change with no separate "track changed" hook needed.
+  function isActive() { return active; }
+
+  return { tick, cancel, isActive, consumeHandoff };
+})();
+
+localAudio.addEventListener('timeupdate', () => CrossfadeManager.tick());
+// A manual skip/prev/seek/pause always wins over an in-progress crossfade.
+localAudio.addEventListener('seeking', () => { if (CrossfadeManager.isActive()) CrossfadeManager.cancel(); });
+localAudio.addEventListener('pause', () => { if (CrossfadeManager.isActive()) CrossfadeManager.cancel(); });
 
 // ─── Expired-URL safety net ────────────────────────────────────────────────
 // playItem()'s pre-play check (above) catches a stale signed URL before
