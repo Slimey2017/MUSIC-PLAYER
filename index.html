@@ -1442,6 +1442,130 @@ textarea.support-field { height:90px;resize:vertical; }
 }
 .radio-station-error.show { display:block; }
 
+/* ─── 🧪 Experimental Labs ────────────────────────────────────────────────
+   Premium-only preview of upcoming FREQ features. Shares the .lyrics-overlay
+   shell and .premium-lock-wrap/.premium-lock-card upsell pattern like every
+   other Premium panel (DJ BOOM, Radio) above — same "show it, don't hide
+   it" reasoning. Labs gets its own signature color (--accent3, the app's
+   cyan) rather than Premium's gold or Radio's red, so it reads as its own
+   distinct space — "a secret developer area" — while staying inside the
+   same design language (Space Mono, --radius, --border, --surface tokens).
+   The dashed border + terminal-style build badge are the one deliberate
+   flourish here; everything else stays as quiet/disciplined as the rest
+   of FREQ's overlay system. */
+.labs-header-btn { color:var(--accent3);border-color:rgba(0,212,255,0.35); }
+.labs-panel { max-width:720px; }
+
+.labs-build-badge {
+  display:inline-flex;align-items:center;gap:6px;font-size:0.4rem;
+  padding:4px 9px;border:1px dashed var(--accent3);border-radius:var(--radius);
+  color:var(--accent3);letter-spacing:0.08em;text-transform:uppercase;
+  background:rgba(0,212,255,0.05);margin-bottom:10px;
+}
+.labs-build-badge::before { content:'●';color:var(--accent3);animation:radioLivePulse 1.6s ease-in-out infinite; }
+
+.labs-intro-row { display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:6px; }
+
+.labs-category-rail { display:flex;gap:6px;flex-wrap:wrap;margin:14px 0; }
+.labs-category-chip {
+  background:none;border:1px solid var(--border);color:var(--text-muted);
+  font-family:'Space Mono',monospace;font-size:0.44rem;padding:5px 10px;
+  border-radius:var(--radius);cursor:pointer;letter-spacing:0.04em;
+  display:inline-flex;align-items:center;gap:4px;transition:color 0.15s,border-color 0.15s;
+}
+.labs-category-chip:hover { color:var(--text); }
+.labs-category-chip.active { border-color:var(--accent3);color:var(--accent3);background:rgba(0,212,255,0.06); }
+
+.labs-experiment-grid { display:grid;grid-template-columns:1fr;gap:10px; }
+@media (min-width:640px) { .labs-experiment-grid { grid-template-columns:1fr 1fr; } }
+
+.labs-card {
+  border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px;
+  background:rgba(255,255,255,0.015);transition:border-color 0.2s,transform 0.2s,box-shadow 0.2s;
+  display:flex;flex-direction:column;gap:8px;
+}
+.labs-card:hover { border-color:var(--accent3);transform:translateY(-1px);box-shadow:0 4px 18px rgba(0,212,255,0.08); }
+.labs-card-head { display:flex;align-items:flex-start;justify-content:space-between;gap:8px; }
+.labs-card-title { font-size:0.58rem;font-weight:700;color:var(--text);line-height:1.4; }
+.labs-card-desc { font-size:0.48rem;color:var(--text-dim);line-height:1.6; }
+
+.labs-status-badge {
+  font-size:0.36rem;font-weight:700;padding:2px 7px;border-radius:10px;
+  letter-spacing:0.05em;text-transform:uppercase;white-space:nowrap;flex-shrink:0;
+  display:inline-flex;align-items:center;gap:3px;
+}
+.labs-status-stable      { color:#4ade80;background:rgba(74,222,128,0.12);border:1px solid rgba(74,222,128,0.35); }
+.labs-status-beta        { color:#facc15;background:rgba(250,204,21,0.12);border:1px solid rgba(250,204,21,0.35); }
+.labs-status-experimental{ color:#ff9f43;background:rgba(255,159,67,0.12);border:1px solid rgba(255,159,67,0.35); }
+.labs-status-unstable    { color:#ff4757;background:rgba(255,71,87,0.12);border:1px solid rgba(255,71,87,0.35); }
+.labs-status-coming_soon { color:var(--text-muted);background:rgba(255,255,255,0.04);border:1px solid var(--border); }
+
+.labs-card-footer { display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:2px; }
+
+/* Toggle switch — small enough to sit inline in a card footer */
+.labs-toggle { position:relative;width:34px;height:18px;flex-shrink:0; }
+.labs-toggle input { opacity:0;width:0;height:0;position:absolute; }
+.labs-toggle-track {
+  position:absolute;inset:0;background:var(--surface3);border:1px solid var(--border);
+  border-radius:999px;cursor:pointer;transition:background 0.2s,border-color 0.2s;
+}
+.labs-toggle-track::before {
+  content:'';position:absolute;top:2px;left:2px;width:12px;height:12px;border-radius:50%;
+  background:var(--text-muted);transition:transform 0.2s,background 0.2s;
+}
+.labs-toggle input:checked + .labs-toggle-track { border-color:var(--accent3);background:rgba(0,212,255,0.15); }
+.labs-toggle input:checked + .labs-toggle-track::before { transform:translateX(16px);background:var(--accent3); }
+.labs-toggle input:disabled + .labs-toggle-track { opacity:0.4;cursor:default; }
+
+.labs-card-persona-row { display:flex;gap:5px;flex-wrap:wrap;margin-top:2px; }
+.labs-persona-chip {
+  background:none;border:1px solid var(--border);color:var(--text-muted);
+  font-family:'Space Mono',monospace;font-size:0.4rem;padding:4px 8px;border-radius:var(--radius);
+  cursor:pointer;letter-spacing:0.02em;transition:color 0.15s,border-color 0.15s;
+}
+.labs-persona-chip:hover { color:var(--text); }
+.labs-persona-chip.active { border-color:var(--accent3);color:var(--accent3);background:rgba(0,212,255,0.06); }
+
+.labs-dev-notes {
+  font-size:0.42rem;color:var(--text-muted);line-height:1.7;border-top:1px dashed var(--border);
+  margin-top:2px;padding-top:8px;display:none;
+}
+.labs-dev-notes.open { display:block; }
+.labs-dev-notes-toggle {
+  align-self:flex-start;background:none;border:none;color:var(--accent3);font-family:'Space Mono',monospace;
+  font-size:0.4rem;cursor:pointer;padding:0;letter-spacing:0.04em;text-decoration:underline;text-underline-offset:2px;
+}
+.labs-dev-notes dt { color:var(--text-dim);text-transform:uppercase;letter-spacing:0.05em;margin-top:6px; }
+.labs-dev-notes dt:first-child { margin-top:0; }
+.labs-dev-notes dd { margin:2px 0 0; }
+
+.labs-feedback-row { display:flex;align-items:center;gap:6px; }
+.labs-feedback-btn {
+  background:none;border:1px solid var(--border);color:var(--text-muted);border-radius:var(--radius);
+  padding:4px 8px;font-size:0.44rem;cursor:pointer;transition:color 0.15s,border-color 0.15s;
+}
+.labs-feedback-btn:hover { color:var(--text); }
+.labs-feedback-btn.love-active { border-color:#4ade80;color:#4ade80;background:rgba(74,222,128,0.08); }
+.labs-feedback-btn.needs-active { border-color:#ff9f43;color:#ff9f43;background:rgba(255,159,67,0.08); }
+.labs-feedback-btn.sending { opacity:0.85;pointer-events:none; }
+
+.labs-empty-panel, .labs-loading-panel { text-align:center;padding:24px 10px;color:var(--text-muted);font-size:0.5rem;grid-column:1/-1; }
+
+/* One-time warning modal — deliberately styled like a terminal confirm
+   dialog rather than a normal panel, so it reads as "you're stepping into
+   dev territory," not a routine dismissible tooltip. */
+.labs-warning-box {
+  border:1px dashed var(--accent2);border-radius:var(--radius);padding:14px 16px;
+  background:rgba(255,71,87,0.05);margin-bottom:14px;
+}
+.labs-warning-title { font-size:0.54rem;font-weight:700;color:var(--accent2);margin-bottom:8px; }
+.labs-warning-list { margin:0;padding-left:16px;font-size:0.48rem;color:var(--text-dim);line-height:1.9; }
+.labs-warning-ack-btn {
+  margin-top:12px;width:100%;background:var(--accent2);color:#0a0a0a;border:none;border-radius:var(--radius);
+  padding:9px 16px;font-family:'Space Mono',monospace;font-size:0.52rem;font-weight:700;cursor:pointer;
+  text-transform:uppercase;letter-spacing:0.06em;
+}
+
 /* ─── Premium Checkout Modal ─────────────────────────────────────────────
    Launched from the Premium Hub (and the DJ BOOM lock card, via the Hub).
    Reuses .lyrics-overlay/.lyrics-panel like every other modal in the app —
@@ -2626,6 +2750,7 @@ body.oled-mode {
     <button class="header-tag" id="djBoomBtn" onclick="openDjBoomOverlay()" style="cursor:pointer;background:none;color:#ffb454;border-color:rgba(255,180,84,0.35);" title="DJ BOOM — AI music assistant">🤖 DJ BOOM</button>
     <button class="header-tag" id="premiumHubBtn" onclick="openPremiumHubOverlay()" style="cursor:pointer;background:none;color:#ffb454;border-color:rgba(255,180,84,0.35);" title="FREQ Premium">⭐ Premium</button>
     <button class="header-tag" id="radioBtn" onclick="openRadioOverlay()" style="cursor:pointer;background:none;color:#ff6b6b;border-color:rgba(255,107,107,0.35);" title="Real-Life Radio — live internet radio (Premium)">📡 Radio <span class="ptb-tag">PTB</span></button>
+    <button class="header-tag labs-header-btn" id="labsBtn" onclick="openLabsOverlay()" title="Experimental Labs — try tomorrow's FREQ features today (Premium)">🧪 Labs</button>
     <button class="header-tag" id="settingsBtn" style="cursor:pointer;background:none;" title="Settings">⊞ Settings</button>
     <button class="header-tag" id="lyricsBtn" style="cursor:pointer;background:none;" title="Lyrics">♪ Lyrics</button>
     <button class="header-tag" id="audioQualityBtn" style="cursor:pointer;background:none;" title="Audio Quality & EQ">⚙ Audio</button>
@@ -4504,13 +4629,16 @@ body.oled-mode {
       <span class="premium-coming-soon-tag" style="color:var(--accent3);border-color:var(--accent3);">Live</span>
     </div>
     <div class="premium-coming-soon-item"><span>📻 Real-Life Radio</span><span class="premium-coming-soon-tag">Live</span></div>
+    <div class="premium-coming-soon-item" style="cursor:pointer;" onclick="closePremiumHubOverlay(); openLabsOverlay();">
+      <span>🧪 Experimental Labs — try tomorrow's features today</span>
+      <span class="premium-coming-soon-tag" style="color:var(--accent3);border-color:var(--accent3);">Live</span>
+    </div>
 
     <div class="premium-hub-section-title">Coming Soon</div>
     <div class="premium-coming-soon-item"><span>☁️ 75 GB Cloud Storage</span><span class="premium-coming-soon-tag">Coming Soon</span></div>
     <div class="premium-coming-soon-item"><span>📊 AI Music Analysis</span><span class="premium-coming-soon-tag">Coming Soon</span></div>
     <div class="premium-coming-soon-item"><span>🧠 AI Playlist Generator</span><span class="premium-coming-soon-tag">Coming Soon</span></div>
     <div class="premium-coming-soon-item"><span>📈 Creator Insights</span><span class="premium-coming-soon-tag">Coming Soon</span></div>
-    <div class="premium-coming-soon-item"><span>🧪 Experimental Labs</span><span class="premium-coming-soon-tag">Coming Soon</span></div>
 
     <div style="font-size:0.42rem;color:var(--text-muted);margin-top:14px;line-height:1.7;">
       Checkout is powered by Gumroad. Premium unlocks automatically on this account within moments of a successful purchase.
@@ -4603,6 +4731,64 @@ body.oled-mode {
     </div>
 
     <button class="support-close-btn" onclick="closeRadioOverlay()" style="margin-top:14px;">Close</button>
+  </div>
+</div>
+
+<!-- ─── 🧪 Experimental Labs ────────────────────────────────────────────────
+     Premium-only preview of upcoming FREQ features. Catalog is entirely
+     data-driven from GET /api/labs — a new experiment appears here the
+     moment a row is inserted into experimental_features, no frontend
+     change needed. Shares .lyrics-overlay/.premium-lock-wrap/.premium-lock-card
+     like every other Premium panel. -->
+<div class="lyrics-overlay" id="labsOverlay">
+  <div class="lyrics-panel labs-panel">
+    <div class="labs-build-badge">🧪 Internal Build · <span id="labsBuildVersion">FREQ v2.8.0-dev</span></div>
+    <div class="lyrics-title">🧪 Experimental Labs</div>
+    <div class="lyrics-artist" style="margin-bottom:4px;">Try tomorrow's FREQ features today. These features are experimental and may change without notice.</div>
+
+    <div class="premium-lock-wrap" id="labsLockWrap">
+      <div class="premium-lock-target" id="labsBody">
+
+        <!-- One-time warning, shown until the user acknowledges it once
+             (persisted server-side via acknowledgedWarning on any toggle
+             write, or a dedicated no-op toggle call — see labsAcknowledgeWarning). -->
+        <div class="labs-warning-box" id="labsWarningBox" style="display:none;">
+          <div class="labs-warning-title">⚠ Experimental features may:</div>
+          <ul class="labs-warning-list">
+            <li>contain bugs</li>
+            <li>be slower</li>
+            <li>change at any time</li>
+            <li>disappear without notice</li>
+          </ul>
+          <button class="labs-warning-ack-btn" onclick="labsAcknowledgeWarning()">I Understand — Enter Labs</button>
+        </div>
+
+        <div id="labsMainArea" style="display:none;">
+          <div class="labs-category-rail" id="labsCategoryRail">
+            <button class="labs-category-chip active" data-labs-category="all" onclick="setLabsCategory('all')">All</button>
+            <button class="labs-category-chip" data-labs-category="ai" onclick="setLabsCategory('ai')">🤖 AI</button>
+            <button class="labs-category-chip" data-labs-category="radio" onclick="setLabsCategory('radio')">📻 Radio</button>
+            <button class="labs-category-chip" data-labs-category="playback" onclick="setLabsCategory('playback')">🎵 Playback</button>
+            <button class="labs-category-chip" data-labs-category="social" onclick="setLabsCategory('social')">👥 Social</button>
+            <button class="labs-category-chip" data-labs-category="interface" onclick="setLabsCategory('interface')">🎨 Interface</button>
+            <button class="labs-category-chip" data-labs-category="performance" onclick="setLabsCategory('performance')">⚡ Performance</button>
+            <button class="labs-category-chip" data-labs-category="developer" onclick="setLabsCategory('developer')">🧪 Developer</button>
+          </div>
+
+          <div class="labs-experiment-grid" id="labsExperimentGrid">
+            <div class="labs-loading-panel">Loading experiments…</div>
+          </div>
+        </div>
+
+      </div>
+      <div class="premium-lock-card" id="labsLockCard" style="display:none;">
+        <div class="lock-icon">🔒</div>
+        <div class="lock-msg">⭐ Experimental Labs is a FREQ Premium feature.<br><br>Upgrade to Premium to test new features before anyone else.</div>
+        <button class="premium-upgrade-btn" onclick="closeLabsOverlay(); openPremiumHubOverlay();">Upgrade</button>
+      </div>
+    </div>
+
+    <button class="support-close-btn" onclick="closeLabsOverlay()" style="margin-top:14px;">Close</button>
   </div>
 </div>
 
@@ -7052,6 +7238,289 @@ if (radioAudioEl) {
   });
   radioAudioEl.addEventListener('playing', radioUpdateNowPlayingBar);
   radioAudioEl.addEventListener('pause', radioUpdateNowPlayingBar);
+}
+
+
+// ─── 🧪 Experimental Labs ───────────────────────────────────────────────────
+// Entirely data-driven from GET /api/labs — LABS.features is whatever the
+// API returns, rendered generically by category/status, so a brand new
+// experiment (new DB row, no code change) just appears in the grid.
+const LABS_PERSONA_OPTIONS = [
+  { key: 'hype_mc',      label: '🎤 Hype MC' },
+  { key: 'lofi_host',     label: '🌙 Lo-Fi Host' },
+  { key: 'oldschool_dj',  label: '📻 Old-School DJ' },
+];
+const LABS_STATUS_LABELS = {
+  stable: '🟢 Stable', beta: '🟡 Beta', experimental: '🟠 Experimental',
+  unstable: '🔴 Unstable', coming_soon: '⚫ Coming Soon',
+};
+const LABS_CATEGORY_LABELS = {
+  ai: '🤖 AI', radio: '📻 Radio', playback: '🎵 Playback', social: '👥 Social',
+  interface: '🎨 Interface', performance: '⚡ Performance', developer: '🧪 Developer Experiments',
+};
+
+const LABS = {
+  loaded: false,
+  loading: false,
+  features: [],
+  acknowledgedWarning: false,
+  category: 'all',
+  feedbackSending: new Set(), // featureId currently mid-submit, to disable double-taps
+};
+
+function labsAuthedFetch(url, options = {}) {
+  const hasQuery = url.includes('?');
+  const withToken = AUTH.token ? `${url}${hasQuery ? '&' : '?'}token=${encodeURIComponent(AUTH.token)}` : url;
+  return fetch(withToken, options);
+}
+
+function openLabsOverlay() {
+  $('labsOverlay')?.classList.add('open');
+  const locked = !AUTH.isPremium;
+  $('labsLockCard').style.display = locked ? 'flex' : 'none';
+  $('labsBody').classList.toggle('premium-lock-target', locked);
+  if (!AUTH.loggedIn) {
+    $('labsLockCard').style.display = 'flex';
+    $('labsBody').classList.add('premium-lock-target');
+    $('labsLockCard').querySelector('.lock-msg').innerHTML = 'Sign in with a FREQ Premium account to access Experimental Labs.';
+    return;
+  }
+  $('labsLockCard').querySelector('.lock-msg').innerHTML = '⭐ Experimental Labs is a FREQ Premium feature.<br><br>Upgrade to Premium to test new features before anyone else.';
+  if (locked) return;
+
+  if (!LABS.loaded && !LABS.loading) loadLabsData();
+}
+
+function closeLabsOverlay() {
+  $('labsOverlay')?.classList.remove('open');
+}
+
+async function loadLabsData() {
+  LABS.loading = true;
+  const grid = $('labsExperimentGrid');
+  if (grid) grid.innerHTML = '<div class="labs-loading-panel">Loading experiments…</div>';
+  try {
+    const res = await labsAuthedFetch('/api/labs');
+    if (res.status === 401 || res.status === 403) {
+      // Session lost Premium (or expired) between opening the panel and
+      // this call resolving — fall back to the lock card rather than a
+      // raw error, since that's the accurate state to show.
+      $('labsLockCard').style.display = 'flex';
+      $('labsBody').classList.add('premium-lock-target');
+      LABS.loading = false;
+      return;
+    }
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not load Experimental Labs.');
+
+    LABS.features = Array.isArray(data.features) ? data.features : [];
+    LABS.acknowledgedWarning = !!data.acknowledgedWarning;
+    LABS.loaded = true;
+    if (data.build?.version) $('labsBuildVersion').textContent = data.build.version;
+
+    if (!LABS.acknowledgedWarning) {
+      $('labsWarningBox').style.display = 'block';
+      $('labsMainArea').style.display = 'none';
+    } else {
+      $('labsWarningBox').style.display = 'none';
+      $('labsMainArea').style.display = 'block';
+      renderLabsGrid();
+    }
+  } catch (err) {
+    if (grid) grid.innerHTML = `<div class="labs-empty-panel">${escapeHtml(err.message || 'Could not load Experimental Labs.')}</div>`;
+  } finally {
+    LABS.loading = false;
+  }
+}
+
+async function labsAcknowledgeWarning() {
+  // Piggybacks on the toggle endpoint against the first feature in the
+  // catalog purely to persist acknowledgedWarning=true server-side (see
+  // loadLabsFeaturesForUser in server.js — any row with the flag counts).
+  // Falls back to a client-only ack if the catalog is empty so the user
+  // is never blocked from entering Labs by this call failing.
+  const anyFeature = LABS.features[0];
+  LABS.acknowledgedWarning = true;
+  $('labsWarningBox').style.display = 'none';
+  $('labsMainArea').style.display = 'block';
+  renderLabsGrid();
+  if (!anyFeature) return;
+  try {
+    await labsAuthedFetch('/api/labs/toggle', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ featureId: anyFeature.featureId, enabled: !!anyFeature.enabled, acknowledgedWarning: true }),
+    });
+  } catch (_err) {
+    // Non-fatal — worst case the warning shows again next session.
+  }
+}
+
+function setLabsCategory(category) {
+  LABS.category = category;
+  document.querySelectorAll('.labs-category-chip').forEach(btn => btn.classList.toggle('active', btn.dataset.labsCategory === category));
+  renderLabsGrid();
+}
+
+function labsStatusBadgeHtml(status) {
+  const cls = `labs-status-${status || 'experimental'}`;
+  const label = LABS_STATUS_LABELS[status] || LABS_STATUS_LABELS.experimental;
+  return `<span class="labs-status-badge ${cls}">${label}</span>`;
+}
+
+function labsPersonaRowHtml(feature) {
+  if (feature.featureId !== 'dj-boom-personalities') return '';
+  const chips = LABS_PERSONA_OPTIONS.map(p => `
+    <button class="labs-persona-chip${feature.persona === p.key ? ' active' : ''}"
+      onclick="labsSetPersona('${feature.featureId}','${p.key}')"
+      ${feature.enabled ? '' : 'disabled'}>${escapeHtml(p.label)}</button>
+  `).join('');
+  return `<div class="labs-card-persona-row">${chips}</div>`;
+}
+
+function labsDevNotesHtml(feature) {
+  const hasNotes = feature.whatsNew || feature.knownIssues || feature.lastUpdated || feature.version;
+  if (!hasNotes) return '';
+  const rows = [];
+  if (feature.whatsNew) rows.push(`<dt>What's New</dt><dd>${escapeHtml(feature.whatsNew)}</dd>`);
+  if (feature.knownIssues) rows.push(`<dt>Known Issues</dt><dd>${escapeHtml(feature.knownIssues)}</dd>`);
+  if (feature.lastUpdated) rows.push(`<dt>Last Updated</dt><dd>${escapeHtml(formatPremiumDate(feature.lastUpdated) || feature.lastUpdated)}</dd>`);
+  if (feature.version) rows.push(`<dt>Version</dt><dd>${escapeHtml(feature.version)}</dd>`);
+  const uid = `labs-notes-${feature.featureId}`;
+  return `
+    <button class="labs-dev-notes-toggle" onclick="document.getElementById('${uid}').classList.toggle('open')">Developer Notes</button>
+    <dl class="labs-dev-notes" id="${uid}">${rows.join('')}</dl>
+  `;
+}
+
+function labsFeedbackRowHtml(feature) {
+  const sending = LABS.feedbackSending.has(feature.featureId);
+  return `
+    <div class="labs-feedback-row">
+      <button class="labs-feedback-btn${feature._lastRating === 'love_it' ? ' love-active' : ''}${sending ? ' sending' : ''}"
+        onclick="labsSendFeedback('${feature.featureId}','love_it')" title="Love it">👍 Love it</button>
+      <button class="labs-feedback-btn${feature._lastRating === 'needs_work' ? ' needs-active' : ''}${sending ? ' sending' : ''}"
+        onclick="labsSendFeedback('${feature.featureId}','needs_work')" title="Needs work">👎 Needs Work</button>
+      <button class="labs-feedback-btn" onclick="labsSendFeedback('${feature.featureId}', null, true)" title="Send detailed feedback">💬 Feedback</button>
+    </div>
+  `;
+}
+
+function labsCardHtml(feature) {
+  const categoryLabel = LABS_CATEGORY_LABELS[feature.category] || feature.category;
+  // "Coming Soon" experiments have nothing behind them yet — disable the
+  // toggle rather than let someone flip a switch that persists but does
+  // nothing, which would read as a bug rather than an honest placeholder.
+  const comingSoon = feature.status === 'coming_soon';
+  return `
+    <div class="labs-card" data-feature-id="${escapeHtml(feature.featureId)}" data-labs-category="${escapeHtml(feature.category)}">
+      <div class="labs-card-head">
+        <div class="labs-card-title">${escapeHtml(feature.emoji || '🧪')} ${escapeHtml(feature.featureName)}</div>
+        ${labsStatusBadgeHtml(feature.status)}
+      </div>
+      <div class="labs-card-desc">${escapeHtml(feature.description || '')}</div>
+      ${labsPersonaRowHtml(feature)}
+      <div class="labs-card-footer">
+        <span style="font-size:0.4rem;color:var(--text-muted);">${escapeHtml(categoryLabel)}</span>
+        <label class="labs-toggle" title="${comingSoon ? 'Not available yet' : (feature.enabled ? 'Turn off' : 'Turn on')}">
+          <input type="checkbox" ${feature.enabled ? 'checked' : ''} ${comingSoon ? 'disabled' : ''} onchange="labsToggleFeature('${feature.featureId}', this.checked)">
+          <span class="labs-toggle-track"></span>
+        </label>
+      </div>
+      ${labsDevNotesHtml(feature)}
+      ${labsFeedbackRowHtml(feature)}
+    </div>
+  `;
+}
+
+function renderLabsGrid() {
+  const grid = $('labsExperimentGrid');
+  if (!grid) return;
+  const visible = LABS.category === 'all' ? LABS.features : LABS.features.filter(f => f.category === LABS.category);
+  if (!visible.length) {
+    grid.innerHTML = '<div class="labs-empty-panel">No experiments in this category yet — check back soon.</div>';
+    return;
+  }
+  grid.innerHTML = visible.map(labsCardHtml).join('');
+}
+
+async function labsToggleFeature(featureId, enabled) {
+  const feature = LABS.features.find(f => f.featureId === featureId);
+  if (!feature) return;
+  const previous = feature.enabled;
+  feature.enabled = enabled; // optimistic
+  renderLabsGrid();
+  try {
+    const res = await labsAuthedFetch('/api/labs/toggle', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ featureId, enabled }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not save that setting.');
+    feature.enabled = !!data.enabled;
+    feature.persona = data.persona || feature.persona;
+    showToast(feature.featureName, enabled ? 'Enabled' : 'Disabled', 'info');
+  } catch (err) {
+    feature.enabled = previous; // revert
+    renderLabsGrid();
+    showToast('Experimental Labs', err.message || 'Could not save that setting.', 'error');
+  }
+}
+
+async function labsSetPersona(featureId, persona) {
+  const feature = LABS.features.find(f => f.featureId === featureId);
+  if (!feature || !feature.enabled) return;
+  const previous = feature.persona;
+  feature.persona = persona; // optimistic
+  renderLabsGrid();
+  try {
+    const res = await labsAuthedFetch('/api/labs/toggle', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ featureId, enabled: true, persona }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not save persona.');
+    feature.persona = data.persona || null;
+    renderLabsGrid();
+  } catch (err) {
+    feature.persona = previous;
+    renderLabsGrid();
+    showToast('Experimental Labs', err.message || 'Could not save persona.', 'error');
+  }
+}
+
+async function labsSendFeedback(featureId, rating, promptForText = false) {
+  const feature = LABS.features.find(f => f.featureId === featureId);
+  if (!feature || LABS.feedbackSending.has(featureId)) return;
+
+  let feedbackText = null;
+  if (promptForText) {
+    feedbackText = window.prompt(`Send feedback about ${feature.featureName}:`, '');
+    if (feedbackText === null) return; // cancelled
+    if (!feedbackText.trim() && !rating) return; // nothing to send
+  }
+  if (!rating && !feedbackText) return;
+
+  LABS.feedbackSending.add(featureId);
+  renderLabsGrid();
+  try {
+    const res = await labsAuthedFetch('/api/labs/feedback', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ featureId, rating: rating || 'love_it', feedback: feedbackText }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not submit feedback.');
+    if (rating) feature._lastRating = rating;
+    showToast(feature.featureName, 'Thanks for the feedback!', 'success');
+  } catch (err) {
+    showToast('Experimental Labs', err.message || 'Could not submit feedback.', 'error');
+  } finally {
+    LABS.feedbackSending.delete(featureId);
+    renderLabsGrid();
+  }
 }
 
 
@@ -15738,6 +16207,7 @@ document.addEventListener('keydown', e => {
   if ($('premiumHubOverlay')?.classList.contains('open')) { closePremiumHubOverlay(); return; }
   if ($('premiumCheckoutOverlay')?.classList.contains('open')) { closePremiumCheckout(); return; }
   if ($('premiumManageOverlay')?.classList.contains('open')) { closePremiumManageOverlay(); return; }
+  if ($('labsOverlay')?.classList.contains('open')) { closeLabsOverlay(); return; }
 });
 
 // ─── 9. Topbar mini-visualizer toggle ────────────────────────────────────────
@@ -16608,7 +17078,7 @@ document.addEventListener('keydown', e => {
 })();
 
 // ─── Patch: Close new overlays via clicking outside ──────────────────────────
-['supportOverlay','aboutOverlay','settingsOverlay','lyricsOverlay','userProfileOverlay','artistProfileOverlay','becomeArtistOverlay','editArtistBioOverlay','manageCollaboratorsOverlay','publishTrackOverlay','trackAnalyticsOverlay','createReleaseOverlay','djBoomOverlay','premiumHubOverlay','premiumCheckoutOverlay','premiumManageOverlay','addEmailOverlay','radioOverlay'].forEach(id => {
+['supportOverlay','aboutOverlay','settingsOverlay','lyricsOverlay','userProfileOverlay','artistProfileOverlay','becomeArtistOverlay','editArtistBioOverlay','manageCollaboratorsOverlay','publishTrackOverlay','trackAnalyticsOverlay','createReleaseOverlay','djBoomOverlay','premiumHubOverlay','premiumCheckoutOverlay','premiumManageOverlay','addEmailOverlay','radioOverlay','labsOverlay'].forEach(id => {
   const el = $(id);
   if (!el) return;
   el.addEventListener('click', e => { if (e.target === el) el.classList.remove('open'); });
