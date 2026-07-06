@@ -63,6 +63,18 @@
   --text:#e8f5e9;--text-dim:#4a7a52;--text-muted:#2e4f35;
   --glow:0 0 20px rgba(74,222,128,0.15);--scanlines:0;
 }
+[data-theme="glass"] {
+  /* Surfaces are translucent rgba (not opaque hex) on purpose — every one
+     of the ~150 existing "background:var(--surface*)" rules in this file
+     picks up real transparency for free with no per-selector edits. The
+     backdrop-filter blur that makes those translucent panes actually read
+     as "glass" (rather than just dim, washed-out panels) is applied once,
+     broadly, further down — see the "Glass UI theme — blur pass" block. */
+  --bg:#0b0e1a;--surface:rgba(255,255,255,0.06);--surface2:rgba(255,255,255,0.09);--surface3:rgba(255,255,255,0.13);
+  --border:rgba(255,255,255,0.14);--accent:#7dd3fc;--accent2:#f472b6;--accent3:#a78bfa;
+  --text:#f1f5f9;--text-dim:#9ca8c4;--text-muted:#64708c;
+  --glow:0 0 24px rgba(125,211,252,0.25);--scanlines:0;
+}
 
 :root { --radius:4px; --font-scale:1; }
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
@@ -233,6 +245,19 @@ body {
   min-height:100vh;overflow-x:hidden;position:relative;
   transition:background 0.4s,color 0.3s;
 }
+/* Glass UI theme — ambient gradient. Blurred translucent panels need actual
+   color/depth behind them to read as "glass" rather than just dim panels
+   over flat black, so this theme alone gets a soft fixed gradient wash
+   under the normal --bg color. Everything else (noise grain, scanlines,
+   scanline opacity var) is untouched and still layers on top as normal. */
+[data-theme="glass"] body {
+  background:
+    radial-gradient(circle at 15% 20%, rgba(125,211,252,0.16), transparent 40%),
+    radial-gradient(circle at 85% 15%, rgba(244,114,182,0.14), transparent 45%),
+    radial-gradient(circle at 50% 90%, rgba(167,139,250,0.14), transparent 50%),
+    var(--bg);
+  background-attachment:fixed;
+}
 body::before {
   content:'';position:fixed;inset:0;
   background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
@@ -242,6 +267,61 @@ body::after {
   content:'';position:fixed;inset:0;
   background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,0.03) 2px,rgba(0,0,0,0.03) 4px);
   pointer-events:none;z-index:999;opacity:var(--scanlines,0);transition:opacity 0.3s;
+}
+
+/* ─── Glass UI theme — blur pass ─────────────────────────────────────
+   Rather than adding backdrop-filter to ~150 individual selectors (or a
+   blanket [class*="..."] wildcard, which would also catch small nested
+   children like .card-actions/.header-tag/.toast-title and double-blur
+   them on top of an already-blurred parent), this lists the actual
+   top-level container classes — overlays, modals, panels, the context
+   menu, cards, sidebars, top bars, and toasts — that paint var(--surface*)
+   as their own background. Anything using --surface* outside this list
+   still gets real transparency (see the theme block above) even without
+   its own blur layer, which is both correct-looking and avoids piling up
+   hundreds of extra compositing layers on small elements (buttons, inputs,
+   badges, chips) where an individual blur wouldn't be visually meaningful
+   anyway. -webkit- prefix included for Safari/iOS support. */
+[data-theme="glass"] .admin-dash-overlay, [data-theme="glass"] .audio-overlay,
+[data-theme="glass"] .auth-overlay, [data-theme="glass"] .dash-overlay,
+[data-theme="glass"] .lyrics-overlay, [data-theme="glass"] .report-overlay,
+[data-theme="glass"] .settings-overlay, [data-theme="glass"] .shortcuts-overlay,
+[data-theme="glass"] .support-overlay,
+[data-theme="glass"] .dash-modal, [data-theme="glass"] .multi-modal,
+[data-theme="glass"] .yttrack-modal,
+[data-theme="glass"] .about-panel, [data-theme="glass"] .admin-dash-panel,
+[data-theme="glass"] .audio-panel, [data-theme="glass"] .auth-panel,
+[data-theme="glass"] .labs-panel, [data-theme="glass"] .lyrics-panel,
+[data-theme="glass"] .multi-panel, [data-theme="glass"] .pco-panel,
+[data-theme="glass"] .queue-stats-panel, [data-theme="glass"] .radio-panel,
+[data-theme="glass"] .release-tracks-panel, [data-theme="glass"] .report-panel,
+[data-theme="glass"] .settings-panel, [data-theme="glass"] .shortcuts-panel,
+[data-theme="glass"] .sidebar-panel, [data-theme="glass"] .support-panel,
+[data-theme="glass"] .video-player-panel, [data-theme="glass"] .yttrack-panel,
+[data-theme="glass"] .ctx-menu,
+[data-theme="glass"] .dash-card, [data-theme="glass"] .dash-stat-card,
+[data-theme="glass"] .labs-card, [data-theme="glass"] .pco-confirm-card,
+[data-theme="glass"] .playlist-card, [data-theme="glass"] .post-card,
+[data-theme="glass"] .post-ref-card, [data-theme="glass"] .premium-lock-card,
+[data-theme="glass"] .radio-station-card, [data-theme="glass"] .release-card,
+[data-theme="glass"] .artist-video-card,
+[data-theme="glass"] .sidebar, [data-theme="glass"] .dash-sidebar,
+[data-theme="glass"] .player-area,
+[data-theme="glass"] .player-topbar, [data-theme="glass"] .admin-dash-header,
+[data-theme="glass"] .dash-main-header,
+[data-theme="glass"] .toast,
+[data-theme="glass"] footer,
+[data-theme="glass"] header {
+  -webkit-backdrop-filter:blur(16px);
+  backdrop-filter:blur(16px);
+}
+/* A subtle top-edge highlight sells the "glass pane" look on the largest,
+   most visible surfaces without touching every single small chip/badge. */
+[data-theme="glass"] .sidebar,
+[data-theme="glass"] .player-area,
+[data-theme="glass"] .settings-panel,
+[data-theme="glass"] header {
+  box-shadow:inset 0 1px 0 rgba(255,255,255,0.16), var(--glow);
 }
 
 /* ─── Header ─────────────────────────────────────────────────────── */
@@ -276,6 +356,7 @@ header {
 .theme-dot[data-theme="vinyl"]{background:#ff9f43;}
 .theme-dot[data-theme="ghost"]{background:#aaaaaa;}
 .theme-dot[data-theme="forest"]{background:#4ade80;}
+.theme-dot[data-theme="glass"]{background:linear-gradient(135deg,#7dd3fc,#f472b6,#a78bfa);}
 .font-toggle{display:flex;gap:3px;}
 .font-btn {background:var(--surface2);border:1px solid var(--border);color:var(--text-muted);border-radius:var(--radius);padding:3px 5px;font-size:0.5rem;cursor:pointer;font-family:'Space Mono',monospace;letter-spacing:0.05em;transition:color 0.15s,border-color 0.15s;}
 .font-btn:hover,.font-btn.active{color:var(--accent);border-color:var(--accent);}
@@ -2743,6 +2824,7 @@ body.oled-mode {
         <div class="theme-dot" data-theme="vinyl" title="Vinyl"></div>
         <div class="theme-dot" data-theme="ghost" title="Ghost"></div>
         <div class="theme-dot" data-theme="forest" title="Forest"></div>
+        <div class="theme-dot" data-theme="glass" title="Glass"></div>
       </div>
     </div>
     <button class="header-tag" id="supportBtn" style="cursor:pointer;background:none;color:var(--accent3);border-color:rgba(0,212,255,0.3);" title="Support / Bug Report">⚑ Help</button>
