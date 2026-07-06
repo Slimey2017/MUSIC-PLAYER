@@ -14977,9 +14977,16 @@ const CrossfadeManager = (() => {
     pendingFinishIndex = nextIndex;
   }
 
-  // Hands off from the temp element to the real playItem() path, seeding
-  // localAudio's position from wherever the temp element got to so there's
-  // no audible gap or restart glitch.
+  // Hands off from the temp element to the real playItem() path. playItem()
+  // always reloads localAudio.src from position 0 — seeking it correctly
+  // requires waiting for 'loadedmetadata' first (the same pattern already
+  // used elsewhere in this file for resuming after a reload, e.g. the
+  // expired-URL safety net below); seeking immediately after playItem()'s
+  // returned promise resolves is too early because that promise settles
+  // once PlaybackManager's play() call settles, not once the browser has
+  // actually finished loading the new source enough to accept a seek. That
+  // premature seek attempt was silently getting dropped, which is what
+  // made every handoff sound like the incoming track restarting from 0.
   function finish(nextIndex) {
     if (!active) return; // already finished via the other race path, or cancelled — no-op
     if (pendingFinishTimer) { clearTimeout(pendingFinishTimer); pendingFinishTimer = null; }
@@ -14988,9 +14995,37 @@ const CrossfadeManager = (() => {
     active = false;
     showIndicator(false);
     handoffPending = true;
-    playItem(nextIndex).then(() => {
-      localAudio.currentTime = resumeAt;
+
+    // The fade-out above ramped gainNode (the *graph's* gain, shared by
+    // every track played through localAudio) down to 0. That ramp only
+    // ever gets reversed in cancel() — a completed fade left it at 0
+    // forever, so every track after the first successful crossfade played
+    // through a silent graph. Restore it immediately as part of a normal
+    // completed handoff, not just a cancelled one.
+    if (gainNode && audioCtx) {
+      gainNode.gain.cancelScheduledValues(audioCtx.currentTime);
+      gainNode.gain.setValueAtTime(Math.min(1, AQ_DEFAULTS.volume / 100), audioCtx.currentTime);
+    }
+
+    // playItem() reloads localAudio.src and starts playing from position 0
+    // for the brief window before 'loadedmetadata' lets us seed the real
+    // resume position — muting for that window prevents an audible blip of
+    // the track's intro before the seek lands. Using .muted rather than
+    // .volume here specifically because playItem() assigns .volume itself
+    // partway through its own setup (after a conditional await whose timing
+    // isn't reliably raceable from outside) — .muted is never touched
+    // anywhere else in this file, so there's nothing to stomp it back.
+    localAudio.addEventListener('loadedmetadata', function seedResume() {
+      localAudio.removeEventListener('loadedmetadata', seedResume);
+      if (resumeAt > 0) localAudio.currentTime = resumeAt;
+      localAudio.muted = false;
     });
+    if (resumeAt > 0) localAudio.muted = true;
+    playItem(nextIndex).catch(() => {}); // playItem already surfaces its own errors via toast
+    // Safety net: if 'loadedmetadata' never fires for some reason (bad URL,
+    // browser quirk), force-unmute after a short grace period rather than
+    // risk leaving playback silently muted indefinitely.
+    if (resumeAt > 0) setTimeout(() => { localAudio.muted = false; }, 4000);
   }
 
   // Called by the pre-existing 'ended' auto-advance listener when a fade
