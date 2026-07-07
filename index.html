@@ -638,6 +638,20 @@ header {
 .toast.show{transform:translateY(0);opacity:1;}
 .toast-title{font-family:'Unbounded',sans-serif;font-size:0.55rem;color:var(--accent2);margin-bottom:2px;letter-spacing:0.08em;}
 
+/* ─── "FREQ track in FREQ" joke popup ────────────────────────────────
+   Purely cosmetic easter egg — see handleFreqception() — triggered when
+   someone pastes this app's own /track/:id (or cloud:) URL into the URL
+   search box instead of using the actual play/search UI for it. */
+.freqception-overlay {position:fixed;inset:0;z-index:9900;background:rgba(0,0,0,0.82);display:flex;align-items:center;justify-content:center;opacity:0;pointer-events:none;transition:opacity 0.25s ease;}
+.freqception-overlay.show {opacity:1;pointer-events:auto;}
+.freqception-card {background:var(--surface2);border:1px solid var(--accent);border-radius:var(--radius);max-width:360px;width:calc(100% - 48px);padding:22px 20px;text-align:center;box-shadow:0 12px 48px rgba(0,0,0,0.6);transform:scale(0.9) translateY(10px);transition:transform 0.25s cubic-bezier(0.34,1.56,0.64,1);}
+.freqception-overlay.show .freqception-card {transform:scale(1) translateY(0);}
+.freqception-emoji {font-size:1.8rem;margin-bottom:8px;}
+.freqception-title {font-family:'Unbounded',sans-serif;font-size:0.7rem;color:var(--accent);letter-spacing:0.04em;margin-bottom:10px;}
+.freqception-body {font-size:0.58rem;line-height:1.7;color:var(--text-dim);margin-bottom:16px;}
+.freqception-btn {background:var(--accent);color:#000;border:none;border-radius:var(--radius);padding:8px 20px;font-family:'Space Mono',monospace;font-size:0.55rem;font-weight:700;cursor:pointer;letter-spacing:0.03em;}
+.freqception-btn:hover {opacity:0.85;}
+
 /* ─── Loading ─────────────────────────────────────────────────────── */
 .embed-loading{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:var(--bg);z-index:2;transition:opacity 0.4s;}
 .embed-loading.hidden{opacity:0;pointer-events:none;}
@@ -4004,6 +4018,16 @@ body.oled-mode {
         <button onclick="openReportModal('video', _videoPlayerTrackId, _videoPlayerTitle)" style="background:none;border:none;color:var(--text-muted);font-size:0.5rem;cursor:pointer;opacity:0.7;" title="Report">⚑</button>
       </div>
     </div>
+  </div>
+</div>
+
+<!-- "FREQ track in FREQ" joke popup — see handleFreqception() -->
+<div class="freqception-overlay" id="freqceptionOverlay">
+  <div class="freqception-card">
+    <div class="freqception-emoji">🎤🔁🎤</div>
+    <div class="freqception-title">Really? A FREQ track? In FREQ?</div>
+    <div class="freqception-body" id="freqceptionBody"></div>
+    <button class="freqception-btn" onclick="closeFreqception()">Fine, I'll just press Play</button>
   </div>
 </div>
 
@@ -15245,9 +15269,42 @@ function removeItem(index) {
 }
 
 // ─── Add Remote URL ───────────────────────────────────────────────────────────
+// ─── "FREQ track in FREQ" joke popup ───────────────────────────────────────
+// Purely cosmetic — someone pasting this app's own /track/:id share link
+// (or the internal cloud: scheme) into the URL search box gets roasted
+// instead of the generic "Unsupported platform" error. A rotating pool so
+// it's not the exact same line every time; addUrl() checks this BEFORE
+// ever hitting /api/resolve, since the server doesn't know this URL shape
+// at all and would just 400 it anyway.
+const FREQCEPTION_LINES = [
+  "That's a FREQ link. You're on FREQ right now. This is FREQ. Just click the track — you don't need the URL box for this one.",
+  "You found a FREQ track's share link... and brought it back to FREQ. It's like mailing yourself a letter you already have.",
+  "Buddy, the track's already here. You didn't discover a portal, you just walked in a circle.",
+  "This is the audio equivalent of screenshotting a screenshot. Just press play on the actual track.",
+  "Somewhere, a raccoon is doing something more productive than this URL paste.",
+  "I checked. It's still FREQ. It was FREQ the whole time. Use the search bar like a normal person.",
+];
+function handleFreqception(rawUrl) {
+  const url = (rawUrl || '').trim();
+  const isOwnOrigin = url.startsWith(window.location.origin + '/track/');
+  const isCloudScheme = url.startsWith('cloud:');
+  if (!isOwnOrigin && !isCloudScheme) return false;
+  const line = FREQCEPTION_LINES[Math.floor(Math.random() * FREQCEPTION_LINES.length)];
+  $('freqceptionBody').textContent = line;
+  $('freqceptionOverlay').classList.add('show');
+  return true;
+}
+function closeFreqception() {
+  $('freqceptionOverlay').classList.remove('show');
+}
+$('freqceptionOverlay')?.addEventListener('click', e => {
+  if (e.target.id === 'freqceptionOverlay') closeFreqception();
+});
+
 async function addUrl(rawUrl) {
   const url = rawUrl.trim();
   if (!url) return;
+  if (handleFreqception(url)) { urlInput.value = ''; return; }
   addBtn.disabled = true; addBtn.textContent = '…';
   try {
     const res  = await fetch('/api/resolve', {
