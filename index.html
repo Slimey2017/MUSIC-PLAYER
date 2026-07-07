@@ -14713,13 +14713,24 @@ async function playItem(index) {
 
     // Connect Web Audio graph (once per element)
     if (!audioCtx) setupAudioContext();
+
+    // The context MUST be running before we connect/start playback — if
+    // it's still 'suspended' (common on a page's very first track click),
+    // localAudio.play() will report "playing" while producing no sound,
+    // because its output is routed through createMediaElementSource() into
+    // a graph that isn't running yet. Awaiting resume() here, BEFORE the
+    // graph is built, is the fix — the old code called resume() without
+    // awaiting it and only AFTER already connecting the graph and starting
+    // playback, so the resume frequently lost the race.
+    if (audioCtx && audioCtx.state === 'suspended') {
+      try { await audioCtx.resume(); } catch (_) {}
+    }
+
     if (audioCtx && !_audioGraphConnected) connectAudioGraph();
     else if (audioCtx && _audioGraphConnected) updateAudioGraph();
 
     localAudio.volume       = Math.min(1, AQ_DEFAULTS.volume / 100);
     localAudio.playbackRate = Math.min(9, Math.max(0.25, AQ_DEFAULTS.speed));
-
-    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
 
     PlaybackManager.requestPlay();
 
