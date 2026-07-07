@@ -6458,9 +6458,11 @@ async function resolveChartTrack(t) {
     const res = await fetch(`/api/tracks/${encodeURIComponent(t.id)}/stream`);
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Could not load this track.');
+    const ttlMs = (Number(data.expiresIn) || 600) * 1000;
     return {
       id: t.id, title: data.title || t.title, platform: 'freq', type: 'track',
-      originalUrl: t.originalUrl, embedUrl: data.url,
+      originalUrl: t.originalUrl, blobUrl: data.url,
+      freqTrackId: data.id || t.id, urlExpiresAt: Date.now() + ttlMs,
       artist: data.artistName, artistId: data.artistId, coverUrl: data.coverUrl,
       mimeType: data.mimeType, duration: data.duration,
     };
@@ -8749,9 +8751,11 @@ async function trackFinderPlay(i) {
     const res = await fetch(`/api/tracks/${encodeURIComponent(t.id)}/stream`);
     if (!res.ok) throw new Error('Could not load track.');
     const data = await res.json();
+    const ttlMs = (Number(data.expiresIn) || 600) * 1000;
     const item = {
       id: t.id, title: data.title, platform: 'freq', type: 'track',
-      originalUrl: `cloud:${t.id}`, embedUrl: data.url,
+      originalUrl: `cloud:${t.id}`, blobUrl: data.url,
+      freqTrackId: data.id || t.id, urlExpiresAt: Date.now() + ttlMs,
       artist: data.artistName, artistId: data.artistId, coverUrl: data.coverUrl,
       mimeType: data.mimeType, duration: data.duration,
     };
@@ -8771,9 +8775,11 @@ async function trackFinderQueue(i) {
     const res = await fetch(`/api/tracks/${encodeURIComponent(t.id)}/stream`);
     if (!res.ok) throw new Error('Could not load track.');
     const data = await res.json();
+    const ttlMs = (Number(data.expiresIn) || 600) * 1000;
     const item = {
       id: t.id, title: data.title, platform: 'freq', type: 'track',
-      originalUrl: `cloud:${t.id}`, embedUrl: data.url,
+      originalUrl: `cloud:${t.id}`, blobUrl: data.url,
+      freqTrackId: data.id || t.id, urlExpiresAt: Date.now() + ttlMs,
       artist: data.artistName, artistId: data.artistId, coverUrl: data.coverUrl,
       mimeType: data.mimeType, duration: data.duration,
     };
@@ -14352,7 +14358,7 @@ function renderQueue() {
     const cfg = PLATFORM_CONFIG[item.platform] || { label:'Unknown', color:'#666', icon:'?' };
     const isActive   = i === state.activeIndex;
     const displayName = item.customLabel || item.title || item.originalUrl || item.id || 'Unknown';
-    const durStr     = item.duration ? `<span class="card-duration">${item.duration}</span>` : '';
+    const durStr     = item.duration ? `<span class="card-duration">${formatDuration(item.duration)}</span>` : '';
     const starClass  = item.starred ? 'starred-icon' : '';
     const isYT = item.platform === 'youtube' || item.platform === 'ytmusic';
     const fetchBtn = isYT
