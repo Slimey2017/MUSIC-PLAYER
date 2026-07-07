@@ -14321,6 +14321,38 @@ clearHistBtn.addEventListener('click', () => {
   showToast('History cleared','','info');
 });
 
+// ─── Share a track ──────────────────────────────────────────────────────────
+// "Listen to this" links only make sense for two platform shapes: a FREQ
+// catalog track (share the app's own /track/:id page, which resolves and
+// autoplays it for whoever clicks through — see handleSharedProfileLink) or
+// a genuine online-URL track (YouTube/Spotify/etc.), where originalUrl IS
+// already a real, independently shareable link. A true local blob: file has
+// no server-side existence at all, so there's nothing to share — the button
+// itself is only rendered for freq/online items in renderQueue/renderFavorites.
+function buildShareUrl(item) {
+  if (item.platform === 'freq' && item.freqTrackId) {
+    return `${window.location.origin}/track/${encodeURIComponent(item.freqTrackId)}`;
+  }
+  if (item.platform !== 'local' && item.originalUrl && /^https?:\/\//.test(item.originalUrl)) {
+    return item.originalUrl;
+  }
+  return null;
+}
+function shareQueueItem(index) {
+  const item = state.queue[index];
+  if (!item) return;
+  const url = buildShareUrl(item);
+  if (!url) { showToast('Can\'t share this', 'Only FREQ tracks and online links can be shared.', 'info'); return; }
+  shareProfileLink(url, item.title || item.customLabel || 'Listen on FREQ');
+}
+function shareFavItem(i) {
+  const fav = state.favorites[i];
+  if (!fav) return;
+  const url = buildShareUrl(fav);
+  if (!url) { showToast('Can\'t share this', 'Only FREQ tracks and online links can be shared.', 'info'); return; }
+  shareProfileLink(url, fav.title || fav.customLabel || 'Listen on FREQ');
+}
+
 // ─── Favorites helpers ────────────────────────────────────────────────────────
 function toggleFav(index) {
   const item = state.queue[index];
@@ -14337,9 +14369,13 @@ function renderFavorites() {
   }
   favList.innerHTML = state.favorites.map((item, i) => {
     const cfg = PLATFORM_CONFIG[item.platform] || { label:'?', color:'#666' };
+    const shareBtn = buildShareUrl(item)
+      ? `<button class="fav-remove" onclick="event.stopPropagation();shareFavItem(${i})" title="Share">⇪</button>`
+      : '';
     return `<div class="fav-item" onclick="restoreFavItem(${i})">
       <span class="fav-label" title="${item.title||item.id}">${item.title||item.id}</span>
       <span class="hist-platform" style="color:${cfg.color}">${cfg.label}</span>
+      ${shareBtn}
       <button class="fav-remove" onclick="event.stopPropagation();removeFavItem(${i})">✕</button>
     </div>`;
   }).join('');
@@ -14374,6 +14410,10 @@ function renderQueue() {
     const durStr     = item.duration ? `<span class="card-duration">${formatDuration(item.duration)}</span>` : '';
     const starClass  = item.starred ? 'starred-icon' : '';
     const isYT = item.platform === 'youtube' || item.platform === 'ytmusic';
+    const canShare = !!buildShareUrl(item);
+    const shareBtn = canShare
+      ? `<button class="card-action-btn" onclick="event.stopPropagation();shareQueueItem(${i})" title="Share">⇪</button>`
+      : '';
     const fetchBtn = isYT
       ? `<button class="card-fetch-btn" onclick="event.stopPropagation();openYtTrackModal('${i}')" title="Browse tracks / playlist">⬡ Tracks</button>`
       : '';
@@ -14395,6 +14435,7 @@ function renderQueue() {
             ${fetchBtn}
             <span class="card-type-badge">${item.type||'link'}</span>
             <div class="card-actions">
+              ${shareBtn}
               <button class="card-action-btn star-btn ${starClass}" onclick="event.stopPropagation();toggleFav(${i})" title="Favorite">★</button>
               <button class="card-action-btn" onclick="event.stopPropagation();removeItem(${i})" title="Remove">✕</button>
             </div>
@@ -17557,6 +17598,11 @@ $('videoPlayerOverlay')?.addEventListener('click', e => {
     history.replaceState(null, '', '/');
   } else if ((match = path.match(/^\/artist\/([^\/]+)\/?$/))) {
     openArtistProfile(decodeURIComponent(match[1]));
+    history.replaceState(null, '', '/');
+  } else if ((match = path.match(/^\/track\/([^\/]+)\/?$/))) {
+    playPublishedTrack(decodeURIComponent(match[1])).catch(() => {
+      showToast('Track unavailable', "This track couldn't be found or isn't published.", 'error');
+    });
     history.replaceState(null, '', '/');
   }
 })();
