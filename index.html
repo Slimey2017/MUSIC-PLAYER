@@ -6463,7 +6463,8 @@ async function resolveChartTrack(t) {
       id: t.id, title: data.title || t.title, platform: 'freq', type: 'track',
       originalUrl: t.originalUrl, blobUrl: data.url,
       freqTrackId: data.id || t.id, urlExpiresAt: Date.now() + ttlMs,
-      artist: data.artistName, artistId: data.artistId, coverUrl: data.coverUrl,
+      artist: data.artistName, artistId: data.artistId,
+      coverUrl: data.coverUrl, artworkUrl: data.coverUrl,
       mimeType: data.mimeType, duration: data.duration,
     };
   }
@@ -8756,7 +8757,8 @@ async function trackFinderPlay(i) {
       id: t.id, title: data.title, platform: 'freq', type: 'track',
       originalUrl: `cloud:${t.id}`, blobUrl: data.url,
       freqTrackId: data.id || t.id, urlExpiresAt: Date.now() + ttlMs,
-      artist: data.artistName, artistId: data.artistId, coverUrl: data.coverUrl,
+      artist: data.artistName, artistId: data.artistId,
+      coverUrl: data.coverUrl, artworkUrl: data.coverUrl,
       mimeType: data.mimeType, duration: data.duration,
     };
     if (!state.allowDups && state.queue.some(q => q.originalUrl === item.originalUrl)) {
@@ -8780,7 +8782,8 @@ async function trackFinderQueue(i) {
       id: t.id, title: data.title, platform: 'freq', type: 'track',
       originalUrl: `cloud:${t.id}`, blobUrl: data.url,
       freqTrackId: data.id || t.id, urlExpiresAt: Date.now() + ttlMs,
-      artist: data.artistName, artistId: data.artistId, coverUrl: data.coverUrl,
+      artist: data.artistName, artistId: data.artistId,
+      coverUrl: data.coverUrl, artworkUrl: data.coverUrl,
       mimeType: data.mimeType, duration: data.duration,
     };
     if (!state.allowDups && state.queue.some(q => q.originalUrl === item.originalUrl)) {
@@ -9654,6 +9657,16 @@ async function refreshPublishedTrackUrl(item) {
   if (!res.ok || !data.url) return false;
   item.blobUrl = data.url;
   item.urlExpiresAt = Date.now() + ((Number(data.expiresIn) || 600) * 1000);
+  // These "cold" items (built with just a freqTrackId — e.g. DJ BOOM's
+  // FREQ Radio, playlist-by-name, search-term queueing) never had artwork
+  // or full metadata set at creation time, since only the JIT refresh path
+  // below ever calls /stream for them. Backfill it here so cover art and
+  // title actually show up once resolved, instead of staying blank forever.
+  if (!item.artworkUrl && data.coverUrl) item.artworkUrl = data.coverUrl;
+  if (!item.title && data.title) item.title = data.title;
+  if (!item.artist && data.artistName) item.artist = data.artistName;
+  if (!item.artistId && data.artistId) item.artistId = data.artistId;
+  if (!item.collaborators?.length && data.collaborators) item.collaborators = data.collaborators;
   return true;
 }
 
@@ -14688,7 +14701,7 @@ async function playItem(index) {
     // signed URL within 10s of its known expiry, or already past it, is
     // refreshed before .src is ever assigned, so playback never starts on
     // a link the browser is about to reject as "no supported source".
-    if ((item.freqTrackId || item.cloudFileId) && item.urlExpiresAt && Date.now() > item.urlExpiresAt - 10000) {
+    if ((item.freqTrackId || item.cloudFileId) && (!item.blobUrl || (item.urlExpiresAt && Date.now() > item.urlExpiresAt - 10000))) {
       const ok = item.freqTrackId
         ? await refreshPublishedTrackUrl(item)
         : await (async () => {
