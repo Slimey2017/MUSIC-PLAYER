@@ -8756,6 +8756,32 @@ app.get('/artist/:slug', async (req, res) => {
   return res.sendFile(path.join(__dirname, 'index.html'));
 });
 
+// Shareable track links — "share to listen" for a FREQ-catalog track. Same
+// existence-probing protection as /u/:username: only a genuinely published
+// track gets real OG tags, everything else (unpublished/missing id) falls
+// through to the bare SPA shell so a private/draft track's page source
+// can't be used to confirm the id exists. The actual "listen" behavior
+// (auto-playing this track for a visitor who clicks through) is handled
+// client-side in index.html's handleSharedProfileLink, not here — this
+// route's only job is what the link looks like when shared.
+app.get('/track/:id', async (req, res) => {
+  try {
+    const track = await dbGetTrackById(req.params.id);
+    if (track && track.is_published) {
+      const html = await injectOgTags({
+        title: `${track.title} by ${track.artist_name || 'Unknown Artist'} · FREQ`,
+        description: `Listen to "${track.title}" on FREQ.`,
+        image: track.cover_url,
+        url: `${BASE_URL}/track/${track.id}`,
+      });
+      return res.send(html);
+    }
+  } catch (err) {
+    console.error('[og /track/:id]', err);
+  }
+  return res.sendFile(path.join(__dirname, 'index.html'));
+});
+
 
 // ─── Reports ─────────────────────────────────────────────────────────────────
 
