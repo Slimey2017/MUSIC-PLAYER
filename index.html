@@ -15122,6 +15122,27 @@ localAudio.addEventListener('timeupdate', () => CrossfadeManager.tick());
 localAudio.addEventListener('seeking', () => { if (CrossfadeManager.isActive()) CrossfadeManager.cancel(); });
 localAudio.addEventListener('pause', () => { if (CrossfadeManager.isActive()) CrossfadeManager.cancel(); });
 
+// Chrome/Chromium quirk: a blob: URL (true local files added via
+// addLocalFiles) can report duration === Infinity indefinitely — the real
+// duration only resolves after a seek forces the browser to scan the whole
+// file. Streamed freq/cloud tracks (served with proper Content-Length /
+// duration headers from Supabase) never hit this, which is why crossfade
+// and the upcoming-URL refresh (both gated on isFinite(localAudio.duration))
+// silently never fired for local files specifically. Standard fix: on
+// loadedmetadata, if duration is non-finite, seek far past the end once —
+// this forces Chrome to compute the true duration — then seek back to 0
+// (or wherever playback actually is) before the listener below ever runs.
+localAudio.addEventListener('loadedmetadata', function fixInfiniteDuration() {
+  if (isFinite(localAudio.duration)) return;
+  const resumeAt = localAudio.currentTime;
+  const onTimeupdate = () => {
+    localAudio.removeEventListener('timeupdate', onTimeupdate);
+    localAudio.currentTime = resumeAt;
+  };
+  localAudio.addEventListener('timeupdate', onTimeupdate);
+  localAudio.currentTime = 1e101;
+});
+
 // ─── Expired-URL safety net ────────────────────────────────────────────────
 // playItem()'s pre-play check (above) catches a stale signed URL before
 // playback starts, but a few paths can still slip past it: the user pauses
