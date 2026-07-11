@@ -3028,6 +3028,7 @@ body.oled-mode {
         <div class="queue-actions">
           <button class="flex-btn" id="flexBtn" title="Load FREQ demo playlist">⚡ FLEX</button>
           <button class="shuffle-btn" id="shuffleBtn" title="Shuffle">⇄</button>
+          <button class="export-btn" id="shareQueueBtn" title="Share this queue as a link" style="background:var(--accent);color:#000;">⇪ Share</button>
           <button class="export-btn" id="exportBtn" title="Export JSON">↓ JSON</button>
           <button class="export-btn" id="mdExportBtn" title="Export Markdown tracklist" style="background:var(--surface3);">↓ MD</button>
           <button class="clear-btn" id="clearBtn" title="Clear all">✕</button>
@@ -3045,6 +3046,7 @@ body.oled-mode {
           <button class="qtool-btn" id="bulkDeleteBtn" title="Delete by platform">⊗ Source</button>
           <button class="qtool-btn" id="statsBtn" title="Queue statistics">≡ Stats</button>
           <button class="qtool-btn" id="multiPasteBtn" title="Multi-link extractor">⊞ Multi</button>
+          <button class="qtool-btn" id="importWizardBtn" title="Import a playlist/channel URL with match report">⇩ Import</button>
           <button class="qtool-btn" id="scanQueueBtn" title="Scan queue for dead YouTube embeds">🩺 Scan</button>
         </div>
         <!-- Stats dropdown -->
@@ -3140,6 +3142,7 @@ body.oled-mode {
         </div>
       </div>
       <div class="player-controls">
+        <button class="ctrl-btn" id="cmdPaletteBtn" title="Command palette [Ctrl+K]">⌘</button>
         <button class="ctrl-btn" id="prevBtn" title="Previous [←]">⏮</button>
         <button class="ctrl-btn" id="repeatBtn" title="Cycle repeat [R]">↺</button>
         <span class="repeat-label" id="repeatLabel"></span>
@@ -3328,7 +3331,43 @@ body.oled-mode {
   </div>
 </div>
 
+<!-- Import Wizard — one playlist/channel/album URL in, a real per-item
+     match/conflict report out. Reuses the .multi-* modal styling since
+     it's the same "paste → preview → commit" shape as Multi-Link, just for
+     a single source URL that may expand into many tracks instead of a
+     block of text that already contains many URLs. -->
+<div class="multi-modal" id="importWizardModal" style="display:none;">
+  <div class="multi-panel">
+    <div class="multi-title">⇩ Import Wizard</div>
+    <div class="multi-sub">Paste a playlist, channel, or track URL. FREQ will match what it can play and report anything it can't.</div>
+    <div style="display:flex;gap:8px;">
+      <input type="text" id="importWizardInput" placeholder="https://www.youtube.com/playlist?list=… or any supported link" autocomplete="off" spellcheck="false"
+        style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);padding:10px 12px;font-family:'Space Mono',monospace;font-size:0.6rem;" />
+      <button class="multi-btn" id="importWizardFetch" style="flex:none;">Fetch</button>
+    </div>
+    <div class="multi-preview" id="importWizardReport" style="display:none;max-height:340px;overflow-y:auto;"></div>
+    <div style="display:flex;gap:8px;margin-top:10px;">
+      <button class="multi-btn" id="importWizardAddAll" style="display:none;">Add All Matched</button>
+      <button class="multi-btn multi-btn-cancel" id="importWizardClose">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- Command Palette — Ctrl/Cmd+K. Search-filterable list of actions drawn
+     from a static registry (see CMD_PALETTE_ACTIONS in the script below),
+     each one just calling an existing function — this is a launcher for
+     functionality that already exists elsewhere in the UI, not a parallel
+     implementation of it. -->
+<div class="multi-modal" id="cmdPaletteModal" style="display:none;align-items:flex-start;padding-top:12vh;">
+  <div class="multi-panel" style="max-width:520px;">
+    <input type="text" id="cmdPaletteInput" placeholder="Type a command or search…" autocomplete="off" spellcheck="false"
+      style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);padding:12px 14px;font-family:'Space Mono',monospace;font-size:0.7rem;box-sizing:border-box;" />
+    <div id="cmdPaletteList" style="margin-top:10px;max-height:50vh;overflow-y:auto;"></div>
+  </div>
+</div>
+
 <footer id="mainFooter">
+
   © 2026 FREQ · Slimey2017 · All rights reserved ·
   <button class="footer-support-btn" onclick="openSupportModal()">⚑ Support &amp; Feedback</button> ·
   <button class="footer-support-btn" onclick="openAboutModal()">ℹ About</button>
@@ -5124,6 +5163,7 @@ body.oled-mode {
 <div class="shortcuts-overlay" id="shortcutsOverlay">
   <div class="shortcuts-panel">
     <div class="shortcuts-title">Keyboard Shortcuts</div>
+    <div class="shortcut-row"><span>Command palette</span><span class="shortcut-key">Ctrl/⌘ K</span></div>
     <div class="shortcut-row"><span>Previous / Next track</span><span class="shortcut-key">← / →</span></div>
     <div class="shortcut-row"><span>Play / Pause local audio</span><span class="shortcut-key">Space</span></div>
     <div class="shortcut-row"><span>Volume Up / Down (local)</span><span class="shortcut-key">↑ / ↓</span></div>
@@ -14407,6 +14447,77 @@ function shareFavItem(i) {
   shareProfileLink(url, fav.title || fav.customLabel || 'Listen on FREQ');
 }
 
+// ─── Share the whole queue as a link ──────────────────────────────
+// A /q/:id link needs somewhere server-side to point to — rather than
+// inventing a new "queue snapshot" table, this reuses the playlist system
+// that already exists (playlists_v2 + playlist_tracks, is_public flag,
+// the /q/:id OG route added alongside /track/:id and /artist/:slug). What
+// "Share" does under the hood is: create (or reuse, if already shared this
+// session) a public playlist named after the current queue, push every
+// shareable item into it, then copy the resulting /q/:id link. Whoever
+// opens that link gets the queue loaded into their own player — see the
+// /q/ branch in handleSharedProfileLink.
+let _sharedQueuePlaylistId = null; // set once this queue has been shared this session, so re-sharing updates instead of duplicating
+
+async function shareCurrentQueue() {
+  if (!AUTH.loggedIn || !AUTH.token) {
+    showToast('Sign in required', 'Sign in to share your queue as a link.', 'info');
+    return;
+  }
+  const shareable = state.queue.filter(item => item.platform !== 'local'); // blob: URLs have no server-side existence to share
+  if (!shareable.length) {
+    showToast('Nothing to share', 'Add some online tracks first.', 'info');
+    return;
+  }
+
+  const btn = $('shareQueueBtn');
+  btn.disabled = true;
+  const originalLabel = btn.textContent;
+  btn.textContent = '⇪ Sharing…';
+
+  try {
+    let playlistId = _sharedQueuePlaylistId;
+
+    if (!playlistId) {
+      const name = `FREQ Queue — ${new Date().toLocaleDateString()}`;
+      const createRes  = await fetch(PLAYLISTS_BASE, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: AUTH.token, name, isPublic: true }),
+      });
+      const created = await createRes.json();
+      if (!createRes.ok) {
+        if (createRes.status === 401) { handleTokenExpiry(); return; }
+        throw new Error(created.error || 'Could not create playlist.');
+      }
+      playlistId = created.id;
+
+      // Sequential adds, same pattern the import flows already use — there
+      // is no batch "add many tracks" endpoint, and adding one at a time
+      // keeps this consistent with POST /api/playlists/:id/tracks as it
+      // already exists rather than introducing new server surface for it.
+      for (const item of shareable) {
+        try {
+          await fetch(`${PLAYLISTS_BASE}/${encodeURIComponent(playlistId)}/tracks`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token: AUTH.token, trackData: item }),
+          });
+        } catch (_) { /* one bad track shouldn't abort the whole share */ }
+      }
+      _sharedQueuePlaylistId = playlistId;
+    }
+
+    const url = `${window.location.origin}/q/${encodeURIComponent(playlistId)}`;
+    await shareProfileLink(url, 'My FREQ Queue');
+  } catch (err) {
+    showToast('Share Failed', err.message || 'Could not share this queue.', 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalLabel;
+  }
+}
+
+$('shareQueueBtn').addEventListener('click', shareCurrentQueue);
+
 // ─── Favorites helpers ────────────────────────────────────────────────────────
 function toggleFav(index) {
   const item = state.queue[index];
@@ -16335,6 +16446,148 @@ $('multiAddAll').addEventListener('click', async () => {
 $('multiClose').addEventListener('click', () => { multiModal.style.display = 'none'; });
 multiModal.addEventListener('click', e => { if (e.target === multiModal) multiModal.style.display = 'none'; });
 
+// ─── Import Wizard ─────────────────────────────────────────────────
+// One URL in (playlist, channel, album, or single track), a real
+// per-item match report out, before anything touches the queue.
+//
+// Two paths depending on what the URL resolves to:
+//   1. YouTube/YT Music playlist or channel (canFetchTracks:true from
+//      /api/resolve) → expand via the existing /api/yt/tracks scraper to
+//      get every individual track, each independently reportable.
+//   2. Anything else (single track/video, or a platform whose playlists
+//      can't be expanded server-side — e.g. Spotify, which only exposes a
+//      single embeddable unit without their OAuth API) → resolve as one
+//      item via /api/resolve, same as pasting the URL into the normal
+//      add-URL box.
+// Either way, the report separates "matched" (will be queued) from
+// "unsupported"/"failed" (won't be, with a stated reason) — replacing the
+// silent added/failed counter Multi-Link uses with an itemized list the
+// user can actually act on.
+const importWizardModal  = $('importWizardModal');
+const importWizardInput  = $('importWizardInput');
+const importWizardReport = $('importWizardReport');
+const importWizardAddAll = $('importWizardAddAll');
+
+let _importMatched = []; // queue-ready items pending confirmation
+
+$('importWizardBtn').addEventListener('click', () => {
+  playSfx('click');
+  importWizardInput.value = '';
+  importWizardReport.style.display = 'none';
+  importWizardAddAll.style.display = 'none';
+  _importMatched = [];
+  importWizardModal.style.display = 'flex';
+  setTimeout(() => importWizardInput.focus(), 60);
+});
+
+$('importWizardFetch').addEventListener('click', () => runImportWizard());
+importWizardInput.addEventListener('keydown', e => { if (e.key === 'Enter') runImportWizard(); });
+
+async function runImportWizard() {
+  const url = importWizardInput.value.trim();
+  if (!url) return;
+
+  importWizardReport.style.display = 'block';
+  importWizardReport.innerHTML = '<span style="color:var(--text-muted)">Resolving URL…</span>';
+  importWizardAddAll.style.display = 'none';
+  _importMatched = [];
+
+  // Step 1: resolve the URL to find out what it is and whether FREQ can
+  // expand it into individual tracks.
+  let resolved;
+  try {
+    const res  = await fetch('/api/resolve', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ url }) });
+    resolved = await res.json();
+    if (!res.ok) {
+      importWizardReport.innerHTML = `<span style="color:var(--accent2)">⚠ ${resolved.error || 'Could not resolve this URL.'}</span>`;
+      return;
+    }
+  } catch (err) {
+    importWizardReport.innerHTML = `<span style="color:var(--accent2)">⚠ Network error: ${err.message}</span>`;
+    return;
+  }
+
+  // Step 2a: expandable (YouTube/YT Music playlist or channel) — fetch the
+  // real per-track list so each one gets its own report line.
+  if (resolved.canFetchTracks) {
+    importWizardReport.innerHTML = '<div class="yttrack-loading"><div class="spinner"></div><span>Fetching tracklist…</span></div>';
+    try {
+      const res  = await fetch('/api/yt/tracks', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ url }) });
+      const data = await res.json();
+      if (!res.ok) {
+        importWizardReport.innerHTML = `<span style="color:var(--accent2)">⚠ ${data.error || 'Could not fetch tracklist.'}</span>`;
+        return;
+      }
+      const dupes = data.tracks.filter(t => !state.allowDups && state.queue.some(q => q.id === t.id));
+      _importMatched = data.tracks.filter(t => state.allowDups || !state.queue.some(q => q.id === t.id));
+      renderImportReport({
+        sourceLabel: data.title || 'YouTube Playlist',
+        matched: _importMatched.map(t => ({ title: t.title, note: t.duration || '' })),
+        skipped: dupes.map(t => ({ title: t.title, reason: 'Already in queue' })),
+      });
+    } catch (err) {
+      importWizardReport.innerHTML = `<span style="color:var(--accent2)">⚠ Network error: ${err.message}</span>`;
+    }
+    return;
+  }
+
+  // Step 2b: not expandable — either a single track/video, or a platform
+  // FREQ can only embed as one unit (e.g. a Spotify playlist/album, which
+  // plays natively in FREQ as a single embedded player once queued, but
+  // whose individual track titles aren't visible without Spotify's OAuth
+  // API). Report it as one matched item either way — nothing "fails" here,
+  // there just isn't a per-track breakdown to show.
+  const cfg = PLATFORM_CONFIG[resolved.platform] || { label: resolved.platform || 'Unknown' };
+  const isDupe = !state.allowDups && state.queue.some(q => q.originalUrl === resolved.originalUrl);
+  _importMatched = isDupe ? [] : [resolved];
+  const note = resolved.type === 'playlist' || resolved.type === 'album'
+    ? `${cfg.label} ${resolved.type} — plays as one embedded unit (individual tracks aren't exposed without ${cfg.label}'s API)`
+    : cfg.label;
+  renderImportReport({
+    sourceLabel: resolved.title || url,
+    matched: isDupe ? [] : [{ title: resolved.title || url, note }],
+    skipped: isDupe ? [{ title: resolved.title || url, reason: 'Already in queue' }] : [],
+  });
+}
+
+function renderImportReport({ sourceLabel, matched, skipped }) {
+  const rows = [];
+  rows.push(`<strong style="color:var(--accent)">${sourceLabel}</strong><br/><br/>`);
+  if (matched.length) {
+    rows.push(`<div style="color:var(--accent3);font-size:0.55rem;margin-bottom:4px;">✓ ${matched.length} matched — will be added</div>`);
+    matched.forEach(m => rows.push(`<div class="multi-preview-url">↳ ${escapeHtml(m.title)}${m.note ? ` <span style="color:var(--text-muted);">· ${escapeHtml(m.note)}</span>` : ''}</div>`));
+  }
+  if (skipped.length) {
+    rows.push(`<div style="color:var(--accent2);font-size:0.55rem;margin:10px 0 4px;">⚠ ${skipped.length} skipped</div>`);
+    skipped.forEach(s => rows.push(`<div class="multi-preview-url">↳ ${escapeHtml(s.title)} <span style="color:var(--text-muted);">· ${escapeHtml(s.reason)}</span></div>`));
+  }
+  if (!matched.length && !skipped.length) rows.push('<span style="color:var(--text-muted)">Nothing found.</span>');
+
+  importWizardReport.innerHTML = rows.join('');
+  importWizardAddAll.style.display = matched.length ? 'block' : 'none';
+  importWizardAddAll.textContent = `▶ Add ${matched.length} Matched Track${matched.length!==1?'s':''}`;
+}
+
+importWizardAddAll.addEventListener('click', () => {
+  if (!_importMatched.length) return;
+  const startIdx = state.queue.length;
+  _importMatched.forEach(item => {
+    // /api/yt/tracks items and /api/resolve items are both queue-item-
+    // shaped already (platform, type, id, embedUrl, originalUrl, title) —
+    // pushed as-is, same as every other add-to-queue path in the app.
+    state.queue.push(item.platform ? item : { ...item, platform: 'youtube', type: 'video' });
+  });
+  save(); renderQueue();
+  if (state.activeIndex === -1 && state.queue.length) playItem(startIdx);
+  showToast('Imported!', `${_importMatched.length} track${_importMatched.length!==1?'s':''} added.`, 'success');
+  showStatus(`Import wizard: ${_importMatched.length} added`, '');
+  importWizardModal.style.display = 'none';
+  _importMatched = [];
+});
+
+$('importWizardClose').addEventListener('click', () => { importWizardModal.style.display = 'none'; });
+importWizardModal.addEventListener('click', e => { if (e.target === importWizardModal) importWizardModal.style.display = 'none'; });
+
 // ─── Auto-Advance Delay ───────────────────────────────────────────
 // Extend AQ_DEFAULTS with advanceDelay
 AQ_DEFAULTS.advanceDelay = AQ_DEFAULTS.advanceDelay ?? 0;
@@ -17854,6 +18107,109 @@ $('videoPlayerOverlay')?.addEventListener('click', e => {
   if (e.target === $('videoPlayerOverlay')) closeVideoPlayer();
 });
 
+// ─── Command Palette (Ctrl/Cmd+K) ─────────────────────────────────
+// A launcher, not a new feature surface: every entry below just triggers
+// something that already exists elsewhere (a button click, an existing
+// function). Keeping it as a flat static list rather than something
+// dynamically generated from the DOM, so labels/keywords stay meaningful
+// and stable regardless of where a button happens to live in the layout.
+const cmdPaletteModal = $('cmdPaletteModal');
+const cmdPaletteInput = $('cmdPaletteInput');
+const cmdPaletteList  = $('cmdPaletteList');
+
+const CMD_PALETTE_ACTIONS = [
+  { label: 'Play / Pause',             keywords: 'toggle playback space', run: () => PlaybackManager.toggle() },
+  { label: 'Next Track',               keywords: 'skip forward',          run: () => nextBtn.click() },
+  { label: 'Previous Track',           keywords: 'skip back',             run: () => prevBtn.click() },
+  { label: 'Cycle Repeat Mode',        keywords: 'loop repeat',           run: () => repeatBtn.click() },
+  { label: 'Shuffle Queue',            keywords: 'randomize',             run: () => shuffleBtn.click() },
+  { label: 'Focus Add-URL Box',        keywords: 'paste link add track',  run: () => urlInput.focus() },
+  { label: 'Import Wizard',            keywords: 'playlist channel spotify match conflict', run: () => $('importWizardBtn').click() },
+  { label: 'Multi-Link Extractor',     keywords: 'paste text bulk urls',  run: () => $('multiPasteBtn').click() },
+  { label: 'Scan Queue for Dead Links',keywords: 'health check embed blocked doctor rematch', run: () => scanQueueHealth() },
+  { label: 'Share Queue as Link',      keywords: 'deep link q share',     run: () => shareCurrentQueue() },
+  { label: 'Remove Duplicates',        keywords: 'dedup clean',           run: () => $('dedupBtn').click() },
+  { label: 'Delete Tracks by Source',  keywords: 'bulk platform remove',  run: () => $('bulkDeleteBtn').click() },
+  { label: 'Queue Statistics',         keywords: 'stats info counts',     run: () => $('statsBtn').click() },
+  { label: 'Export Queue (JSON)',      keywords: 'download backup save',  run: () => $('exportBtn').click() },
+  { label: 'Export Tracklist (Markdown)', keywords: 'download md export', run: () => $('mdExportBtn').click() },
+  { label: 'Clear Queue',              keywords: 'empty remove all',      run: () => $('clearBtn').click() },
+  { label: 'Load FLEX Demo Playlist',  keywords: 'demo sample flex',      run: () => loadFlexPlaylist() },
+  { label: 'Open Current Track in Browser', keywords: 'external link watch', run: () => openBtn.click() },
+  { label: 'Toggle Mini Sidebar',      keywords: 'collapse layout',       run: () => miniBtn.click() },
+  { label: 'Toggle Fullscreen',        keywords: 'expand player',         run: () => fullscreenBtn.click() },
+  { label: 'Audio Quality & Effects',  keywords: 'eq equalizer settings volume speed', run: () => $('audioQualityBtn').click() },
+  { label: 'Keyboard Shortcuts',       keywords: 'help hotkeys',          run: () => $('shortcutsOverlay').classList.add('open') },
+  { label: 'Support & Feedback',       keywords: 'help contact bug report', run: () => openSupportModal() },
+  { label: 'About FREQ',               keywords: 'info version',          run: () => openAboutModal() },
+  { label: 'Sign In / Sign Up',        keywords: 'account login auth',    run: () => { $('authOverlay').classList.add('open'); $('authTabSignin')?.click(); } },
+];
+
+let _cmdPaletteFiltered = CMD_PALETTE_ACTIONS;
+let _cmdPaletteSelected = 0;
+
+function openCmdPalette() {
+  cmdPaletteModal.style.display = 'flex';
+  cmdPaletteInput.value = '';
+  _cmdPaletteFiltered = CMD_PALETTE_ACTIONS;
+  _cmdPaletteSelected = 0;
+  renderCmdPaletteList();
+  setTimeout(() => cmdPaletteInput.focus(), 30);
+}
+function closeCmdPalette() {
+  cmdPaletteModal.style.display = 'none';
+}
+
+function renderCmdPaletteList() {
+  if (!_cmdPaletteFiltered.length) {
+    cmdPaletteList.innerHTML = '<div class="yttrack-loading" style="color:var(--text-muted);">No matching commands.</div>';
+    return;
+  }
+  cmdPaletteList.innerHTML = _cmdPaletteFiltered.map((cmd, i) => `<div class="multi-preview-url"
+      data-idx="${i}"
+      style="cursor:pointer;padding:8px 10px;border-radius:var(--radius);${i===_cmdPaletteSelected ? 'background:var(--surface3);color:var(--accent);' : ''}"
+      onclick="runCmdPaletteAction(${i})">${escapeHtml(cmd.label)}</div>`).join('');
+}
+
+function runCmdPaletteAction(i) {
+  const cmd = _cmdPaletteFiltered[i];
+  closeCmdPalette();
+  if (cmd) cmd.run();
+}
+
+cmdPaletteInput.addEventListener('input', () => {
+  const q = cmdPaletteInput.value.trim().toLowerCase();
+  _cmdPaletteFiltered = !q ? CMD_PALETTE_ACTIONS : CMD_PALETTE_ACTIONS.filter(cmd =>
+    cmd.label.toLowerCase().includes(q) || cmd.keywords.includes(q)
+  );
+  _cmdPaletteSelected = 0;
+  renderCmdPaletteList();
+});
+
+cmdPaletteInput.addEventListener('keydown', e => {
+  if (e.key === 'ArrowDown') { e.preventDefault(); _cmdPaletteSelected = Math.min(_cmdPaletteSelected + 1, _cmdPaletteFiltered.length - 1); renderCmdPaletteList(); }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); _cmdPaletteSelected = Math.max(_cmdPaletteSelected - 1, 0); renderCmdPaletteList(); }
+  else if (e.key === 'Enter') { e.preventDefault(); runCmdPaletteAction(_cmdPaletteSelected); }
+  else if (e.key === 'Escape') { closeCmdPalette(); }
+});
+
+$('cmdPaletteBtn').addEventListener('click', openCmdPalette);
+cmdPaletteModal.addEventListener('click', e => { if (e.target === cmdPaletteModal) closeCmdPalette(); });
+
+// Global Ctrl/Cmd+K trigger — placed on its own listener (rather than
+// folded into the big shortcut handler above) since it needs to fire even
+// while focus is inside an input/textarea, unlike every single-letter
+// shortcut in that handler which intentionally backs off via the inInput
+// guard. preventDefault stops the browser's own Ctrl+K (focus address bar
+// in some browsers) from competing with it.
+document.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) {
+    e.preventDefault();
+    if (cmdPaletteModal.style.display === 'flex') closeCmdPalette();
+    else openCmdPalette();
+  }
+});
+
 // ─── Initial route: shared /u/:username and /artist/:slug links ──────────────
 // The server's /u/:username and /artist/:slug routes exist so a shared link
 // shows the right og:title/og:image when pasted elsewhere (see server.js),
@@ -17877,8 +18233,44 @@ $('videoPlayerOverlay')?.addEventListener('click', e => {
       showToast('Track unavailable', "This track couldn't be found or isn't published.", 'error');
     });
     history.replaceState(null, '', '/');
+  } else if ((match = path.match(/^\/q\/([^\/]+)\/?$/))) {
+    loadSharedQueue(decodeURIComponent(match[1])).catch(() => {
+      showToast('Queue unavailable', "This shared queue couldn't be found or isn't public.", 'error');
+    });
+    history.replaceState(null, '', '/');
   }
 })();
+
+// Loads a shared queue (a public playlist behind a /q/:id link) into the
+// CURRENT visitor's queue by appending its tracks — same "shared playlist"
+// data GET /api/playlists/:id already returns, no separate queue-snapshot
+// endpoint needed. Deliberately appends rather than replacing the queue:
+// a visitor may have already been listening to something before clicking
+// the link, and losing that silently would be worse than a slightly
+// longer queue.
+async function loadSharedQueue(playlistId) {
+  const res  = await fetch(`${PLAYLISTS_BASE}/${encodeURIComponent(playlistId)}`);
+  const data = await res.json();
+  if (!res.ok || !data.tracks) throw new Error(data.error || 'Playlist not found.');
+
+  const startIdx = state.queue.length;
+  let added = 0;
+  data.tracks.forEach(t => {
+    if (!state.allowDups && state.queue.some(q => q.id === t.id && q.platform === t.platform)) return;
+    state.queue.push(t);
+    added++;
+  });
+  save(); renderQueue();
+
+  if (!added) {
+    showToast('Already in queue', `"${data.name}" tracks are already queued.`, 'info');
+    return;
+  }
+  showToast('Queue Loaded', `${added} track${added!==1?'s':''} from "${data.name}" added.`, 'success');
+  showStatus(`Shared queue loaded: ${data.name}`, `${added} tracks`);
+  if (state.activeIndex === -1 && state.queue.length) playItem(startIdx);
+}
+
 
 // ─── Update cloud UI when auth state changes ──────────────────────────────────
 const _origUpdateAuthUI = updateAuthUI;
