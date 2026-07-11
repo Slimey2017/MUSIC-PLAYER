@@ -470,6 +470,11 @@ header {
 .playlist-card.active{border-color:var(--accent);background:rgba(255,255,255,0.03);}
 .playlist-card.active::before{background:var(--accent);}
 .playlist-card.starred{border-right:2px solid gold;}
+/* Dead-Link Doctor: subtle red-left-edge treatment for tracks flagged by a
+   queue scan, so a dead track reads as visually distinct at a glance
+   without being as loud as the active-track highlight. */
+.playlist-card.dead-link::before{background:var(--accent2);opacity:0.7;}
+.playlist-card.dead-link{opacity:0.72;}
 .drag-handle {cursor:grab;color:var(--text-muted);font-size:0.85rem;padding:0 3px 0 0;opacity:0.4;transition:opacity 0.15s;line-height:1;user-select:none;display:inline-block;}
 .playlist-card:hover .drag-handle{opacity:1;}
 .playlist-card.dragging{opacity:0.4;border-style:dashed;}
@@ -3040,6 +3045,7 @@ body.oled-mode {
           <button class="qtool-btn" id="bulkDeleteBtn" title="Delete by platform">⊗ Source</button>
           <button class="qtool-btn" id="statsBtn" title="Queue statistics">≡ Stats</button>
           <button class="qtool-btn" id="multiPasteBtn" title="Multi-link extractor">⊞ Multi</button>
+          <button class="qtool-btn" id="scanQueueBtn" title="Scan queue for dead YouTube embeds">🩺 Scan</button>
         </div>
         <!-- Stats dropdown -->
         <div class="queue-stats-panel" id="queueStatsPanel" style="display:none;"></div>
@@ -3185,7 +3191,8 @@ body.oled-mode {
           You can still open it directly on YouTube.
         </div>
         <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center;">
-          <button id="embedBlockWatch" style="background:var(--accent);color:#000;border:none;border-radius:var(--radius);padding:10px 18px;font-family:'Unbounded',sans-serif;font-size:0.6rem;font-weight:700;cursor:pointer;letter-spacing:0.06em;">▶ Watch on YouTube</button>
+          <button id="embedBlockRematch" style="background:var(--accent);color:#000;border:none;border-radius:var(--radius);padding:10px 18px;font-family:'Unbounded',sans-serif;font-size:0.6rem;font-weight:700;cursor:pointer;letter-spacing:0.06em;">🔍 Find Replacement</button>
+          <button id="embedBlockWatch" style="background:var(--surface3);color:var(--text);border:1px solid var(--border);border-radius:var(--radius);padding:10px 18px;font-family:'Space Mono',monospace;font-size:0.55rem;cursor:pointer;letter-spacing:0.04em;">▶ Watch on YouTube</button>
           <button id="embedBlockNocookie" style="background:var(--surface3);color:var(--text);border:1px solid var(--border);border-radius:var(--radius);padding:10px 18px;font-family:'Space Mono',monospace;font-size:0.55rem;cursor:pointer;letter-spacing:0.04em;">🔁 Try Nocookie Mode</button>
           <button id="embedBlockSkip" style="background:none;color:var(--text-muted);border:1px solid var(--border);border-radius:var(--radius);padding:10px 18px;font-family:'Space Mono',monospace;font-size:0.55rem;cursor:pointer;">⏭ Skip Track</button>
         </div>
@@ -3283,7 +3290,30 @@ body.oled-mode {
   </div>
 </div>
 
+<!-- Dead-Link Doctor — Rematch Modal (reuses .yttrack-* styling from the
+     Browse Tracks modal above, since it's the same "pick from a list of
+     YouTube results" interaction, just sourced from search instead of a
+     playlist page) -->
+<div class="yttrack-modal" id="rematchModal" style="display:none;">
+  <div class="yttrack-panel">
+    <div class="yttrack-header">
+      <div class="yttrack-title" id="rematchTitle">Find a replacement</div>
+      <div class="yttrack-meta" id="rematchMeta">Searching for a working match…</div>
+    </div>
+    <div class="yttrack-actions" id="rematchSearchRow" style="display:flex;gap:6px;">
+      <input type="text" id="rematchSearchInput" placeholder="Search YouTube…" autocomplete="off" spellcheck="false"
+        style="flex:1;background:var(--surface3);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);padding:9px 12px;font-family:'Space Mono',monospace;font-size:0.6rem;" />
+      <button class="yttrack-btn yttrack-btn-all" id="rematchSearchBtn" style="flex:none;">🔍 Search</button>
+      <button class="yttrack-btn yttrack-btn-cancel" id="rematchClose">✕ Close</button>
+    </div>
+    <div class="yttrack-list" id="rematchList">
+      <div class="yttrack-loading"><div class="spinner"></div><span>Searching…</span></div>
+    </div>
+  </div>
+</div>
+
 <!-- Multi-Link Extractor Modal -->
+
 <div class="multi-modal" id="multiModal" style="display:none;">
   <div class="multi-panel">
     <div class="multi-title">⊞ Multi-Link Extractor</div>
@@ -14441,8 +14471,14 @@ function renderQueue() {
     const fetchBtn = isYT
       ? `<button class="card-fetch-btn" onclick="event.stopPropagation();openYtTrackModal('${i}')" title="Browse tracks / playlist">⬡ Tracks</button>`
       : '';
+    // Dead-Link Doctor: badge set by scanQueueHealth() on tracks confirmed
+    // non-embeddable. Click goes straight to the rematch modal pre-searched
+    // on this track's title, same shortcut the live embed-block banner uses.
+    const deadBadge = item.deadLink
+      ? `<button class="card-action-btn" style="color:var(--accent2);border-color:var(--accent2);" onclick="event.stopPropagation();openRematchModal(${i})" title="Dead link — click to find a replacement">⚠ Dead</button>`
+      : '';
     return `<div
-        class="playlist-card ${isActive?'active':''} ${item.starred?'starred':''}"
+        class="playlist-card ${isActive?'active':''} ${item.starred?'starred':''} ${item.deadLink?'dead-link':''}"
         style="--platform-color:${cfg.color}"
         data-index="${i}"
         draggable="true"
@@ -14459,6 +14495,7 @@ function renderQueue() {
             ${fetchBtn}
             <span class="card-type-badge">${item.type||'link'}</span>
             <div class="card-actions">
+              ${deadBadge}
               ${shareBtn}
               <button class="card-action-btn star-btn ${starClass}" onclick="event.stopPropagation();toggleFav(${i})" title="Favorite">★</button>
               <button class="card-action-btn" onclick="event.stopPropagation();removeItem(${i})" title="Remove">✕</button>
@@ -15757,6 +15794,7 @@ const embedBlockBanner  = $('embedBlockBanner');
 const embedBlockWatch   = $('embedBlockWatch');
 const embedBlockNC      = $('embedBlockNocookie');
 const embedBlockSkipBtn = $('embedBlockSkip');
+const embedBlockRematch = $('embedBlockRematch');
 
 let _embedCheckTimer = null;
 let _currentEmbedItem = null;
@@ -15832,9 +15870,127 @@ embedBlockSkipBtn.addEventListener('click', () => {
   else showToast('End of queue', 'No more tracks.', 'info');
 });
 
+// Find Replacement — opens the rematch modal pre-searched on the dead
+// track's own title, so the user usually just picks from results rather
+// than having to type anything.
+embedBlockRematch.addEventListener('click', () => {
+  if (!_currentEmbedItem) return;
+  hideEmbedBlockBanner();
+  openRematchModal(state.activeIndex, _currentEmbedItem.title || _currentEmbedItem.originalUrl || '');
+});
+
 // ─── Patch showEmbed to schedule embed-block check ────────────────
 // showEmbed is defined in existing code — we need to hook playItem instead.
 // Already done above: scheduleEmbedCheck called in playItem flow.
+
+// ─── Dead-Link Doctor: Rematch Modal ──────────────────────────────
+// Lets the user search YouTube and swap a dead/blocked queue item for a
+// working one IN PLACE (same queue slot), instead of the Browse Tracks
+// modal's behavior of appending new items to the end of the queue. Shares
+// the .yttrack-* modal styling and list-rendering approach for visual/UX
+// consistency with the existing "browse tracks" flow.
+const rematchModal       = $('rematchModal');
+const rematchTitleEl     = $('rematchTitle');
+const rematchMetaEl      = $('rematchMeta');
+const rematchList        = $('rematchList');
+const rematchSearchInput = $('rematchSearchInput');
+const rematchSearchBtn   = $('rematchSearchBtn');
+const rematchCloseBtn    = $('rematchClose');
+
+let _rematchQueueIndex = -1; // which queue slot we're replacing
+let _rematchResults    = [];
+
+function openRematchModal(queueIndex, initialQuery) {
+  _rematchQueueIndex = queueIndex;
+  const item = state.queue[queueIndex];
+  // If no explicit query was passed (e.g. the queue-card "⚠ Dead" badge,
+  // which only passes an index to stay safe inside an HTML onclick
+  // attribute — see renderQueue), fall back to the item's own title/URL.
+  const query = initialQuery || (item ? (item.customLabel || item.title || item.originalUrl || '') : '');
+  rematchModal.style.display = 'flex';
+  rematchTitleEl.textContent = item ? `Replace: ${item.customLabel || item.title || 'this track'}` : 'Find a replacement';
+  rematchMetaEl.textContent  = '';
+  rematchSearchInput.value   = query;
+  runRematchSearch(query);
+}
+
+async function runRematchSearch(query) {
+  const q = (query || rematchSearchInput.value || '').trim();
+  if (!q) {
+    rematchList.innerHTML = '<div class="yttrack-loading" style="color:var(--text-muted);">Type something to search.</div>';
+    return;
+  }
+  rematchList.innerHTML = '<div class="yttrack-loading"><div class="spinner"></div><span>Searching YouTube…</span></div>';
+  rematchMetaEl.textContent = '';
+  try {
+    const res  = await fetch(`/api/yt/search?q=${encodeURIComponent(q)}`);
+    const data = await res.json();
+    if (!res.ok) {
+      rematchList.innerHTML = `<div class="yttrack-loading" style="color:var(--accent2);">⚠ ${data.error || 'Search failed.'}</div>`;
+      return;
+    }
+    _rematchResults = data.tracks || [];
+    rematchMetaEl.textContent = `${_rematchResults.length} result${_rematchResults.length!==1?'s':''} · ▶ YouTube`;
+    renderRematchList();
+  } catch (err) {
+    rematchList.innerHTML = `<div class="yttrack-loading" style="color:var(--accent2);">⚠ Network error: ${err.message}</div>`;
+  }
+}
+
+function renderRematchList() {
+  if (!_rematchResults.length) {
+    rematchList.innerHTML = '<div class="yttrack-loading" style="color:var(--text-muted);">No results found.</div>';
+    return;
+  }
+  rematchList.innerHTML = _rematchResults.map((t, i) => `<div class="yttrack-item" data-idx="${i}">
+      <label style="display:contents;">
+        <span class="yttrack-num">${i+1}</span>
+        <img class="yttrack-thumb" src="${t.thumb}" loading="lazy" onerror="this.src=''" alt="" />
+        <div class="yttrack-info">
+          <div class="yttrack-name" title="${t.title.replace(/"/g,'&quot;')}">${t.title}</div>
+          ${t.duration ? `<div class="yttrack-dur">${t.duration}</div>` : ''}
+        </div>
+      </label>
+      <button class="yttrack-add-btn" data-idx="${i}" onclick="event.stopPropagation();applyRematch(${i})" title="Use this track">↺ Swap In</button>
+    </div>`).join('');
+}
+
+// Replaces the queue item at _rematchQueueIndex with the chosen search
+// result, in place — preserves the slot's position in the queue (unlike
+// the Browse Tracks "add" flow, which always appends). If the replaced
+// slot is the currently-playing track, re-triggers playback so the swap
+// takes effect immediately instead of leaving a stale iframe on screen.
+function applyRematch(resultIdx) {
+  const t = _rematchResults[resultIdx];
+  const idx = _rematchQueueIndex;
+  if (!t || idx < 0 || idx >= state.queue.length) return;
+
+  const old = state.queue[idx];
+  state.queue[idx] = {
+    platform:    'youtube',
+    type:        'video',
+    title:       t.title,
+    originalUrl: t.originalUrl,
+    embedUrl:    t.embedUrl,
+    embedUrlNC:  t.embedUrlNC,
+    id:          t.id,
+    duration:    t.duration,
+    // Carry over user-set metadata from the dead item so the swap doesn't
+    // wipe out a custom label or star the user had already set.
+    customLabel: old?.customLabel,
+    starred:     old?.starred,
+  };
+  save(); renderQueue();
+  rematchModal.style.display = 'none';
+  showToast('Replaced', t.title, 'success');
+
+  if (state.activeIndex === idx) playItem(idx);
+}
+
+rematchSearchBtn.addEventListener('click', () => runRematchSearch());
+rematchSearchInput.addEventListener('keydown', e => { if (e.key === 'Enter') runRematchSearch(); });
+rematchCloseBtn.addEventListener('click', () => { rematchModal.style.display = 'none'; });
+rematchModal.addEventListener('click', e => { if (e.target === rematchModal) rematchModal.style.display = 'none'; });
 
 
 
@@ -16026,6 +16182,66 @@ $('dedupBtn').addEventListener('click', () => {
   showToast('Deduped!', `${removed} duplicate${removed!==1?'s':''} removed.`, 'success');
   showStatus(`Removed ${removed} duplicates`, `${state.queue.length} tracks remain`);
 });
+
+// ─── Dead-Link Doctor: Full Queue Scan ────────────────────────────
+// Batch-checks every YouTube/YT Music item in the queue via
+// /api/queue/health-check (40 IDs per request, chunked), then flags any
+// non-embeddable ones with item.deadLink = true so renderQueue() can show
+// a badge — turning "discover it's broken when it silently fails to play"
+// into "see it's broken before you even click it."
+$('scanQueueBtn').addEventListener('click', () => scanQueueHealth());
+
+async function scanQueueHealth() {
+  const btn = $('scanQueueBtn');
+  const candidates = state.queue.filter(item =>
+    (item.platform === 'youtube' || item.platform === 'ytmusic') && item.type === 'video' && item.id
+  );
+  if (!candidates.length) {
+    showToast('Nothing to scan', 'No YouTube tracks in this queue.', 'info');
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = '🩺 Scanning…';
+  showStatus(`Scanning ${candidates.length} track${candidates.length!==1?'s':''}…`, '');
+
+  // Clear any stale flags from a previous scan before re-checking, so a
+  // track that got fixed since the last scan doesn't keep showing dead.
+  state.queue.forEach(item => { if (item.deadLink) delete item.deadLink; });
+
+  const ids = [...new Set(candidates.map(item => item.id))];
+  const CHUNK = 40; // matches the server-side cap in /api/queue/health-check
+  const deadIds = new Set();
+  let scanFailed = false;
+
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const chunk = ids.slice(i, i + CHUNK);
+    try {
+      const res  = await fetch(`/api/queue/health-check?ids=${encodeURIComponent(chunk.join(','))}`);
+      const data = await res.json();
+      if (!res.ok) { scanFailed = true; continue; }
+      (data.results || []).forEach(r => { if (!r.embeddable) deadIds.add(r.id); });
+    } catch (_) { scanFailed = true; }
+  }
+
+  state.queue.forEach(item => { if (deadIds.has(item.id)) item.deadLink = true; });
+  save(); renderQueue();
+
+  btn.disabled = false;
+  btn.textContent = '🩺 Scan';
+
+  if (scanFailed && deadIds.size === 0) {
+    showToast('Scan incomplete', 'Could not reach the health-check service. Try again.', 'error');
+  } else if (deadIds.size === 0) {
+    playSfx('click');
+    showToast('All Clear', 'Every YouTube track in your queue is playable.', 'success');
+    showStatus('Queue scan complete — no dead links', '');
+  } else {
+    playSfx('remove');
+    showToast('Dead Links Found', `${deadIds.size} track${deadIds.size!==1?'s':''} can't be embedded. Flagged in queue.`, 'error');
+    showStatus(`${deadIds.size} dead link${deadIds.size!==1?'s':''} found`, 'Click a flagged track to rematch');
+  }
+}
 
 // ─── Markdown Tracklist Exporter ──────────────────────────────────
 $('mdExportBtn').addEventListener('click', () => {
