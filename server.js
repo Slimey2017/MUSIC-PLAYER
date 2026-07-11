@@ -8856,6 +8856,31 @@ app.get('/track/:id', async (req, res) => {
   return res.sendFile(path.join(__dirname, 'index.html'));
 });
 
+// Shareable queue links — "share to listen" for a playlist, reusing the
+// same is_public flag playlists already have rather than inventing a new
+// concept of a queue snapshot. Same existence-probing protection as
+// /track/:id: only a public playlist gets real OG tags, a private/missing
+// id falls through to the bare SPA shell. Loading the playlist's tracks
+// into the visitor's queue on click-through is handled client-side in
+// handleSharedProfileLink, same division of responsibility as /track/:id.
+app.get('/q/:id', async (req, res) => {
+  try {
+    const playlist = await dbGetPlaylist(req.params.id);
+    if (playlist && playlist.is_public) {
+      const html = await injectOgTags({
+        title: `${playlist.name} · FREQ`,
+        description: playlist.description || `${playlist.track_count || 0} tracks · Listen on FREQ.`,
+        image: null,
+        url: `${BASE_URL}/q/${playlist.id}`,
+      });
+      return res.send(html);
+    }
+  } catch (err) {
+    console.error('[og /q/:id]', err);
+  }
+  return res.sendFile(path.join(__dirname, 'index.html'));
+});
+
 
 // ─── Reports ─────────────────────────────────────────────────────────────────
 
