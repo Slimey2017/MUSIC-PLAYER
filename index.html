@@ -4462,7 +4462,44 @@ body.oled-mode {
              same data source as the old Stats tab. -->
         <div id="dashSectionAnalytics" class="dash-section" style="display:none;">
           <div class="dash-section-label">Performance</div>
-          <div id="dashStatsList" class="dash-stat-grid"></div>
+          <div id="dashStatsList" class="dash-stat-grid" style="margin-bottom:20px;"></div>
+
+          <!-- Creator Insights v1: source breakdown + daily trend + per-track
+               table, all from GET /api/artists/:id/insights. Free for every
+               artist — only the CSV export button below is Premium-gated,
+               per the roadmap's "basic counts free / full funnel export
+               paid" split. -->
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+            <div class="dash-section-label" style="margin-bottom:0;">Creator Insights</div>
+            <div style="display:flex;gap:6px;align-items:center;">
+              <select id="insightsWindowSelect" style="background:rgba(255,255,255,0.05);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-main);font-family:'Space Mono',monospace;font-size:0.44rem;padding:5px 8px;">
+                <option value="7">7 days</option>
+                <option value="30" selected>30 days</option>
+                <option value="90">90 days</option>
+              </select>
+              <button id="insightsExportBtn" title="Export full breakdown as CSV (Premium)" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.42rem;padding:5px 9px;border-radius:var(--radius);cursor:pointer;white-space:nowrap;">⇩ Export CSV</button>
+            </div>
+          </div>
+
+          <div id="insightsLoading" style="text-align:center;padding:24px;color:var(--text-muted);font-size:0.55rem;">Loading insights…</div>
+          <div id="insightsEmpty" style="display:none;text-align:center;padding:24px;color:var(--text-muted);font-size:0.55rem;">No plays yet in this window. Once your tracks start getting played, the breakdown shows up here.</div>
+
+          <div id="insightsContent" style="display:none;">
+            <div class="dash-card" style="margin-bottom:16px;">
+              <div class="dash-section-label" style="margin-bottom:8px;">Plays Over Time</div>
+              <div id="insightsTrendChart"></div>
+            </div>
+
+            <div class="dash-card" style="margin-bottom:16px;">
+              <div class="dash-section-label" style="margin-bottom:8px;">Plays by Source</div>
+              <div id="insightsSourceBreakdown"></div>
+            </div>
+
+            <div class="dash-card">
+              <div class="dash-section-label" style="margin-bottom:8px;">By Track</div>
+              <div id="insightsTrackTable"></div>
+            </div>
+          </div>
         </div>
 
         <!-- Settings: genre + social links, backed by the same
@@ -4808,12 +4845,15 @@ body.oled-mode {
       <span>🧪 Experimental Labs — try tomorrow's features today</span>
       <span class="premium-coming-soon-tag" style="color:var(--accent3);border-color:var(--accent3);">Live</span>
     </div>
+    <div class="premium-coming-soon-item">
+      <span>📈 Creator Insights — CSV export of your full play-source breakdown</span>
+      <span class="premium-coming-soon-tag" style="color:var(--accent3);border-color:var(--accent3);">Live</span>
+    </div>
 
     <div class="premium-hub-section-title">Coming Soon</div>
     <div class="premium-coming-soon-item"><span>☁️ 75 GB Cloud Storage</span><span class="premium-coming-soon-tag">Coming Soon</span></div>
     <div class="premium-coming-soon-item"><span>📊 AI Music Analysis</span><span class="premium-coming-soon-tag">Coming Soon</span></div>
     <div class="premium-coming-soon-item"><span>🧠 AI Playlist Generator</span><span class="premium-coming-soon-tag">Coming Soon</span></div>
-    <div class="premium-coming-soon-item"><span>📈 Creator Insights</span><span class="premium-coming-soon-tag">Coming Soon</span></div>
 
     <div style="font-size:0.42rem;color:var(--text-muted);margin-top:14px;line-height:1.7;">
       Checkout is powered by Gumroad. Premium unlocks automatically on this account within moments of a successful purchase.
@@ -6469,6 +6509,13 @@ async function logPlay(item) {
         // filename's own id on true local files, neither of which is a
         // tracks.id.
         trackId: item.freqTrackId || (item.platform === 'freq' ? item.id : null) || null,
+        // Creator Insights: which surface queued this track (Discover,
+        // Charts, DJ BOOM, a shared link, etc) — set at the various
+        // add-to-queue origins throughout the app (resolveChartTrack,
+        // playPublishedTrack, DJ BOOM handlers, loadSharedQueue, FLEX
+        // demo, playlist viewer). Absent for plain URL-paste/import flows,
+        // which is correct — the server defaults those to 'direct'.
+        source: item.playSource || undefined,
         token: AUTH.loggedIn ? AUTH.token : undefined,
       }),
     });
@@ -6547,7 +6594,7 @@ function setChartsWindow(win) {
 // (Track Finder and the Artist Page already use this same stream-by-id path
 // via trackFinderPlay, which is why those two surfaces worked fine). Route
 // cloud: tracks the same way trackFinderPlay does instead of through resolve.
-async function resolveChartTrack(t) {
+async function resolveChartTrack(t, source = 'chart') {
   if (t.originalUrl && t.originalUrl.startsWith('cloud:')) {
     const res = await fetch(`/api/tracks/${encodeURIComponent(t.id)}/stream`);
     const data = await res.json();
@@ -6560,6 +6607,7 @@ async function resolveChartTrack(t) {
       artist: data.artistName, artistId: data.artistId,
       coverUrl: data.coverUrl, artworkUrl: data.coverUrl,
       mimeType: data.mimeType, duration: data.duration,
+      playSource: source, // Creator Insights: which surface (chart/discover) sent this play
     };
   }
   const res = await fetch('/api/resolve', {
@@ -6568,14 +6616,14 @@ async function resolveChartTrack(t) {
   });
   const data = await res.json(); // non-JSON responses are caught globally — see the fetch patch at the top of this script
   if (!res.ok) throw new Error(data.error || 'Could not resolve this track.');
-  return { ...data, title: data.title || t.title };
+  return { ...data, title: data.title || t.title, playSource: source };
 }
 
 async function playFromChart(i) {
   const t = chartsTracks[i];
   if (!t) return;
   try {
-    const item = await resolveChartTrack(t);
+    const item = await resolveChartTrack(t, 'chart');
     if (!state.allowDups && state.queue.some(q => q.originalUrl === item.originalUrl)) {
       const qi = state.queue.findIndex(q => q.originalUrl === item.originalUrl);
       playItem(qi);
@@ -6593,7 +6641,7 @@ async function queueFromChart(i) {
   const t = chartsTracks[i];
   if (!t) return;
   try {
-    const item = await resolveChartTrack(t);
+    const item = await resolveChartTrack(t, 'chart');
     if (!state.allowDups && state.queue.some(q => q.originalUrl === item.originalUrl)) {
       showToast('Already in Queue', t.title, 'info');
       return;
@@ -6908,6 +6956,7 @@ const DJ_BOOM_ACTION_HANDLERS = {
       tracks.forEach(t => state.queue.push({
         platform: 'freq', type: 'track', title: t.title, artist: t.artistName,
         freqTrackId: t.id, id: `freq_${t.id}`, originalUrl: null,
+        playSource: 'dj_boom',
       }));
       save(); renderQueue();
       showToast('DJ BOOM', `Started FREQ Radio from "${seed}".`, 'success');
@@ -6991,6 +7040,7 @@ async function djBoomQueueFromSearchTerms(terms, { replace = false, play = false
   const items = found.map(t => ({
     platform: 'freq', type: 'track', title: t.title, artist: t.artistName,
     freqTrackId: t.id, id: `freq_${t.id}`, originalUrl: null,
+    playSource: 'dj_boom',
   }));
   if (replace) {
     state.queue = items;
@@ -8677,7 +8727,7 @@ async function playFromDiscoverTracks(i) {
   const t = discoverTracksData[i];
   if (!t) return;
   try {
-    const item = await resolveChartTrack(t);
+    const item = await resolveChartTrack(t, 'discover');
     if (!state.allowDups && state.queue.some(q => q.originalUrl === item.originalUrl)) {
       const qi = state.queue.findIndex(q => q.originalUrl === item.originalUrl);
       playItem(qi);
@@ -8695,7 +8745,7 @@ async function queueFromDiscoverTracks(i) {
   const t = discoverTracksData[i];
   if (!t) return;
   try {
-    const item = await resolveChartTrack(t);
+    const item = await resolveChartTrack(t, 'discover');
     if (!state.allowDups && state.queue.some(q => q.originalUrl === item.originalUrl)) {
       showToast('Already in Queue', t.title, 'info');
       return;
@@ -8854,6 +8904,7 @@ async function trackFinderPlay(i) {
       artist: data.artistName, artistId: data.artistId,
       coverUrl: data.coverUrl, artworkUrl: data.coverUrl,
       mimeType: data.mimeType, duration: data.duration,
+      playSource: 'search',
     };
     if (!state.allowDups && state.queue.some(q => q.originalUrl === item.originalUrl)) {
       playItem(state.queue.findIndex(q => q.originalUrl === item.originalUrl));
@@ -8879,6 +8930,7 @@ async function trackFinderQueue(i) {
       artist: data.artistName, artistId: data.artistId,
       coverUrl: data.coverUrl, artworkUrl: data.coverUrl,
       mimeType: data.mimeType, duration: data.duration,
+      playSource: 'search',
     };
     if (!state.allowDups && state.queue.some(q => q.originalUrl === item.originalUrl)) {
       showToast('Already in Queue', t.title, 'info'); return;
@@ -9764,9 +9816,10 @@ async function refreshPublishedTrackUrl(item) {
   return true;
 }
 
-async function playPublishedTrack(trackId) {
+async function playPublishedTrack(trackId, source = 'artist_page') {
   try {
     const item = await resolvePublishedTrack(trackId);
+    item.playSource = source;
     if (!state.allowDups && state.queue.some(q => q.originalUrl === item.originalUrl)) {
       const qi = state.queue.findIndex(q => q.originalUrl === item.originalUrl);
       playItem(qi);
@@ -9780,9 +9833,10 @@ async function playPublishedTrack(trackId) {
   }
 }
 
-async function queuePublishedTrack(trackId) {
+async function queuePublishedTrack(trackId, source = 'artist_page') {
   try {
     const item = await resolvePublishedTrack(trackId);
+    item.playSource = source;
     if (!state.allowDups && state.queue.some(q => q.originalUrl === item.originalUrl)) {
       showToast('Already in Queue', item.title, 'info');
       return;
@@ -9932,7 +9986,7 @@ function setDashSection(section) {
   if (section === 'releases')   loadDashReleases();
   if (section === 'tracks')     loadDashTracks();
   if (section === 'posts')      loadDashPosts();
-  if (section === 'analytics')  loadDashStats();
+  if (section === 'analytics')  { loadDashStats(); loadInsights(); }
   if (section === 'settings')   loadDashSettings();
 }
 
@@ -11623,6 +11677,140 @@ function loadDashStats() {
   `).join('');
 }
 
+// ── Creator Insights ────────────────────────────────────────────────────
+// Labels/colors for the 9 play sources the backend recognizes (see
+// PLAY_SOURCES in server.js and the track_plays_source_check constraint).
+// Kept as a single lookup so the trend chart, source bars, and per-track
+// table all agree on the same label/color for a given source key.
+const INSIGHTS_SOURCE_META = {
+  direct:      { label: 'Direct Add',    color: 'var(--accent)' },
+  discover:    { label: 'Discover',      color: 'var(--accent3)' },
+  chart:       { label: 'Charts',        color: '#ff9f43' },
+  search:      { label: 'Track Search',  color: '#7c6fff' },
+  dj_boom:     { label: 'DJ BOOM',       color: '#00d4ff' },
+  artist_page: { label: 'Artist Page',   color: '#4ecdc4' },
+  playlist:    { label: 'Playlist',      color: '#ffd32a' },
+  shared_link: { label: 'Shared Link',   color: '#ee5a24' },
+  demo:        { label: 'FLEX Demo',     color: 'var(--text-muted)' },
+};
+
+let _insightsData = null; // last-fetched payload, reused by the CSV export button so it doesn't need a second round trip for the common case
+
+async function loadInsights() {
+  if (!viewedArtist?.id || !viewedArtist.isOwner) return;
+  const loading = $('insightsLoading'), empty = $('insightsEmpty'), content = $('insightsContent');
+  loading.style.display = 'block'; empty.style.display = 'none'; content.style.display = 'none';
+
+  const days = $('insightsWindowSelect')?.value || '30';
+  try {
+    const res  = await fetch(`/api/artists/${encodeURIComponent(viewedArtist.id)}/insights?days=${days}&token=${encodeURIComponent(AUTH.token || '')}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not load insights.');
+    _insightsData = data;
+
+    loading.style.display = 'none';
+    if (!data.totalPlays) { empty.style.display = 'block'; return; }
+    content.style.display = 'block';
+
+    renderInsightsTrend(data.byDay);
+    renderInsightsSources(data.bySource, data.totalPlays);
+    renderInsightsTrackTable(data.tracks);
+  } catch (err) {
+    loading.style.display = 'none';
+    empty.style.display = 'block';
+    empty.textContent = err.message || 'Could not load insights.';
+  }
+}
+
+$('insightsWindowSelect')?.addEventListener('change', loadInsights);
+
+// Plain inline SVG polyline — no chart library, consistent with the rest
+// of the app. Zero-filled by the server (dbGetArtistInsights) so every day
+// in the window has a point, even at 0, instead of a chart with gaps.
+function renderInsightsTrend(byDay) {
+  const wrap = $('insightsTrendChart');
+  if (!wrap) return;
+  if (!byDay?.length) { wrap.innerHTML = '<div style="color:var(--text-muted);font-size:0.5rem;">No data.</div>'; return; }
+
+  const W = 600, H = 140, PAD = 8;
+  const max = Math.max(1, ...byDay.map(d => d.plays));
+  const stepX = (W - PAD * 2) / Math.max(1, byDay.length - 1);
+  const points = byDay.map((d, i) => {
+    const x = PAD + i * stepX;
+    const y = H - PAD - ((d.plays / max) * (H - PAD * 2));
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  });
+  const areaPoints = `${PAD},${H - PAD} ${points.join(' ')} ${W - PAD},${H - PAD}`;
+
+  // Sparse x-axis labels — every ~5th day, plus the last, so long windows
+  // (90d) don't cram unreadable text under every single point.
+  const labelEvery = Math.max(1, Math.ceil(byDay.length / 6));
+  const labels = byDay.map((d, i) => (i % labelEvery === 0 || i === byDay.length - 1)
+    ? `<text x="${(PAD + i * stepX).toFixed(1)}" y="${H - 1}" font-size="7" fill="var(--text-muted)" text-anchor="middle" font-family="'Space Mono',monospace">${d.date.slice(5)}</text>`
+    : '').join('');
+
+  wrap.innerHTML = `<svg viewBox="0 0 ${W} ${H + 12}" style="width:100%;height:auto;display:block;">
+    <polygon points="${areaPoints}" fill="var(--accent)" opacity="0.12"></polygon>
+    <polyline points="${points.join(' ')}" fill="none" stroke="var(--accent)" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"></polyline>
+    ${labels}
+  </svg>`;
+}
+
+function renderInsightsSources(bySource, total) {
+  const wrap = $('insightsSourceBreakdown');
+  if (!wrap) return;
+  const entries = Object.entries(bySource).sort((a, b) => b[1] - a[1]);
+  if (!entries.length) { wrap.innerHTML = '<div style="color:var(--text-muted);font-size:0.5rem;">No data.</div>'; return; }
+
+  wrap.innerHTML = entries.map(([src, count]) => {
+    const meta = INSIGHTS_SOURCE_META[src] || { label: src, color: 'var(--text-muted)' };
+    const pct = total ? Math.round((count / total) * 100) : 0;
+    return `<div style="margin-bottom:9px;">
+      <div style="display:flex;justify-content:space-between;font-size:0.46rem;color:var(--text-muted);margin-bottom:3px;">
+        <span>${escapeHtml(meta.label)}</span>
+        <span>${count} · ${pct}%</span>
+      </div>
+      <div style="background:var(--surface2);border-radius:4px;height:6px;overflow:hidden;">
+        <div style="width:${pct}%;height:100%;background:${meta.color};"></div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function renderInsightsTrackTable(tracks) {
+  const wrap = $('insightsTrackTable');
+  if (!wrap) return;
+  if (!tracks?.length) { wrap.innerHTML = '<div style="color:var(--text-muted);font-size:0.5rem;">No published tracks yet.</div>'; return; }
+
+  wrap.innerHTML = tracks.slice(0, 25).map(t => {
+    const topSource = Object.entries(t.bySource).sort((a, b) => b[1] - a[1])[0];
+    const topLabel = topSource ? (INSIGHTS_SOURCE_META[topSource[0]]?.label || topSource[0]) : '—';
+    return `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);">
+      <div style="flex:1;min-width:0;font-size:0.52rem;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(t.title || 'Untitled')}</div>
+      <div style="flex:0 0 auto;font-size:0.44rem;color:var(--text-muted);width:70px;text-align:right;">${formatCompactCount(t.playsInWindow)} plays</div>
+      <div style="flex:0 0 auto;font-size:0.42rem;color:var(--text-dim);width:90px;text-align:right;">via ${escapeHtml(topLabel)}</div>
+    </div>`;
+  }).join('');
+}
+
+// CSV export — Premium-gated server-side (requirePremium on the route).
+// Free artists still see the button so the feature is discoverable, but
+// get routed to the Premium Hub instead of a fetch that would 403 anyway.
+$('insightsExportBtn')?.addEventListener('click', () => {
+  if (!viewedArtist?.id) return;
+  if (!AUTH.isPremium) {
+    showToast('Premium Feature', 'CSV export is a FREQ Premium feature.', 'info');
+    openPremiumHubOverlay();
+    return;
+  }
+  const days = $('insightsWindowSelect')?.value || '30';
+  const url = `/api/artists/${encodeURIComponent(viewedArtist.id)}/insights/export.csv?days=${days}&token=${encodeURIComponent(AUTH.token || '')}`;
+  // Plain navigation rather than fetch+blob — the route sets
+  // Content-Disposition: attachment, so the browser handles the download
+  // and filename itself with no extra client-side plumbing needed.
+  window.open(url, '_blank');
+});
+
 // ── Posts tab ────────────────────────────────────────────────────────────
 // Minimal composer for artist-authored update posts — reuses the same
 // POST /api/posts route as the main feed composer, just with artistId set
@@ -11933,7 +12121,7 @@ $('playlistViewerImportBtn')?.addEventListener('click', () => {
   if (!viewedPlaylist || !viewedPlaylist.tracks?.length) return;
   let added = 0;
   viewedPlaylist.tracks.forEach(t => {
-    const item = { ...t };
+    const item = { ...t, playSource: 'playlist' };
     delete item.rowId; delete item.addedBy; delete item.addedAt; // viewer-only fields, not part of the queue item shape
     if (!state.allowDups && state.queue.some(q => q.originalUrl === item.originalUrl)) return;
     state.queue.push(item);
@@ -13360,7 +13548,7 @@ function flexPlayTrack(i) {
     const qi = state.queue.findIndex(q => q.originalUrl === item.originalUrl);
     playItem(qi); return;
   }
-  state.queue.push({ ...item });
+  state.queue.push({ ...item, playSource: 'demo' });
   save(); renderQueue();
   playItem(state.queue.length - 1);
   $('flexBanner').style.display = 'none';
@@ -13370,7 +13558,7 @@ function flexPlayAll() {
   let added = 0;
   FLEX_PLAYLIST.forEach(item => {
     if (!state.allowDups && state.queue.some(q => q.originalUrl === item.originalUrl)) return;
-    state.queue.push({ ...item });
+    state.queue.push({ ...item, playSource: 'demo' });
     added++;
   });
   save(); renderQueue();
@@ -18229,7 +18417,7 @@ document.addEventListener('keydown', e => {
     openArtistProfile(decodeURIComponent(match[1]));
     history.replaceState(null, '', '/');
   } else if ((match = path.match(/^\/track\/([^\/]+)\/?$/))) {
-    playPublishedTrack(decodeURIComponent(match[1])).catch(() => {
+    playPublishedTrack(decodeURIComponent(match[1]), 'shared_link').catch(() => {
       showToast('Track unavailable', "This track couldn't be found or isn't published.", 'error');
     });
     history.replaceState(null, '', '/');
@@ -18257,7 +18445,7 @@ async function loadSharedQueue(playlistId) {
   let added = 0;
   data.tracks.forEach(t => {
     if (!state.allowDups && state.queue.some(q => q.id === t.id && q.platform === t.platform)) return;
-    state.queue.push(t);
+    state.queue.push({ ...t, playSource: 'shared_link' });
     added++;
   });
   save(); renderQueue();
