@@ -4542,6 +4542,12 @@ body.oled-mode {
           <span id="playlistLikeCount">0</span>
         </button>
       </div>
+      <!-- Live presence + typing strip — shown whenever anyone (incl. you) is connected -->
+      <div id="playlistPresenceBar" style="display:none;align-items:center;gap:6px;margin:8px 0 2px;flex-wrap:wrap;font-size:0.44rem;color:var(--text-muted);">
+        <span id="playlistPresenceAvatars" style="display:flex;gap:3px;"></span>
+        <span id="playlistPresenceLabel"></span>
+      </div>
+      <div id="playlistTypingIndicator" style="display:none;font-size:0.42rem;color:var(--accent3);margin-bottom:4px;font-style:italic;"></div>
       <div id="playlistViewerDesc" style="font-size:0.5rem;color:var(--text-muted);line-height:1.7;margin:8px 0 12px;"></div>
       <div id="playlistViewerTracks" style="max-height:280px;overflow-y:auto;margin-bottom:12px;"></div>
       <button id="playlistViewerImportBtn" style="width:100%;background:none;border:1px solid var(--accent3);color:var(--accent3);font-family:'Space Mono',monospace;font-size:0.5rem;padding:8px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.06em;text-transform:uppercase;">Load Into Queue</button>
@@ -4564,6 +4570,11 @@ body.oled-mode {
           <!-- Pending invites for this playlist (owner view) -->
           <div id="playlistPendingInvitesList" style="margin-top:6px;"></div>
         </div>
+      </div>
+      <!-- Recent edits — live activity + undo, owner/collaborator only -->
+      <div id="playlistEditLogPanel" style="display:none;margin-top:14px;border-top:1px solid var(--border);padding-top:12px;">
+        <div style="font-size:0.46rem;color:var(--text-dim);letter-spacing:0.05em;text-transform:uppercase;margin-bottom:8px;">Recent Edits</div>
+        <div id="playlistEditLogList" style="display:flex;flex-direction:column;gap:4px;"></div>
       </div>
     </div>
     <div id="playlistViewerError" style="display:none;text-align:center;padding:24px;color:var(--text-muted);font-size:0.55rem;"></div>
@@ -12029,6 +12040,14 @@ async function openPlaylistViewer(id, silent = false) {
     // Collab panel
     renderCollabPanel(data);
 
+    // Recent edits (history + undo) — same visibility rule as collaborators:
+    // owner, accepted collaborator, or read-only on a public playlist.
+    if (data.isOwner || data.collabRole || data.isPublic) {
+      loadPlaylistEditLog(id);
+    } else {
+      $('playlistEditLogPanel').style.display = 'none';
+    }
+
     // Start SSE for real-time updates (connects only if authenticated)
     if (AUTH.loggedIn && AUTH.token) collabSseConnect(id);
   } catch (err) {
@@ -12137,21 +12156,58 @@ $('playlistViewerImportBtn')?.addEventListener('click', () => {
 // SSE connection for the currently viewed playlist
 let _collabSse = null;
 let _collabSsePlaylistId = null;
+// In-memory presence roster for the currently-viewed playlist only — reset
+// on every connect, since presence is inherently tied to "who's here right
+// now," not something worth persisting across views.
+let _collabPresence = new Set();
+let _collabTypingTimers = new Map(); // username -> setTimeout id, for auto-clearing the indicator
 
 function collabSseConnect(playlistId) {
   if (_collabSsePlaylistId === playlistId && _collabSse) return;
   collabSseDisconnect();
   if (!AUTH.token) return;
   _collabSsePlaylistId = playlistId;
+  _collabPresence = new Set();
   _collabSse = new EventSource(
     `/api/playlists/${encodeURIComponent(playlistId)}/realtime?token=${encodeURIComponent(AUTH.token)}`
   );
   _collabSse.addEventListener('message', async (e) => {
     try {
-      const { type } = JSON.parse(e.data);
+      const { type, payload } = JSON.parse(e.data);
       if (type === 'tracks' || type === 'collaborators' || type === 'invites') {
         // Re-fetch the playlist so the viewer stays consistent
         await openPlaylistViewer(playlistId, /* silent= */true);
+        return;
+      }
+      if (type === 'presence_snapshot') {
+        _collabPresence = new Set(payload.usernames || []);
+        renderCollabPresence();
+        return;
+      }
+      if (type === 'presence_join') {
+        _collabPresence.add(payload.username);
+        renderCollabPresence();
+        return;
+      }
+      if (type === 'presence_leave') {
+        _collabPresence.delete(payload.username);
+        renderCollabPresence();
+        return;
+      }
+      if (type === 'typing') {
+        showCollabTyping(payload.username);
+        return;
+      }
+      if (type === 'edit') {
+        // "Romeo added Stronger" / "Tyler removed Homecoming" — live toast,
+        // then refresh the edit-log panel so it appears in Recent Edits too.
+        if (payload.actor !== AUTH.username) {
+          const verb = payload.action === 'add' ? 'added' : 'removed';
+          showToast(payload.isUndo ? 'Undo' : 'Playlist updated',
+            `@${payload.actor} ${payload.isUndo ? `restored` : verb} "${payload.trackTitle}"`, 'info');
+        }
+        loadPlaylistEditLog(playlistId);
+        return;
       }
     } catch (_) {}
   });
@@ -12160,9 +12216,129 @@ function collabSseConnect(playlistId) {
   });
 }
 
+// Render the "N people viewing" strip from the in-memory presence Set.
+function renderCollabPresence() {
+  const bar = $('playlistPresenceBar');
+  const avatars = $('playlistPresenceAvatars');
+  const label = $('playlistPresenceLabel');
+  if (!bar || !avatars || !label) return;
+  const others = [..._collabPresence].filter(u => u !== AUTH.username);
+  if (!_collabPresence.size) { bar.style.display = 'none'; return; }
+  bar.style.display = 'flex';
+  const shown = others.slice(0, 5);
+  avatars.innerHTML = shown.map(u => `
+    <span title="@${escapeHtml(u)}" style="width:14px;height:14px;border-radius:50%;background:var(--accent3);color:#000;font-size:0.32rem;display:flex;align-items:center;justify-content:center;font-weight:700;flex-shrink:0;">
+      ${escapeHtml(u[0]?.toUpperCase() || '?')}
+    </span>
+  `).join('');
+  if (!others.length) {
+    label.textContent = 'Only you here';
+  } else if (others.length <= 2) {
+    label.textContent = others.map(u => '@' + u).join(', ') + ' viewing';
+  } else {
+    label.textContent = `${others.length} collaborators viewing`;
+  }
+}
+
+// Shows "@user is editing…" for a few seconds after a typing ping, then
+// auto-clears — there's no explicit "stopped typing" event over SSE (that
+// would double the traffic for little benefit), so each ping just resets
+// its own timeout.
+function showCollabTyping(username) {
+  if (username === AUTH.username) return;
+  const el = $('playlistTypingIndicator');
+  if (!el) return;
+  el.style.display = 'block';
+  el.textContent = `@${username} is editing…`;
+  if (_collabTypingTimers.has(username)) clearTimeout(_collabTypingTimers.get(username));
+  _collabTypingTimers.set(username, setTimeout(() => {
+    _collabTypingTimers.delete(username);
+    if (!_collabTypingTimers.size) el.style.display = 'none';
+  }, 4000));
+}
+
+// Fire-and-forget typing ping, throttled client-side so rapid input events
+// don't spam the endpoint — one ping per 2.5s per playlist is plenty for a
+// "still editing" signal.
+let _lastTypingPingAt = 0;
+function pingCollabTyping(playlistId) {
+  if (!AUTH.loggedIn || !AUTH.token || !playlistId) return;
+  const now = Date.now();
+  if (now - _lastTypingPingAt < 2500) return;
+  _lastTypingPingAt = now;
+  fetch(`${PLAYLISTS_BASE}/${encodeURIComponent(playlistId)}/typing`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token: AUTH.token }),
+  }).catch(() => {});
+}
+
+// ─── Recent Edits — history + undo ───────────────────────────────────────────
+async function loadPlaylistEditLog(playlistId) {
+  try {
+    const params = new URLSearchParams(AUTH.token ? { token: AUTH.token } : {});
+    const res = await fetch(`${PLAYLISTS_BASE}/${encodeURIComponent(playlistId)}/edit-log?${params}`);
+    if (!res.ok) { $('playlistEditLogPanel').style.display = 'none'; return; }
+    const data = await res.json();
+    renderPlaylistEditLog(playlistId, data);
+  } catch (_) {
+    $('playlistEditLogPanel').style.display = 'none';
+  }
+}
+
+function renderPlaylistEditLog(playlistId, data) {
+  const panel = $('playlistEditLogPanel');
+  const list = $('playlistEditLogList');
+  if (!panel || !list) return;
+  const entries = data.entries || [];
+  if (!entries.length) { panel.style.display = 'none'; return; }
+  panel.style.display = 'block';
+  list.innerHTML = entries.map(entry => {
+    const verb = entry.action === 'add' ? 'added' : 'removed';
+    const canUndo = data.isEditor && !entry.reverted && AUTH.loggedIn;
+    return `
+      <div style="display:flex;align-items:center;gap:6px;font-size:0.44rem;color:var(--text-muted);padding:3px 0;${entry.reverted ? 'opacity:0.4;' : ''}">
+        <span style="flex:1;">
+          <span style="color:var(--text-main);">@${escapeHtml(entry.actor)}</span>
+          ${verb} <span style="color:var(--text-main);">"${escapeHtml(entry.trackTitle)}"</span>
+          ${entry.reverted ? ' <span style="opacity:0.7;">(undone)</span>' : ''}
+        </span>
+        ${canUndo ? `<button onclick="undoPlaylistEdit('${playlistId}','${entry.id}')" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.4rem;padding:2px 6px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.04em;text-transform:uppercase;flex-shrink:0;">Undo</button>` : ''}
+      </div>
+    `;
+  }).join('');
+}
+
+async function undoPlaylistEdit(playlistId, entryId) {
+  if (!AUTH.loggedIn || !AUTH.token) return;
+  try {
+    const res = await fetch(`${PLAYLISTS_BASE}/${encodeURIComponent(playlistId)}/edit-log/${encodeURIComponent(entryId)}/undo`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: AUTH.token }),
+    });
+    const data = await res.json();
+    if (!res.ok) { showToast('Error', data.error || 'Could not undo edit.', 'error'); return; }
+    showToast('Undone', 'Edit reverted.', 'success');
+    await openPlaylistViewer(playlistId, true);
+    await loadPlaylistEditLog(playlistId);
+  } catch (err) {
+    showToast('Error', err.message || 'Could not undo edit.', 'error');
+  }
+}
+
 function collabSseDisconnect() {
   if (_collabSse) { _collabSse.close(); _collabSse = null; }
   _collabSsePlaylistId = null;
+  // Presence/typing are scoped to whichever playlist is open — closing the
+  // connection (switching playlists or closing the viewer) means none of
+  // this is valid anymore, so clear it rather than let stale avatars or a
+  // stuck "@user is editing…" line linger in the now-detached DOM.
+  _collabPresence = new Set();
+  for (const timer of _collabTypingTimers.values()) clearTimeout(timer);
+  _collabTypingTimers = new Map();
+  const bar = $('playlistPresenceBar');
+  const typing = $('playlistTypingIndicator');
+  if (bar) bar.style.display = 'none';
+  if (typing) typing.style.display = 'none';
 }
 
 // Render the collaborator list inside the playlist viewer
@@ -12422,6 +12598,14 @@ async function removeCollab(playlistId, username) {
     showToast('Error', err.message || 'Could not remove collaborator.', 'error');
   }
 }
+
+// Typing indicator: any input in the invite field counts as "actively
+// editing this playlist" for collaborators watching — throttled client-side
+// inside pingCollabTyping itself, so this listener can fire on every
+// keystroke without spamming the endpoint.
+$('collabInviteUsername')?.addEventListener('input', () => {
+  if (viewedPlaylist) pingCollabTyping(viewedPlaylist.id);
+});
 
 // Invite button handler (playlist viewer invite row)
 $('collabInviteBtn')?.addEventListener('click', async () => {
