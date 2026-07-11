@@ -3062,6 +3062,80 @@ app.get('/api/yt/embed-check', rateLimit, async (req, res) => {
   }
 });
 
+// ─── GET /api/queue/health-check  (Dead-Link Doctor — batch embed check) ─────
+/**
+ * Query: ?ids=<comma-separated video IDs>  (max 40 per request)
+ * Returns: { results: [{ id, embeddable, title?, thumb? }, ...] }
+ *
+ * Batches checkYtEmbeddable() across many queue items in one round trip, so
+ * a full-queue scan doesn't mean the client firing dozens of sequential
+ * requests at /api/yt/embed-check. Same oEmbed-based check under the hood —
+ * this route is purely about making "scan my whole queue" affordable.
+ * Bad/duplicate/malformed IDs are silently dropped rather than failing the
+ * whole batch.
+ */
+app.get('/api/queue/health-check', rateLimit, async (req, res) => {
+  const raw = typeof req.query.ids === 'string' ? req.query.ids : '';
+  const ids = [...new Set(raw.split(',').map(s => s.trim()).filter(id => /^[A-Za-z0-9_-]{11}$/.test(id)))].slice(0, 40);
+  if (!ids.length) return res.status(400).json({ error: 'Provide "ids" as a comma-separated list of YouTube video IDs.' });
+
+  try {
+    const results = await Promise.all(ids.map(async id => {
+      const result = await checkYtEmbeddable(id);
+      return { id, ...result };
+    }));
+    return res.json({ results });
+  } catch (err) {
+    return res.status(502).json({ error: err.message });
+  }
+});
+
+// ─── GET /api/yt/search  (Dead-Link Doctor — rematch source) ─────────────────
+/**
+ * Query: ?q=<search text>
+ * Returns: { query, tracks: [{ id, title, duration, thumb, embedUrl, embedUrlNC, originalUrl, platform:'youtube', type:'video' }, ...] }
+ *
+ * Scrapes youtube.com/results the same way /api/yt/tracks scrapes playlist
+ * pages — reuses fetchHTML/extractYtInitialData/extractTracksFromYtData
+ * as-is, since a search results page is just another ytInitialData document
+ * containing videoRenderer objects, which extractTracksFromYtData already
+ * knows how to walk. This is what powers "find a replacement" when a track
+ * turns out to be embed-blocked: search by the dead track's title, let the
+ * user pick a working substitute without leaving the queue.
+ */
+app.get('/api/yt/search', rateLimit, async (req, res) => {
+  const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+  if (!q) return res.status(400).json({ error: '"q" search text is required.' });
+  if (q.length > 200) return res.status(400).json({ error: 'Search text too long.' });
+
+  const searchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(q)}`;
+
+  try {
+    const html = await fetchHTML(searchUrl, 10000);
+    if (!html || html.length < 1000)
+      return res.status(502).json({ error: 'YouTube returned an empty response. Try again.' });
+    if (html.includes('Sorry, something went wrong') || html.includes('Our systems have detected unusual traffic'))
+      return res.status(429).json({ error: 'YouTube rate limited. Please wait a moment and try again.' });
+
+    const ytData = extractYtInitialData(html);
+    if (!ytData) return res.status(502).json({ error: 'Could not parse YouTube search results. The page structure may have changed.' });
+
+    const tracks = extractTracksFromYtData(ytData).slice(0, 20).map(t => ({
+      ...t,
+      embedUrl:    `https://www.youtube.com/embed/${t.id}?autoplay=1&controls=1&enablejsapi=1`,
+      embedUrlNC:  `https://www.youtube-nocookie.com/embed/${t.id}?autoplay=1&controls=1&enablejsapi=1`,
+      originalUrl: `https://www.youtube.com/watch?v=${t.id}`,
+      platform:    'youtube',
+      type:        'video',
+    }));
+
+    return res.json({ query: q, tracks });
+  } catch (err) {
+    console.error('[yt/search] Error:', err.message);
+    return res.status(502).json({ error: `Could not search YouTube: ${err.message}` });
+  }
+});
+
 // ═══════════════════════════════════════════════════════════════════════════════
 //  AUTH ROUTES  — Supabase-backed
 // ═══════════════════════════════════════════════════════════════════════════════
