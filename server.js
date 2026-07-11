@@ -761,12 +761,18 @@ async function dbAddTrackToPlaylist(playlistId, owner, trackData, addedBy) {
   return data;
 }
 
+// Returns the deleted row (pre-delete) so the caller can log a reversible
+// edit-history entry with the exact track_data/position needed for undo —
+// select-then-delete rather than delete-and-hope, since Postgres DELETE
+// doesn't hand back the row unless asked via .select().
 async function dbRemoveTrackFromPlaylist(playlistId, owner, trackRowId) {
-  const { error } = await supabase
+  const { data: deletedRow, error } = await supabase
     .from('playlist_tracks')
     .delete()
     .eq('id', trackRowId)
-    .eq('playlist_id', playlistId);
+    .eq('playlist_id', playlistId)
+    .select()
+    .maybeSingle();
   if (error) throw new Error(error.message);
 
   const { count } = await supabase
@@ -776,6 +782,8 @@ async function dbRemoveTrackFromPlaylist(playlistId, owner, trackRowId) {
   await supabase.from('playlists_v2')
     .update({ track_count: count || 0, updated_at: new Date().toISOString() })
     .eq('id', playlistId).eq('owner', owner);
+
+  return deletedRow || null;
 }
 
 // Public playlists belonging to `username` — for the public profile viewer.
@@ -1958,6 +1966,58 @@ async function dbGetPendingInvites(playlistId) {
     .order('created_at', { ascending: true });
   if (error) { console.error('[db] getPendingInvites:', error.message); return []; }
   return data || [];
+}
+
+// ─── Playlist edit log (V2 depth feature) ──────────────────────────────────
+// Durable, reversible log of track add/remove edits on a playlist — distinct
+// from activity_feed, which is fire-and-forget and has no concept of "undo
+// this exact operation." action ∈ 'add' | 'remove'. `snapshot` carries
+// whatever's needed to reverse the action: for a 'remove' entry, the full
+// track_data + original position of the row that was deleted, so undo can
+// re-insert it; for an 'add' entry, just the rowId, since undoing an add is
+// simply deleting that row. reverted_at is set once an entry has been
+// undone, so it can't be undone twice and drops out of the "recent edits"
+// list. Table: playlist_edit_log (playlist_id, actor, action, track_title,
+// row_id, snapshot jsonb, created_at, reverted_at).
+async function dbLogPlaylistEdit(playlistId, actor, action, { trackTitle, rowId, snapshot = null }) {
+  const { data, error } = await supabase
+    .from('playlist_edit_log')
+    .insert({
+      playlist_id: playlistId, actor, action,
+      track_title: (trackTitle || 'Untitled').slice(0, 300),
+      row_id: rowId, snapshot,
+    })
+    .select()
+    .single();
+  if (error) { console.error('[db] logPlaylistEdit:', error.message); return null; }
+  return data;
+}
+
+async function dbGetPlaylistEditHistory(playlistId, { limit = 30 } = {}) {
+  const { data, error } = await supabase
+    .from('playlist_edit_log')
+    .select('id, actor, action, track_title, row_id, reverted_at, created_at')
+    .eq('playlist_id', playlistId)
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  if (error) { console.error('[db] getPlaylistEditHistory:', error.message); return []; }
+  return data || [];
+}
+
+async function dbGetEditLogEntry(entryId) {
+  const { data, error } = await supabase
+    .from('playlist_edit_log')
+    .select('*')
+    .eq('id', entryId)
+    .maybeSingle();
+  if (error) { console.error('[db] getEditLogEntry:', error.message); return null; }
+  return data;
+}
+
+async function dbMarkEditReverted(entryId) {
+  await supabase.from('playlist_edit_log')
+    .update({ reverted_at: new Date().toISOString() })
+    .eq('id', entryId);
 }
 
 // Invites waiting for `username` to accept/reject — shown in their notification inbox.
@@ -4996,14 +5056,21 @@ app.post('/api/playlists/:id/tracks', playlistRateLimit, async (req, res) => {
       return res.status(404).json({ error: 'Playlist not found.' });
     }
     const row = await dbAddTrackToPlaylist(req.params.id, playlist.owner, trackData, sess.username);
+    const trackTitle = trackData.title || trackData.id || 'Untitled';
     // Emit activity when a collaborator (non-owner) adds a track, or it's a public playlist
     if (playlist.is_public || sess.username !== playlist.owner) {
       dbWriteActivity('track_added', sess.username, playlist.owner !== sess.username ? playlist.owner : null, {
         playlistId: playlist.id, playlistName: playlist.name,
-        trackTitle: trackData.title || trackData.id || 'Untitled',
-        trackPlatform: trackData.platform || null,
+        trackTitle, trackPlatform: trackData.platform || null,
       });
     }
+    // Edit log: always recorded regardless of public/owner, since this
+    // feeds "Romeo added Stronger"-style live activity + undo for every
+    // collaborative playlist, not just public ones.
+    dbLogPlaylistEdit(playlist.id, sess.username, 'add', { trackTitle, rowId: row.id });
+    broadcastToPlaylist(playlist.id, {
+      type: 'edit', payload: { action: 'add', actor: sess.username, trackTitle, rowId: row.id },
+    });
     return res.status(201).json({ rowId: row.id, position: row.position });
   } catch (err) {
     console.error('[playlists add track]', err);
@@ -5023,12 +5090,113 @@ app.delete('/api/playlists/:id/tracks/:rowId', playlistRateLimit, async (req, re
     if (!playlist || !editorRole) {
       return res.status(404).json({ error: 'Playlist not found.' });
     }
-    await dbRemoveTrackFromPlaylist(req.params.id, playlist.owner, req.params.rowId);
-    return res.json({ removed: true });
+    const deletedRow = await dbRemoveTrackFromPlaylist(req.params.id, playlist.owner, req.params.rowId);
+    const trackTitle = deletedRow?.track_data?.title || deletedRow?.track_data?.id || 'a track';
+
+    // Previously only 'track_added' ever reached activity_feed — removals
+    // were silent. Matching track_added's own gating (public playlist, or
+    // a non-owner collaborator acting) keeps behavior symmetric rather than
+    // introducing a new policy.
+    if (deletedRow && (playlist.is_public || sess.username !== playlist.owner)) {
+      dbWriteActivity('track_removed', sess.username, playlist.owner !== sess.username ? playlist.owner : null, {
+        playlistId: playlist.id, playlistName: playlist.name, trackTitle,
+      });
+    }
+    if (deletedRow) {
+      dbLogPlaylistEdit(playlist.id, sess.username, 'remove', {
+        trackTitle,
+        rowId: deletedRow.id,
+        snapshot: { track_data: deletedRow.track_data, position: deletedRow.position },
+      });
+      broadcastToPlaylist(playlist.id, {
+        type: 'edit', payload: { action: 'remove', actor: sess.username, trackTitle, rowId: deletedRow.id },
+      });
+    }
+    // Conflict resolution: if two editors remove the same track at nearly
+    // the same time, the second DELETE simply finds no matching row
+    // (dbRemoveTrackFromPlaylist's .maybeSingle() returns null) rather than
+    // erroring — first-writer-wins, and the second caller's client already
+    // gets the same "tracks changed" SSE event as everyone else, so nothing
+    // is silently out of sync. `alreadyRemoved` lets the frontend skip
+    // showing its own redundant "you removed X" toast in that case.
+    return res.json({ removed: true, alreadyRemoved: !deletedRow });
   } catch (err) {
     console.error('[playlists remove track]', err);
     return res.status(500).json({ error: 'Could not remove track.' });
   }
+});
+
+// Undo a recent edit-log entry (add or remove). Editor-role gated, same as
+// the add/remove routes themselves — undo is just "perform the inverse
+// write," so it needs the same permission as the forward write would.
+// A 'remove' entry is undone by re-inserting the snapshotted track_data at
+// the end of the current list (not its original position — the list has
+// likely moved on, and silently reshuffling everyone else's position on an
+// undo would be more surprising than appending). An 'add' entry is undone
+// by deleting the row it created, if it's still there untouched.
+app.post('/api/playlists/:id/edit-log/:entryId/undo', playlistRateLimit, async (req, res) => {
+  const sess = req._session;
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  try {
+    const playlist = await dbGetPlaylist(req.params.id);
+    const editorRole = playlist && (
+      playlist.owner === sess.username ||
+      await dbGetCollabRole(req.params.id, sess.username) === 'editor'
+    );
+    if (!playlist || !editorRole) return res.status(404).json({ error: 'Playlist not found.' });
+
+    const entry = await dbGetEditLogEntry(req.params.entryId);
+    if (!entry || entry.playlist_id !== playlist.id) {
+      return res.status(404).json({ error: 'Edit not found.' });
+    }
+    if (entry.reverted_at) return res.status(409).json({ error: 'This edit was already undone.' });
+
+    if (entry.action === 'remove') {
+      if (!entry.snapshot?.track_data) return res.status(400).json({ error: 'Nothing to restore for this edit.' });
+      const restored = await dbAddTrackToPlaylist(playlist.id, playlist.owner, entry.snapshot.track_data, sess.username);
+      await dbMarkEditReverted(entry.id);
+      broadcastToPlaylist(playlist.id, {
+        type: 'edit', payload: { action: 'add', actor: sess.username, trackTitle: entry.track_title, rowId: restored.id, isUndo: true },
+      });
+      return res.json({ undone: true, restoredRowId: restored.id });
+    }
+
+    if (entry.action === 'add') {
+      await dbRemoveTrackFromPlaylist(playlist.id, playlist.owner, entry.row_id);
+      await dbMarkEditReverted(entry.id);
+      broadcastToPlaylist(playlist.id, {
+        type: 'edit', payload: { action: 'remove', actor: sess.username, trackTitle: entry.track_title, rowId: entry.row_id, isUndo: true },
+      });
+      return res.json({ undone: true });
+    }
+
+    return res.status(400).json({ error: 'Unsupported edit type.' });
+  } catch (err) {
+    console.error('[playlists undo edit]', err);
+    return res.status(500).json({ error: 'Could not undo edit.' });
+  }
+});
+
+// GET /api/playlists/:id/edit-log — recent add/remove history for the
+// playlist viewer's "Recent edits" panel. Same visibility rule as the
+// collaborators list: owner, any accepted collaborator, or (read-only)
+// anyone viewing a public playlist.
+app.get('/api/playlists/:id/edit-log', async (req, res) => {
+  const token = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
+  const sess  = await dbGetSession(token);
+  const playlist = await dbGetPlaylist(req.params.id);
+  if (!playlist) return res.status(404).json({ error: 'Playlist not found.' });
+  const role = sess ? await dbGetCollabRole(req.params.id, sess.username) : null;
+  const isOwner = !!(sess && sess.username === playlist.owner);
+  if (!isOwner && !role && !playlist.is_public) return res.status(404).json({ error: 'Playlist not found.' });
+  const history = await dbGetPlaylistEditHistory(req.params.id);
+  return res.json({
+    isEditor: isOwner || role === 'editor',
+    entries: history.map(h => ({
+      id: h.id, actor: h.actor, action: h.action, trackTitle: h.track_title,
+      rowId: h.row_id, reverted: !!h.reverted_at, createdAt: h.created_at,
+    })),
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -5761,7 +5929,16 @@ app.post('/api/sync/now-playing/pull', requirePremium, async (req, res) => {
 //  GET    /api/playlists/invites/mine               ?token=   → pending invites for me
 //  GET    /api/playlists/shared-with-me             ?token=   → playlists I'm a collaborator on
 //
-//  GET    /api/playlists/:id/realtime               SSE stream for track + collab changes
+//  GET    /api/playlists/:id/realtime               SSE stream: track/collab/invite changes
+//                                                    (Postgres Realtime) + presence_join/
+//                                                    presence_leave/presence_snapshot/typing/edit
+//                                                    (ephemeral, in-memory only — see below)
+//  POST   /api/playlists/:id/typing                 { token }  → broadcast "I'm editing" ping
+//
+//  V2 — edit history + undo (playlist_edit_log table, distinct from activity_feed
+//  which has no undo concept):
+//  GET    /api/playlists/:id/edit-log                ?token=   → recent add/remove history
+//  POST   /api/playlists/:id/edit-log/:entryId/undo  { token } → reverse that edit
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // Invite a user to collaborate -------------------------------------------------
@@ -5916,7 +6093,44 @@ function removeSseClient(playlistId, res) {
     const ch = playlistRealtimeChannels.get(playlistId);
     if (ch) { supabase.removeChannel(ch); playlistRealtimeChannels.delete(playlistId); }
     playlistSseClients.delete(playlistId);
+    playlistPresence.delete(playlistId);
+  } else if (res._presenceUsername) {
+    // Someone left but others remain — drop them from presence and tell
+    // the rest of the room, mirroring a Postgres DELETE fan-out above even
+    // though presence itself never touches the database (see note below).
+    dropPresence(playlistId, res._presenceUsername);
   }
+}
+
+// ─── Presence + typing (ephemeral, in-memory only) ──────────────────────────
+// "Who's currently viewing this playlist" and "who's mid-edit right now"
+// are not durable facts worth a table or a Postgres Realtime round-trip —
+// they're pushed straight through the same playlistSseClients fan-out used
+// for track/collaborator/invite changes above. One Map entry per playlist,
+// keyed by username, holding a ref count (a user can have >1 tab/device
+// open on the same playlist and should still show as present after closing
+// one of them).
+const playlistPresence = new Map(); // playlistId → Map<username, {count, label}>
+
+function addPresence(playlistId, username, label) {
+  if (!playlistPresence.has(playlistId)) playlistPresence.set(playlistId, new Map());
+  const room = playlistPresence.get(playlistId);
+  const existing = room.get(username);
+  if (existing) { existing.count++; return; }
+  room.set(username, { count: 1, label: label || username });
+  broadcastToPlaylist(playlistId, { type: 'presence_join', payload: { username } });
+}
+
+function dropPresence(playlistId, username) {
+  const room = playlistPresence.get(playlistId);
+  if (!room || !room.has(username)) return;
+  const entry = room.get(username);
+  entry.count--;
+  if (entry.count <= 0) {
+    room.delete(username);
+    broadcastToPlaylist(playlistId, { type: 'presence_leave', payload: { username } });
+  }
+  if (!room.size) playlistPresence.delete(playlistId);
 }
 
 app.get('/api/playlists/:id/realtime', async (req, res) => {
@@ -5940,6 +6154,18 @@ app.get('/api/playlists/:id/realtime', async (req, res) => {
   playlistSseClients.get(id).add(res);
   getOrCreateRealtimeChannel(id);
 
+  // Tag this connection with who it belongs to so removeSseClient can drop
+  // presence on disconnect, and hand the newly-joined client a snapshot of
+  // who's already here (their own join event fires to *other* clients via
+  // addPresence, but they still need the initial roster themselves).
+  res._presenceUsername = sess.username;
+  addPresence(id, sess.username);
+  const room = playlistPresence.get(id);
+  res.write(`data: ${JSON.stringify({
+    type: 'presence_snapshot',
+    payload: { usernames: room ? [...room.keys()] : [] },
+  })}\n\n`);
+
   const heartbeat = setInterval(() => {
     try { res.write(': ping\n\n'); } catch (_) { clearInterval(heartbeat); }
   }, 25_000);
@@ -5948,6 +6174,22 @@ app.get('/api/playlists/:id/realtime', async (req, res) => {
     clearInterval(heartbeat);
     removeSseClient(id, res);
   });
+});
+
+// POST /api/playlists/:id/typing — fire-and-forget ephemeral ping, "I'm
+// currently editing this playlist." No persistence, no rate-limit table of
+// its own (playlistRateLimit's 60/min is already generous and this is a
+// lightweight broadcast, not a write). Broadcasts to every OTHER connected
+// client via the same SSE fan-out; the sender doesn't need their own ping
+// echoed back.
+app.post('/api/playlists/:id/typing', playlistRateLimit, async (req, res) => {
+  const sess = req._session;
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  const pl = await dbGetPlaylist(req.params.id);
+  const role = pl ? await dbGetCollabRole(req.params.id, sess.username) : null;
+  if (!pl || !role) return res.status(404).json({ error: 'Playlist not found.' });
+  broadcastToPlaylist(req.params.id, { type: 'typing', payload: { username: sess.username } });
+  return res.json({ ok: true });
 });
 
 // Public playlists for a profile — mounted under /api/profiles so it reads
