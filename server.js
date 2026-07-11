@@ -1619,7 +1619,9 @@ setInterval(() => {
   for (const [key, t] of recentPlayKeys) if (t < cutoff) recentPlayKeys.delete(key);
 }, 120_000);
 
-async function dbLogPlay(originalUrl, { platform, title, username, listenerKey, artistName, publishedTrackId }) {
+const PLAY_SOURCES = ['direct', 'discover', 'chart', 'search', 'dj_boom', 'artist_page', 'playlist', 'shared_link', 'demo'];
+
+async function dbLogPlay(originalUrl, { platform, title, username, listenerKey, artistName, publishedTrackId, source }) {
   const trackId = await dbGetOrCreateTrack(originalUrl, platform, title, artistName, publishedTrackId);
   if (!trackId) return null;
 
@@ -1630,7 +1632,12 @@ async function dbLogPlay(originalUrl, { platform, title, username, listenerKey, 
   }
   recentPlayKeys.set(cooldownKey, Date.now());
 
-  await supabase.from('track_plays').insert({ track_id: trackId, username: username || null });
+  // source is client-supplied (see POST /api/plays) and validated against
+  // PLAY_SOURCES there before it ever reaches this function — falls back
+  // to 'direct' for anything unrecognized or absent, matching the column's
+  // DB-level default so Creator Insights never has to special-case nulls.
+  const safeSource = PLAY_SOURCES.includes(source) ? source : 'direct';
+  await supabase.from('track_plays').insert({ track_id: trackId, username: username || null, source: safeSource });
 
   // Atomic increment via the increment_track_play_count() RPC (see migration)
   // rather than read-count-then-write, which would race under concurrent
@@ -1640,6 +1647,77 @@ async function dbLogPlay(originalUrl, { platform, title, username, listenerKey, 
   });
   if (error) { console.error('[db] logPlay increment:', error.message); return { trackId, counted: true }; }
   return { trackId, counted: true, playCount: data };
+}
+
+// ─── Creator Insights ──────────────────────────────────────────────────────
+// Powers GET /api/artists/:id/insights (owner-only). Pulls raw track_plays
+// rows for every track the artist owns and aggregates in JS rather than a
+// SQL GROUP BY — at FREQ's current data volume this is simpler to read and
+// debug than juggling several separate aggregate queries or a Postgres
+// view, and it's a single indexed query (idx_track_plays_track_id_source /
+// idx_track_plays_track_id_played_at from the migration) rather than N
+// queries. Revisit with a real GROUP BY if an artist's play volume ever
+// makes the in-memory reduce noticeably slow — not a concern at today's
+// scale.
+async function dbGetArtistInsights(artistId, { days = 30 } = {}) {
+  const { data: tracks, error: tracksErr } = await supabase
+    .from('tracks')
+    .select('id, title, play_count, play_count_7d, cover_url')
+    .eq('artist_id', artistId)
+    .eq('is_published', true);
+  if (tracksErr) { console.error('[db] getArtistInsights tracks:', tracksErr.message); return null; }
+  if (!tracks || !tracks.length) {
+    return { tracks: [], bySource: {}, byDay: [], totalPlays: 0 };
+  }
+
+  const trackIds = tracks.map(t => t.id);
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+  const { data: plays, error: playsErr } = await supabase
+    .from('track_plays')
+    .select('track_id, source, played_at')
+    .in('track_id', trackIds)
+    .gte('played_at', since);
+  if (playsErr) { console.error('[db] getArtistInsights plays:', playsErr.message); return null; }
+
+  const bySource = {};
+  const byDayMap = new Map(); // 'YYYY-MM-DD' -> count
+  const byTrackMap = new Map(trackIds.map(id => [id, { bySource: {}, total: 0 }]));
+
+  for (const row of plays || []) {
+    const src = row.source || 'direct';
+    bySource[src] = (bySource[src] || 0) + 1;
+
+    const day = row.played_at.slice(0, 10);
+    byDayMap.set(day, (byDayMap.get(day) || 0) + 1);
+
+    const trackAgg = byTrackMap.get(row.track_id);
+    if (trackAgg) {
+      trackAgg.bySource[src] = (trackAgg.bySource[src] || 0) + 1;
+      trackAgg.total++;
+    }
+  }
+
+  // Zero-fill every day in the window so the frontend gets a continuous
+  // series to chart rather than having to interpolate gaps itself.
+  const byDay = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(Date.now() - i * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    byDay.push({ date: d, plays: byDayMap.get(d) || 0 });
+  }
+
+  return {
+    totalPlays: (plays || []).length,
+    bySource,
+    byDay,
+    tracks: tracks
+      .map(t => ({
+        id: t.id, title: t.title, coverUrl: t.cover_url,
+        playCountAllTime: t.play_count || 0, playCount7d: t.play_count_7d || 0,
+        playsInWindow: byTrackMap.get(t.id)?.total || 0,
+        bySource: byTrackMap.get(t.id)?.bySource || {},
+      }))
+      .sort((a, b) => b.playsInWindow - a.playsInWindow),
+  };
 }
 
 async function dbGetTopTracks({ window = 'all', limit = 50 } = {}) {
@@ -5109,10 +5187,15 @@ app.get('/api/playlists/:id', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 app.post('/api/plays', rateLimit, async (req, res) => {
-  const { originalUrl, platform, title, artist, token, trackId } = req.body || {};
+  const { originalUrl, platform, title, artist, token, trackId, source } = req.body || {};
   if (!originalUrl || typeof originalUrl !== 'string') {
     return res.status(400).json({ error: '"originalUrl" is required.' });
   }
+  // Validated against the same PLAY_SOURCES list the DB CHECK constraint
+  // uses, so an unrecognized/absent value falls back to 'direct' here
+  // rather than reaching dbLogPlay and relying on its own fallback —
+  // belt-and-suspenders since this is client-supplied input.
+  const safeSource = PLAY_SOURCES.includes(source) ? source : 'direct';
   // Published FREQ tracks send their real tracks.id alongside originalUrl —
   // see dbGetOrCreateTrack's comment for why originalUrl alone can't be
   // trusted to identify these rows. Must be a syntactically valid uuid or
@@ -5149,6 +5232,7 @@ app.post('/api/plays', rateLimit, async (req, res) => {
       username: sess ? sess.username : null,
       listenerKey,
       publishedTrackId,
+      source: safeSource,
     });
     if (!result) return res.status(500).json({ error: 'Could not log play.' });
     return res.json({ counted: result.counted, playCount: result.playCount ?? null });
@@ -7493,6 +7577,74 @@ app.get('/api/artists/:id/tracks', async (req, res) => {
   } catch (err) {
     console.error('[artist tracks]', err);
     return res.status(500).json({ error: 'Could not load artist tracks.' });
+  }
+});
+
+// ─── Creator Insights v1 ───────────────────────────────────────────────────
+// Owner-only. Same existence-probing shape as other owner-gated routes in
+// this file: a non-owner (or logged-out visitor) gets 404, not 403 — so a
+// stranger probing an artist id can't distinguish "not your artist" from
+// "no such artist" by response code. The breakdown itself (plays by
+// source, by day, per-track) is available to every artist regardless of
+// Premium status; only the raw CSV download below is Premium-gated, per
+// the roadmap's "Basic play counts free / full funnel + export Premium"
+// split — withholding the funnel data itself from Free artists would make
+// the free tier feel crippled rather than the paid tier feel additive.
+app.get('/api/artists/:id/insights', async (req, res) => {
+  try {
+    const artist = await resolveArtistFromParam(req.params.id);
+    if (!artist) return res.status(404).json({ error: 'Artist not found.' });
+
+    const token = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
+    const sess  = token ? await dbGetSession(token) : null;
+    if (!sess || artist.account_id !== sess.username) {
+      return res.status(404).json({ error: 'Artist not found.' });
+    }
+
+    const days = Math.min(Math.max(Number(req.query.days) || 30, 7), 90);
+    const insights = await dbGetArtistInsights(artist.id, { days });
+    if (!insights) return res.status(500).json({ error: 'Could not load insights.' });
+
+    return res.json({ artistId: artist.id, windowDays: days, ...insights });
+  } catch (err) {
+    console.error('[artist insights]', err);
+    return res.status(500).json({ error: 'Could not load insights.' });
+  }
+});
+
+// CSV export — Premium only. Reuses dbGetArtistInsights (same aggregation,
+// same owner check) rather than a second query path; this route's only
+// added job is formatting the response as CSV instead of JSON.
+app.get('/api/artists/:id/insights/export.csv', requirePremium, async (req, res) => {
+  try {
+    const artist = await resolveArtistFromParam(req.params.id);
+    if (!artist) return res.status(404).json({ error: 'Artist not found.' });
+    if (artist.account_id !== req._premiumSession.username) {
+      return res.status(404).json({ error: 'Artist not found.' });
+    }
+
+    const days = Math.min(Math.max(Number(req.query.days) || 30, 7), 90);
+    const insights = await dbGetArtistInsights(artist.id, { days });
+    if (!insights) return res.status(500).json({ error: 'Could not export insights.' });
+
+    const sourceKeys = PLAY_SOURCES;
+    const header = ['Track', 'Plays (all-time)', 'Plays (7d)', `Plays (last ${days}d)`, ...sourceKeys.map(s => `Source: ${s}`)];
+    // Minimal CSV field escaping: wrap in quotes and double-up any embedded
+    // quote characters. Track titles are free text and can legitimately
+    // contain commas or quotes, so this can't be skipped.
+    const escapeCsv = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const rows = insights.tracks.map(t => [
+      escapeCsv(t.title), t.playCountAllTime, t.playCount7d, t.playsInWindow,
+      ...sourceKeys.map(s => t.bySource[s] || 0),
+    ].join(','));
+
+    const csv = [header.map(escapeCsv).join(','), ...rows].join('\n');
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="freq-insights-${artist.slug || artist.id}.csv"`);
+    return res.send(csv);
+  } catch (err) {
+    console.error('[artist insights export]', err);
+    return res.status(500).json({ error: 'Could not export insights.' });
   }
 });
 
