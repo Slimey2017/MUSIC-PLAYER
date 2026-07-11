@@ -4582,6 +4582,77 @@ body.oled-mode {
   </div>
 </div>
 
+<!-- Listening Party Overlay -->
+<div class="lyrics-overlay" id="partyOverlay">
+  <div class="lyrics-panel" style="max-width:440px;">
+    <div id="partyLoading" style="text-align:center;padding:24px;color:var(--text-muted);font-size:0.6rem;">Loading party…</div>
+    <div id="partyContent" style="display:none;">
+      <div style="display:flex;align-items:center;justify-content:space-between;">
+        <div class="lyrics-title" id="partyTitle" style="margin:0;">—</div>
+        <button class="support-close-btn" onclick="closePartyOverlay()" style="margin:0;padding:6px 12px;">✕</button>
+      </div>
+      <div class="lyrics-artist" id="partyHostLabel">hosted by @—</div>
+
+      <!-- Now playing + host controls -->
+      <div style="margin:12px 0;padding:10px;border:1px solid var(--border);border-radius:var(--radius);">
+        <div id="partyNowPlaying" style="font-size:0.5rem;color:var(--text-main);margin-bottom:8px;">Nothing playing yet.</div>
+        <div id="partyHostControls" style="display:none;gap:8px;">
+          <button id="partyPlayPauseBtn" onclick="partyTogglePlayback()" style="background:none;border:1px solid var(--accent3);color:var(--accent3);font-family:'Space Mono',monospace;font-size:0.5rem;padding:6px 14px;border-radius:var(--radius);cursor:pointer;">▶ Play</button>
+          <button onclick="partyAdvanceQueue()" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.5rem;padding:6px 14px;border-radius:var(--radius);cursor:pointer;">⏭ Next</button>
+        </div>
+      </div>
+
+      <!-- Presence -->
+      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:10px;font-size:0.44rem;color:var(--text-muted);">
+        <span id="partyMemberAvatars" style="display:flex;gap:3px;"></span>
+        <span id="partyMemberLabel"></span>
+      </div>
+
+      <!-- Invite -->
+      <div id="partyInviteRow" style="display:none;margin-bottom:12px;font-size:0.46rem;color:var(--text-muted);">
+        Invite code: <span id="partyInviteCode" style="color:var(--accent3);letter-spacing:0.1em;cursor:pointer;" onclick="copyPartyInviteCode()" title="Click to copy">——————</span>
+      </div>
+
+      <!-- Tabs: Queue / Chat -->
+      <div style="display:flex;gap:6px;margin-bottom:10px;">
+        <button class="labs-category-chip active" data-party-tab="queue" onclick="setPartyTab('queue')">Queue</button>
+        <button class="labs-category-chip" data-party-tab="chat" onclick="setPartyTab('chat')">Chat</button>
+        <button class="labs-category-chip" data-party-tab="settings" onclick="setPartyTab('settings')" id="partySettingsTabBtn" style="display:none;">Settings</button>
+      </div>
+
+      <div id="partyTabQueue">
+        <div id="partyQueueList" style="max-height:200px;overflow-y:auto;margin-bottom:8px;"></div>
+        <button id="partyAddTrackBtn" onclick="partyAddCurrentTrackToQueue()" style="width:100%;background:none;border:1px solid var(--accent3);color:var(--accent3);font-family:'Space Mono',monospace;font-size:0.46rem;padding:7px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.05em;text-transform:uppercase;">+ Add Currently Playing Track</button>
+      </div>
+
+      <div id="partyTabChat" style="display:none;">
+        <div id="partyChatList" style="max-height:200px;overflow-y:auto;margin-bottom:8px;display:flex;flex-direction:column;gap:5px;"></div>
+        <div style="display:flex;gap:6px;">
+          <input type="text" id="partyChatInput" placeholder="Say something…" maxlength="500" style="flex:1;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-main);font-family:'Space Mono',monospace;font-size:0.48rem;padding:6px 8px;box-sizing:border-box;" />
+          <button onclick="partySendChat()" style="background:none;border:1px solid var(--accent3);color:var(--accent3);font-family:'Space Mono',monospace;font-size:0.46rem;padding:6px 12px;border-radius:var(--radius);cursor:pointer;">Send</button>
+        </div>
+      </div>
+
+      <div id="partyTabSettings" style="display:none;">
+        <label style="display:flex;align-items:center;gap:8px;font-size:0.46rem;color:var(--text-muted);margin-bottom:8px;cursor:pointer;">
+          <input type="checkbox" id="partyGuestCanQueueToggle" onchange="partyUpdatePermissions()" />
+          Guests can add to queue
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;font-size:0.46rem;color:var(--text-muted);margin-bottom:8px;cursor:pointer;">
+          <input type="checkbox" id="partyApprovalToggle" onchange="partyUpdatePermissions()" />
+          Require approval for guest requests
+        </label>
+        <div style="font-size:0.46rem;color:var(--text-dim);letter-spacing:0.05em;text-transform:uppercase;margin:12px 0 6px;">Transfer Host</div>
+        <div id="partyTransferHostList"></div>
+        <button onclick="partyEndParty()" style="width:100%;margin-top:14px;background:none;border:1px solid var(--accent2);color:var(--accent2);font-family:'Space Mono',monospace;font-size:0.46rem;padding:8px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.05em;text-transform:uppercase;">End Party</button>
+      </div>
+
+      <button id="partyLeaveBtn" onclick="partyLeave()" style="width:100%;margin-top:12px;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.46rem;padding:8px;border-radius:var(--radius);cursor:pointer;letter-spacing:0.05em;text-transform:uppercase;">Leave Party</button>
+    </div>
+    <div id="partyError" style="display:none;text-align:center;padding:24px;color:var(--text-muted);font-size:0.55rem;"></div>
+  </div>
+</div>
+
 <!-- Social Posts Feed Overlay -->
 <div class="lyrics-overlay" id="postsFeedOverlay">
   <div class="lyrics-panel" style="max-width:480px;">
@@ -12323,6 +12394,486 @@ async function undoPlaylistEdit(playlistId, entryId) {
   } catch (err) {
     showToast('Error', err.message || 'Could not undo edit.', 'error');
   }
+}
+
+// ─── Listening Parties (Phase 4 / Step 2) ────────────────────────────────────
+// Reuses PlaybackManager/playItem for all actual audio — this module only
+// ever pushes/receives *intent* (play, pause, seek, track_change) over the
+// party's SSE channel and translates that into calls on the existing
+// queue/playback code already used for local playback. It never touches
+// <audio> directly.
+const PARTIES_BASE = '/api/parties';
+
+let currentParty = null;      // full party state from GET /api/parties/:id
+let _partySse = null;
+let _partySseId = null;
+let _partyPositionTicker = null; // local rAF-free timer that advances the displayed position between server pushes
+let _partyApplyingRemoteState = false; // guard so a guest's own playItem() call doesn't get mistaken for something to re-broadcast
+
+function isPartyHostOrCohost() {
+  return currentParty && (currentParty.myRole === 'host' || currentParty.myRole === 'cohost');
+}
+
+// Start a party from the current queue context — call from wherever a
+// "Start Listening Party" button lives (player bar / queue tools).
+async function startListeningParty(title, isPublic = false) {
+  if (!AUTH.loggedIn || !AUTH.token) { showToast('Sign in required', 'Sign in to start a Listening Party.', 'info'); return; }
+  if (!AUTH.isPremium) { showToast('Premium required', 'Listening Parties are a FREQ Premium feature.', 'info'); return; }
+  try {
+    const res = await fetch(PARTIES_BASE, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: AUTH.token, title: title || `${AUTH.username}'s Listening Party`, isPublic }),
+    });
+    const data = await res.json();
+    if (!res.ok) { showToast('Error', data.error || 'Could not start party.', 'error'); return; }
+    await openPartyOverlay(data.id);
+    showToast('Party started!', `Invite code: ${data.inviteCode}`, 'success');
+  } catch (err) {
+    showToast('Error', err.message || 'Could not start party.', 'error');
+  }
+}
+
+// Join by invite code (typed in, not from Discover) — resolves the code to
+// a party id first since /join is id-scoped.
+async function joinListeningPartyByCode(inviteCode) {
+  if (!AUTH.loggedIn || !AUTH.token) { showToast('Sign in required', 'Sign in to join a Listening Party.', 'info'); return; }
+  if (!AUTH.isPremium) { showToast('Premium required', 'Listening Parties are a FREQ Premium feature.', 'info'); return; }
+  const code = (inviteCode || '').trim().toUpperCase();
+  if (!code) return;
+  try {
+    // No standalone "resolve code" endpoint — /discover only lists public
+    // parties, and a private party is meant to be reached by a shared
+    // link (/party/:id) that already carries the id. If joining by a bare
+    // typed code without a link, the id has to come from the same flow
+    // that generated the code (the host's own party view), which already
+    // has the id — this helper exists for that in-app case.
+    if (!currentParty?.id) { showToast('Error', 'Open the party link to join.', 'error'); return; }
+    await joinListeningParty(currentParty.id, code);
+  } catch (err) {
+    showToast('Error', err.message || 'Could not join party.', 'error');
+  }
+}
+
+async function joinListeningParty(partyId, inviteCode = null) {
+  if (!AUTH.loggedIn || !AUTH.token) { showToast('Sign in required', 'Sign in to join a Listening Party.', 'info'); return; }
+  if (!AUTH.isPremium) { showToast('Premium required', 'Listening Parties are a FREQ Premium feature.', 'info'); return; }
+  try {
+    const res = await fetch(`${PARTIES_BASE}/${encodeURIComponent(partyId)}/join`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: AUTH.token, inviteCode }),
+    });
+    const data = await res.json();
+    if (!res.ok) { showToast('Error', data.error || 'Could not join party.', 'error'); return; }
+    await openPartyOverlay(partyId);
+  } catch (err) {
+    showToast('Error', err.message || 'Could not join party.', 'error');
+  }
+}
+
+async function openPartyOverlay(partyId) {
+  $('partyOverlay')?.classList.add('open');
+  $('partyLoading').style.display = 'block';
+  $('partyContent').style.display = 'none';
+  $('partyError').style.display = 'none';
+
+  try {
+    const params = new URLSearchParams({ token: AUTH.token });
+    const res = await fetch(`${PARTIES_BASE}/${encodeURIComponent(partyId)}?${params}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not load party.');
+
+    currentParty = data;
+    $('partyLoading').style.display = 'none';
+    $('partyContent').style.display = 'block';
+    renderPartyState();
+    partySseConnect(partyId);
+
+    // Guests who join mid-song should land roughly in sync immediately,
+    // not wait for the next host push — extrapolate from
+    // positionUpdatedAt the same way the resync ticker does.
+    partyApplyRemotePlayback(data.playback, { immediate: true });
+  } catch (err) {
+    $('partyLoading').style.display = 'none';
+    $('partyError').style.display = 'block';
+    $('partyError').textContent = err.message || 'Could not load party.';
+  }
+}
+
+function closePartyOverlay() {
+  $('partyOverlay')?.classList.remove('open');
+  partySseDisconnect();
+  currentParty = null;
+}
+
+function setPartyTab(tab) {
+  document.querySelectorAll('[data-party-tab]').forEach(btn => btn.classList.toggle('active', btn.dataset.partyTab === tab));
+  $('partyTabQueue').style.display = tab === 'queue' ? 'block' : 'none';
+  $('partyTabChat').style.display = tab === 'chat' ? 'block' : 'none';
+  $('partyTabSettings').style.display = tab === 'settings' ? 'block' : 'none';
+}
+
+function renderPartyState() {
+  if (!currentParty) return;
+  $('partyTitle').textContent = currentParty.title;
+  $('partyHostLabel').textContent = `hosted by @${currentParty.host}`;
+  $('partySettingsTabBtn').style.display = currentParty.myRole === 'host' ? 'inline-block' : 'none';
+  $('partyHostControls').style.display = isPartyHostOrCohost() ? 'flex' : 'none';
+  $('partyAddTrackBtn').style.display = (isPartyHostOrCohost() || currentParty.guestCanQueue) ? 'block' : 'none';
+
+  if (currentParty.myRole === 'host') {
+    $('partyGuestCanQueueToggle').checked = !!currentParty.guestCanQueue;
+    $('partyApprovalToggle').checked = !!currentParty.queueRequiresApproval;
+    renderPartyInviteCode();
+    renderPartyTransferHostList();
+  }
+
+  renderPartyMembers();
+  renderPartyQueue();
+  renderPartyChat();
+  renderPartyNowPlaying();
+}
+
+// The invite code itself isn't returned by GET /api/parties/:id (that
+// endpoint is reachable by guests too, and a guest has no use for — and
+// shouldn't casually see — the code that lets anyone bypass "invite
+// only"). The host already received it once from POST /api/parties's
+// response when they created the party; this just keeps showing that
+// locally-cached value rather than re-fetching something the API
+// intentionally doesn't hand back to every viewer.
+let _lastKnownInviteCode = null;
+function renderPartyInviteCode() {
+  const row = $('partyInviteRow');
+  if (!row) return;
+  if (_lastKnownInviteCode) {
+    row.style.display = 'block';
+    $('partyInviteCode').textContent = _lastKnownInviteCode;
+  } else {
+    row.style.display = 'none';
+  }
+}
+function copyPartyInviteCode() {
+  if (!_lastKnownInviteCode) return;
+  navigator.clipboard.writeText(_lastKnownInviteCode).then(() => showToast('Copied!', 'Invite code copied.', 'success'));
+}
+
+function renderPartyMembers() {
+  const avatars = $('partyMemberAvatars');
+  const label = $('partyMemberLabel');
+  if (!avatars || !label || !currentParty) return;
+  const members = currentParty.members || [];
+  avatars.innerHTML = members.slice(0, 6).map(m => `
+    <span title="@${escapeHtml(m.username)} (${m.role})" style="width:14px;height:14px;border-radius:50%;background:${m.role === 'host' ? 'var(--accent2)' : 'var(--accent3)'};color:#000;font-size:0.32rem;display:flex;align-items:center;justify-content:center;font-weight:700;flex-shrink:0;">
+      ${escapeHtml(m.username[0]?.toUpperCase() || '?')}
+    </span>
+  `).join('');
+  label.textContent = `${members.length} listening`;
+}
+
+function renderPartyTransferHostList() {
+  const el = $('partyTransferHostList');
+  if (!el || !currentParty) return;
+  const others = (currentParty.members || []).filter(m => m.username !== AUTH.username);
+  if (!others.length) { el.innerHTML = '<div style="font-size:0.44rem;color:var(--text-muted);">No one else here yet.</div>'; return; }
+  el.innerHTML = others.map(m => `
+    <div style="display:flex;align-items:center;gap:6px;padding:3px 0;font-size:0.44rem;color:var(--text-muted);">
+      <span style="flex:1;">@${escapeHtml(m.username)}</span>
+      <button onclick="partyTransferHost('${m.username}')" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.4rem;padding:2px 8px;border-radius:var(--radius);cursor:pointer;text-transform:uppercase;">Make Host</button>
+    </div>
+  `).join('');
+}
+
+function renderPartyQueue() {
+  const list = $('partyQueueList');
+  if (!list || !currentParty) return;
+  const queue = currentParty.queue || [];
+  if (!queue.length) { list.innerHTML = '<div class="empty-panel">Queue is empty.</div>'; return; }
+  list.innerHTML = queue.map(t => {
+    const isCurrent = t.rowId === currentParty.playback?.currentRowId;
+    const isPending = t.status === 'pending';
+    const canModerate = isPartyHostOrCohost();
+    return `
+      <div style="display:flex;align-items:center;gap:6px;padding:5px 0;border-bottom:1px solid var(--border);font-size:0.46rem;${isCurrent ? 'color:var(--accent3);' : 'color:var(--text-muted);'}${isPending ? 'opacity:0.65;' : ''}">
+        <span style="flex:1;color:${isCurrent ? 'var(--accent3)' : 'var(--text-main)'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${isCurrent ? '▶ ' : ''}${escapeHtml(t.title || t.id || 'Untitled')}</span>
+        <span style="flex-shrink:0;opacity:0.5;font-size:0.38rem;">+@${escapeHtml(t.addedBy)}</span>
+        ${isPending ? '<span style="flex-shrink:0;font-size:0.38rem;color:var(--accent2);">pending</span>' : ''}
+        ${isPending && canModerate ? `
+          <button onclick="partyApproveQueueItem('${t.rowId}')" style="background:none;border:none;color:var(--accent3);cursor:pointer;font-size:0.46rem;" title="Approve">✓</button>
+          <button onclick="partyRejectQueueItem('${t.rowId}')" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:0.46rem;" title="Reject">✕</button>
+        ` : ''}
+        ${!isPending && isPartyHostOrCohost() && !isCurrent ? `<button onclick="partyPlayQueueItem('${t.rowId}')" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:0.44rem;" title="Play now">▶</button>` : ''}
+        ${(canModerate || t.addedBy === AUTH.username) ? `<button onclick="partyRemoveQueueItem('${t.rowId}')" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:0.44rem;" title="Remove">🗑</button>` : ''}
+      </div>
+    `;
+  }).join('');
+}
+
+function renderPartyChat() {
+  const list = $('partyChatList');
+  if (!list || !currentParty) return;
+  const chat = currentParty.chat || [];
+  list.innerHTML = chat.map(c => `
+    <div style="font-size:0.44rem;color:var(--text-muted);"><span style="color:var(--text-main);">@${escapeHtml(c.username)}</span> ${escapeHtml(c.message)}</div>
+  `).join('') || '<div class="empty-panel">No messages yet.</div>';
+  list.scrollTop = list.scrollHeight;
+}
+
+function renderPartyNowPlaying() {
+  const el = $('partyNowPlaying');
+  const btn = $('partyPlayPauseBtn');
+  if (!el || !currentParty) return;
+  const current = (currentParty.queue || []).find(t => t.rowId === currentParty.playback?.currentRowId);
+  el.textContent = current ? (current.title || current.id || 'Untitled track') : 'Nothing playing yet.';
+  if (btn) btn.textContent = currentParty.playback?.isPlaying ? '⏸ Pause' : '▶ Play';
+}
+
+// ─── Host actions — each just POSTs intent; the SSE 'playback' event that
+// comes back (to every connected client, including the sender) is what
+// actually updates currentParty.playback and drives PlaybackManager. This
+// keeps a single source of truth (the server round-trip) instead of the
+// host optimistically applying local state that could drift from what
+// guests end up seeing. ────────────────────────────────────────────────────
+async function partyTogglePlayback() {
+  if (!currentParty || !isPartyHostOrCohost()) return;
+  const action = currentParty.playback?.isPlaying ? 'pause' : 'play';
+  await partyPostPlayback(action);
+}
+
+async function partyPlayQueueItem(rowId) {
+  if (!currentParty || !isPartyHostOrCohost()) return;
+  await partyPostPlayback('track_change', { rowId });
+}
+
+async function partyAdvanceQueue() {
+  if (!currentParty || !isPartyHostOrCohost()) return;
+  const queue = (currentParty.queue || []).filter(t => t.status !== 'pending' && t.status !== 'rejected');
+  const idx = queue.findIndex(t => t.rowId === currentParty.playback?.currentRowId);
+  const next = queue[idx + 1];
+  if (!next) { showToast('Party', 'No more tracks in the queue.', 'info'); return; }
+  await partyPostPlayback('track_change', { rowId: next.rowId });
+}
+
+async function partyPostPlayback(action, extra = {}) {
+  try {
+    const res = await fetch(`${PARTIES_BASE}/${encodeURIComponent(currentParty.id)}/playback`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: AUTH.token, action, ...extra }),
+    });
+    const data = await res.json();
+    if (!res.ok) showToast('Error', data.error || 'Could not update playback.', 'error');
+  } catch (err) {
+    showToast('Error', err.message || 'Could not update playback.', 'error');
+  }
+}
+
+async function partyTransferHost(toUsername) {
+  if (!currentParty || currentParty.myRole !== 'host') return;
+  try {
+    const res = await fetch(`${PARTIES_BASE}/${encodeURIComponent(currentParty.id)}/transfer-host`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: AUTH.token, toUsername }),
+    });
+    const data = await res.json();
+    if (!res.ok) { showToast('Error', data.error || 'Could not transfer hosting.', 'error'); return; }
+    showToast('Party', `@${toUsername} is now hosting.`, 'success');
+  } catch (err) {
+    showToast('Error', err.message || 'Could not transfer hosting.', 'error');
+  }
+}
+
+async function partyUpdatePermissions() {
+  if (!currentParty || currentParty.myRole !== 'host') return;
+  try {
+    await fetch(`${PARTIES_BASE}/${encodeURIComponent(currentParty.id)}/permissions`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        token: AUTH.token,
+        guestCanQueue: $('partyGuestCanQueueToggle').checked,
+        queueRequiresApproval: $('partyApprovalToggle').checked,
+      }),
+    });
+  } catch (err) {
+    showToast('Error', err.message || 'Could not update settings.', 'error');
+  }
+}
+
+async function partyAddCurrentTrackToQueue() {
+  if (!currentParty) return;
+  const item = state.queue[state.activeIndex];
+  if (!item) { showToast('Party', 'Nothing is currently playing to add.', 'info'); return; }
+  try {
+    const res = await fetch(`${PARTIES_BASE}/${encodeURIComponent(currentParty.id)}/queue`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: AUTH.token, trackData: item }),
+    });
+    const data = await res.json();
+    if (!res.ok) { showToast('Error', data.error || 'Could not add to queue.', 'error'); return; }
+    showToast('Party', data.status === 'pending' ? 'Request sent — waiting on host approval.' : 'Added to party queue.', 'success');
+  } catch (err) {
+    showToast('Error', err.message || 'Could not add to queue.', 'error');
+  }
+}
+
+async function partyApproveQueueItem(rowId) {
+  if (!currentParty) return;
+  await fetch(`${PARTIES_BASE}/${encodeURIComponent(currentParty.id)}/queue/${encodeURIComponent(rowId)}/approve`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: AUTH.token }),
+  }).catch(() => {});
+}
+async function partyRejectQueueItem(rowId) {
+  if (!currentParty) return;
+  await fetch(`${PARTIES_BASE}/${encodeURIComponent(currentParty.id)}/queue/${encodeURIComponent(rowId)}/reject`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: AUTH.token }),
+  }).catch(() => {});
+}
+async function partyRemoveQueueItem(rowId) {
+  if (!currentParty) return;
+  await fetch(`${PARTIES_BASE}/${encodeURIComponent(currentParty.id)}/queue/${encodeURIComponent(rowId)}`, {
+    method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: AUTH.token }),
+  }).catch(() => {});
+}
+
+async function partySendChat() {
+  const input = $('partyChatInput');
+  const message = (input?.value || '').trim();
+  if (!message || !currentParty) return;
+  input.value = '';
+  try {
+    await fetch(`${PARTIES_BASE}/${encodeURIComponent(currentParty.id)}/chat`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: AUTH.token, message }),
+    });
+  } catch (_) { /* SSE echo will retry-render on next successful message; a dropped chat line isn't worth a toast */ }
+}
+$('partyChatInput')?.addEventListener('keydown', e => { if (e.key === 'Enter') partySendChat(); });
+
+async function partyLeave() {
+  if (!currentParty) return;
+  if (currentParty.myRole === 'host') {
+    showToast('Party', 'Transfer hosting or end the party from Settings first.', 'info');
+    setPartyTab('settings');
+    return;
+  }
+  try {
+    await fetch(`${PARTIES_BASE}/${encodeURIComponent(currentParty.id)}/leave`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: AUTH.token }),
+    });
+  } catch (_) {}
+  closePartyOverlay();
+}
+
+async function partyEndParty() {
+  if (!currentParty || currentParty.myRole !== 'host') return;
+  if (!confirm('End this listening party for everyone?')) return;
+  try {
+    await fetch(`${PARTIES_BASE}/${encodeURIComponent(currentParty.id)}`, {
+      method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: AUTH.token }),
+    });
+  } catch (_) {}
+  closePartyOverlay();
+}
+
+// ─── Guest playback sync — the actual "reuse PlaybackManager, don't
+// duplicate it" mechanism. A guest never calls play()/pause() directly;
+// they call the SAME playItem()/PlaybackManager.toggle() every local
+// listener already uses, just triggered by a party event instead of a
+// click. ──────────────────────────────────────────────────────────────────
+function partyApplyRemotePlayback(playback, { immediate = false } = {}) {
+  if (!playback) return;
+  if (currentParty) currentParty.playback = playback;
+  renderPartyNowPlaying();
+  renderPartyQueue();
+
+  // Guests only — the host's own client already IS the source of truth
+  // for what it's playing locally; re-applying its own broadcast back
+  // onto itself would fight the very PlaybackManager call the host just
+  // made (e.g. a host clicking Pause would see the 'playback' echo try to
+  // pause it again mid-transition).
+  if (isPartyHostOrCohost()) return;
+
+  _partyApplyingRemoteState = true;
+  try {
+    const track = (currentParty?.queue || []).find(t => t.rowId === playback.rowId);
+    if (track) {
+      const alreadyQueued = state.queue.findIndex(q => q.originalUrl && q.originalUrl === track.originalUrl);
+      const targetIndex = alreadyQueued >= 0 ? alreadyQueued : (state.queue.push({ ...track, playSource: 'party' }) - 1);
+      if (state.activeIndex !== targetIndex) {
+        playItem(targetIndex); // reuses the exact same track-change path as a manual click
+      }
+    }
+    if (playback.isPlaying && localAudio?.paused) PlaybackManager.requestPlay();
+    if (!playback.isPlaying && !localAudio?.paused) PlaybackManager.requestPause();
+
+    // Extrapolate elapsed time since the host's push so a guest joining
+    // mid-song (or catching a late SSE message) lands close to the real
+    // position instead of always restarting at 0 — same "extrapolate
+    // from a timestamp instead of streaming ticks" idea now_playing_
+    // snapshots uses for its own positionSeconds.
+    if (immediate && playback.positionSeconds != null && localAudio) {
+      const elapsed = playback.positionUpdatedAt ? (Date.now() - new Date(playback.positionUpdatedAt).getTime()) / 1000 : 0;
+      const target = Math.max(0, playback.positionSeconds + (playback.isPlaying ? elapsed : 0));
+      if (Number.isFinite(target)) localAudio.currentTime = target;
+    }
+  } finally {
+    _partyApplyingRemoteState = false;
+  }
+}
+
+function partySseConnect(partyId) {
+  if (_partySseId === partyId && _partySse) return;
+  partySseDisconnect();
+  if (!AUTH.token) return;
+  _partySseId = partyId;
+  _partySse = new EventSource(`${PARTIES_BASE}/${encodeURIComponent(partyId)}/realtime?token=${encodeURIComponent(AUTH.token)}`);
+  _partySse.addEventListener('message', (e) => {
+    try {
+      const { type, payload } = JSON.parse(e.data);
+      switch (type) {
+        case 'playback':
+          partyApplyRemotePlayback({
+            rowId: payload.rowId, isPlaying: payload.isPlaying,
+            positionSeconds: payload.positionSeconds, positionUpdatedAt: payload.positionUpdatedAt,
+          }, { immediate: payload.action === 'track_change' || payload.action === 'seek' });
+          break;
+        case 'queue_add':
+        case 'queue_approved':
+        case 'queue_rejected':
+        case 'queue_removed':
+          if (currentParty) openPartyOverlay(currentParty.id); // simplest correct refresh — party queues are small, not worth a patch-in-place path
+          break;
+        case 'member_joined':
+        case 'member_left':
+          if (currentParty) openPartyOverlay(currentParty.id);
+          break;
+        case 'host_transferred':
+          if (currentParty) {
+            currentParty.myRole = payload.to === AUTH.username ? 'host' : (payload.from === AUTH.username ? 'cohost' : currentParty.myRole);
+            openPartyOverlay(currentParty.id);
+            if (payload.to === AUTH.username) showToast('Party', "You're now the host!", 'success');
+          }
+          break;
+        case 'permissions':
+          if (currentParty) Object.assign(currentParty, {
+            guestCanQueue: payload.guest_can_queue ?? currentParty.guestCanQueue,
+            queueRequiresApproval: payload.queue_requires_approval ?? currentParty.queueRequiresApproval,
+          });
+          renderPartyState();
+          break;
+        case 'chat':
+          if (currentParty) { currentParty.chat = [...(currentParty.chat || []), payload].slice(-50); renderPartyChat(); }
+          break;
+        case 'party_ended':
+          showToast('Party', 'The host ended this listening party.', 'info');
+          closePartyOverlay();
+          break;
+      }
+    } catch (_) {}
+  });
+  _partySse.addEventListener('error', () => { /* EventSource auto-reconnects */ });
+}
+
+function partySseDisconnect() {
+  if (_partySse) { _partySse.close(); _partySse = null; }
+  _partySseId = null;
 }
 
 function collabSseDisconnect() {
