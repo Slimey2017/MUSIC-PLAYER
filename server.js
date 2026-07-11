@@ -6192,6 +6192,571 @@ app.post('/api/playlists/:id/typing', playlistRateLimit, async (req, res) => {
   return res.json({ ok: true });
 });
 
+// ═══════════════════════════════════════════════════════════════════════════════
+//  LISTENING PARTIES  (Phase 4 / Step 2)
+//
+//  Reuses rather than duplicates:
+//   - PlaybackManager / playItem (client-side) — the party never touches
+//     playback directly; it pushes track/play/pause/seek events and lets
+//     each guest's existing player respond, exactly like a local queue
+//     change would.
+//   - The Shared-Playlists SSE pattern (in-memory Map<roomId, Set<res>>
+//     fanned out by broadcastToPlaylist) — copied to a party-scoped room
+//     instead of a playlist id, not reinvented. See playlistSseClients
+//     above for the original.
+//   - now_playing_snapshots — starting a party upserts the host's own
+//     snapshot row (see dbUpsertNowPlayingSnapshot) so their other
+//     signed-in devices see "Listening Party" in the existing multi-
+//     device list, same mechanism as any other now-playing report.
+//   - requirePremium — same Premium gate as DJ BOOM / Labs / multi-device
+//     sync, enforced at the API layer.
+//   - dbWriteActivity — party start/end and host-transfer events land in
+//     the existing activity_feed, same as everything else social in FREQ.
+//
+//  New surface, backed by listening_parties / listening_party_members /
+//  listening_party_queue / listening_party_chat (see migrations/
+//  create_listening_parties.sql):
+//
+//  POST   /api/parties                        { token, title, isPublic? }        → create + auto-join as host
+//  GET    /api/parties/discover                                                   → public, currently-live parties
+//  GET    /api/parties/:id                    ?token=                             → full state (members, queue, playback)
+//  POST   /api/parties/:id/join                { token, inviteCode? }             → join as guest (inviteCode required unless public)
+//  POST   /api/parties/:id/leave               { token }
+//  DELETE /api/parties/:id                     { token }                          → host ends the party
+//
+//  POST   /api/parties/:id/playback             { token, action, rowId?, positionSeconds? }  action: play|pause|seek|track_change
+//  POST   /api/parties/:id/transfer-host        { token, toUsername }
+//  PATCH  /api/parties/:id/permissions          { token, guestCanQueue?, queueRequiresApproval? }
+//
+//  POST   /api/parties/:id/queue                { token, trackData }              → add (auto-approved unless approval required)
+//  POST   /api/parties/:id/queue/:rowId/approve  { token }
+//  POST   /api/parties/:id/queue/:rowId/reject   { token }
+//  DELETE /api/parties/:id/queue/:rowId          { token }
+//
+//  POST   /api/parties/:id/chat                  { token, message }
+//  GET    /api/parties/:id/realtime              SSE — member/queue/playback/chat events
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function generatePartyInviteCode() {
+  // Short, shareable, avoids visually-ambiguous characters (0/O, 1/I/l) —
+  // this is read aloud / typed by hand far more often than a playlist id
+  // ever is, so it gets its own charset rather than reusing a uuid slice.
+  const chars = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+  let code = '';
+  for (let i = 0; i < 6; i++) code += chars[Math.floor(Math.random() * chars.length)];
+  return code;
+}
+
+async function dbCreateParty(host, { title, isPublic }) {
+  let inviteCode, attempt = 0;
+  // Collisions are astronomically unlikely at 32^6, but a unique-constraint
+  // retry loop is cheap insurance rather than trusting probability alone.
+  while (attempt < 5) {
+    inviteCode = generatePartyInviteCode();
+    const { data, error } = await supabase
+      .from('listening_parties')
+      .insert({ host, title: (title || 'Listening Party').slice(0, 120), is_public: !!isPublic, invite_code: inviteCode })
+      .select()
+      .single();
+    if (!error) {
+      await supabase.from('listening_party_members').insert({ party_id: data.id, username: host, role: 'host' });
+      return data;
+    }
+    if (!/duplicate key/i.test(error.message)) throw new Error(error.message);
+    attempt++;
+  }
+  throw new Error('Could not generate a unique invite code — please try again.');
+}
+
+async function dbGetParty(id) {
+  const { data, error } = await supabase.from('listening_parties').select('*').eq('id', id).maybeSingle();
+  if (error) { console.error('[db] getParty:', error.message); return null; }
+  return data;
+}
+
+async function dbGetPartyByInviteCode(code) {
+  const { data, error } = await supabase.from('listening_parties').select('*')
+    .eq('invite_code', code.toUpperCase()).is('ended_at', null).maybeSingle();
+  if (error) { console.error('[db] getPartyByInviteCode:', error.message); return null; }
+  return data;
+}
+
+async function dbGetPartyMembers(partyId) {
+  const { data, error } = await supabase.from('listening_party_members')
+    .select('username, role, joined_at').eq('party_id', partyId).order('joined_at', { ascending: true });
+  if (error) { console.error('[db] getPartyMembers:', error.message); return []; }
+  return data || [];
+}
+
+async function dbGetPartyRole(partyId, username) {
+  const { data, error } = await supabase.from('listening_party_members')
+    .select('role').eq('party_id', partyId).eq('username', username).maybeSingle();
+  if (error || !data) return null;
+  return data.role;
+}
+
+async function dbAddPartyMember(partyId, username, role = 'guest') {
+  const { error } = await supabase.from('listening_party_members')
+    .upsert({ party_id: partyId, username, role }, { onConflict: 'party_id,username' });
+  if (error) throw new Error(error.message);
+}
+
+async function dbRemovePartyMember(partyId, username) {
+  await supabase.from('listening_party_members').delete().eq('party_id', partyId).eq('username', username);
+}
+
+async function dbEndParty(partyId, host) {
+  const { error } = await supabase.from('listening_parties')
+    .update({ ended_at: new Date().toISOString(), is_playing: false })
+    .eq('id', partyId).eq('host', host);
+  if (error) throw new Error(error.message);
+}
+
+async function dbTransferPartyHost(partyId, fromUsername, toUsername) {
+  const party = await dbGetParty(partyId);
+  if (!party || party.host !== fromUsername) throw new Error('Only the current host can transfer hosting.');
+  const toRole = await dbGetPartyRole(partyId, toUsername);
+  if (!toRole) throw new Error('That user is not in this party.');
+  await supabase.from('listening_parties').update({ host: toUsername }).eq('id', partyId);
+  await supabase.from('listening_party_members').update({ role: 'host' }).eq('party_id', partyId).eq('username', toUsername);
+  await supabase.from('listening_party_members').update({ role: 'cohost' }).eq('party_id', partyId).eq('username', fromUsername);
+}
+
+async function dbUpdatePartyPermissions(partyId, host, patch) {
+  const { error } = await supabase.from('listening_parties').update(patch).eq('id', partyId).eq('host', host);
+  if (error) throw new Error(error.message);
+}
+
+// Playback state lives directly on listening_parties (one row, no history
+// needed) — position_updated_at lets a client that joins mid-song
+// extrapolate "the host was at 43s, 2s have passed since that push, so
+// start around 45s" without a constant position-tick stream.
+async function dbSetPartyPlayback(partyId, patch) {
+  const { data, error } = await supabase.from('listening_parties')
+    .update({ ...patch, position_updated_at: new Date().toISOString() })
+    .eq('id', partyId).select().single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+async function dbGetPartyQueue(partyId) {
+  const { data, error } = await supabase.from('listening_party_queue')
+    .select('id, position, track_data, added_by, status, created_at')
+    .eq('party_id', partyId).order('position', { ascending: true });
+  if (error) { console.error('[db] getPartyQueue:', error.message); return []; }
+  return data || [];
+}
+
+async function dbAddToPartyQueue(partyId, trackData, addedBy, status) {
+  const { count } = await supabase.from('listening_party_queue')
+    .select('id', { count: 'exact', head: true }).eq('party_id', partyId);
+  const { data, error } = await supabase.from('listening_party_queue')
+    .insert({ party_id: partyId, position: count || 0, track_data: trackData, added_by: addedBy, status })
+    .select().single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+async function dbSetPartyQueueStatus(partyId, rowId, status) {
+  const { data, error } = await supabase.from('listening_party_queue')
+    .update({ status }).eq('id', rowId).eq('party_id', partyId).select().maybeSingle();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+async function dbRemoveFromPartyQueue(partyId, rowId) {
+  await supabase.from('listening_party_queue').delete().eq('id', rowId).eq('party_id', partyId);
+}
+
+async function dbGetPartyChat(partyId, { limit = 50 } = {}) {
+  const { data, error } = await supabase.from('listening_party_chat')
+    .select('id, username, message, created_at').eq('party_id', partyId)
+    .order('created_at', { ascending: false }).limit(limit);
+  if (error) { console.error('[db] getPartyChat:', error.message); return []; }
+  return (data || []).reverse();
+}
+
+async function dbAddPartyChatMessage(partyId, username, message) {
+  const { data, error } = await supabase.from('listening_party_chat')
+    .insert({ party_id: partyId, username, message: message.slice(0, 500) })
+    .select().single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+async function dbGetLivePublicParties({ limit = 30 } = {}) {
+  const { data, error } = await supabase.from('listening_parties')
+    .select('id, host, title, created_at')
+    .eq('is_public', true).is('ended_at', null)
+    .order('created_at', { ascending: false }).limit(limit);
+  if (error) { console.error('[db] getLivePublicParties:', error.message); return []; }
+  return data || [];
+}
+
+// ─── Realtime SSE fan-out — identical shape to playlistSseClients above,
+// scoped to party id instead of playlist id. Two independent Maps rather
+// than sharing playlistSseClients keyed by a combined id, since a party
+// and a playlist are different trust boundaries (party membership isn't
+// playlist collaboration) and mixing them would make removeSseClient's
+// teardown logic ambiguous about which kind of room it's cleaning up.
+const partySseClients = new Map(); // partyId → Set<res>
+
+function broadcastToParty(partyId, data) {
+  const clients = partySseClients.get(partyId);
+  if (!clients || !clients.size) return;
+  const msg = `data: ${JSON.stringify(data)}\n\n`;
+  for (const res of clients) {
+    try { res.write(msg); } catch (_) { /* client disconnected */ }
+  }
+}
+
+function removePartySseClient(partyId, res) {
+  const clients = partySseClients.get(partyId);
+  if (!clients) return;
+  clients.delete(res);
+  if (!clients.size) partySseClients.delete(partyId);
+}
+
+// POST /api/parties — create + auto-join as host.
+app.post('/api/parties', requirePremium, async (req, res) => {
+  const { title, isPublic } = req.body;
+  try {
+    const party = await dbCreateParty(req._premiumSession.username, { title, isPublic });
+    // Reuse now_playing_snapshots: report a synthetic snapshot so this
+    // host's other devices see "Listening Party" via the existing
+    // multi-device list, same as any other now-playing state.
+    dbUpsertNowPlayingSnapshot(req._premiumSession.username, {
+      deviceId: `party:${party.id}`, deviceLabel: `Hosting: ${party.title}`,
+      queue: [], activeIndex: -1, positionSeconds: 0,
+    }).catch(() => {});
+    dbWriteActivity('party_started', req._premiumSession.username, null, {
+      partyId: party.id, partyTitle: party.title,
+    });
+    return res.status(201).json({
+      id: party.id, title: party.title, isPublic: party.is_public,
+      inviteCode: party.invite_code, host: party.host,
+    });
+  } catch (err) {
+    console.error('[parties create]', err);
+    return res.status(500).json({ error: 'Could not start a listening party.' });
+  }
+});
+
+// GET /api/parties/discover — public, currently-live parties. No auth
+// required to browse, matching Discovery/Charts' "works for a visitor
+// before signing in" philosophy — joining still requires Premium.
+app.get('/api/parties/discover', async (req, res) => {
+  try {
+    const rows = await dbGetLivePublicParties();
+    return res.json({
+      parties: rows.map(p => ({ id: p.id, host: p.host, title: p.title, startedAt: p.created_at })),
+    });
+  } catch (err) {
+    console.error('[parties discover]', err);
+    return res.status(500).json({ error: 'Could not load live parties.' });
+  }
+});
+
+// GET /api/parties/:id — full state for the party viewer.
+app.get('/api/parties/:id', requirePremium, async (req, res) => {
+  try {
+    const party = await dbGetParty(req.params.id);
+    if (!party || party.ended_at) return res.status(404).json({ error: 'Party not found or has ended.' });
+    const role = await dbGetPartyRole(party.id, req._premiumSession.username);
+    if (!role && !party.is_public) return res.status(404).json({ error: 'Party not found.' });
+    const [members, queue, chat] = await Promise.all([
+      dbGetPartyMembers(party.id),
+      dbGetPartyQueue(party.id),
+      role ? dbGetPartyChat(party.id) : Promise.resolve([]),
+    ]);
+    return res.json({
+      id: party.id, title: party.title, host: party.host, isPublic: party.is_public,
+      guestCanQueue: party.guest_can_queue, queueRequiresApproval: party.queue_requires_approval,
+      myRole: role || null,
+      playback: {
+        currentRowId: party.current_row_id, isPlaying: party.is_playing,
+        positionSeconds: party.position_seconds, positionUpdatedAt: party.position_updated_at,
+      },
+      members: members.map(m => ({ username: m.username, role: m.role, joinedAt: m.joined_at })),
+      queue: queue.map(q => ({ rowId: q.id, position: q.position, ...q.track_data, addedBy: q.added_by, status: q.status })),
+      chat: chat.map(c => ({ id: c.id, username: c.username, message: c.message, createdAt: c.created_at })),
+    });
+  } catch (err) {
+    console.error('[parties get]', err);
+    return res.status(500).json({ error: 'Could not load party.' });
+  }
+});
+
+// POST /api/parties/:id/join — inviteCode required for a private party;
+// a public party can be joined directly from Discover with no code.
+app.post('/api/parties/:id/join', requirePremium, async (req, res) => {
+  const { inviteCode } = req.body;
+  try {
+    const party = await dbGetParty(req.params.id);
+    if (!party || party.ended_at) return res.status(404).json({ error: 'Party not found or has ended.' });
+    if (!party.is_public) {
+      if (!inviteCode || inviteCode.toUpperCase() !== party.invite_code) {
+        return res.status(403).json({ error: 'Invalid invite code.' });
+      }
+    }
+    const existingRole = await dbGetPartyRole(party.id, req._premiumSession.username);
+    if (!existingRole) await dbAddPartyMember(party.id, req._premiumSession.username, 'guest');
+    broadcastToParty(party.id, { type: 'member_joined', payload: { username: req._premiumSession.username } });
+    return res.json({ joined: true, role: existingRole || 'guest' });
+  } catch (err) {
+    console.error('[parties join]', err);
+    return res.status(500).json({ error: 'Could not join party.' });
+  }
+});
+
+// POST /api/parties/:id/leave
+app.post('/api/parties/:id/leave', requirePremium, async (req, res) => {
+  try {
+    const party = await dbGetParty(req.params.id);
+    if (!party) return res.status(404).json({ error: 'Party not found.' });
+    if (party.host === req._premiumSession.username) {
+      return res.status(400).json({ error: 'Transfer hosting or end the party instead of leaving as host.' });
+    }
+    await dbRemovePartyMember(party.id, req._premiumSession.username);
+    broadcastToParty(party.id, { type: 'member_left', payload: { username: req._premiumSession.username } });
+    return res.json({ left: true });
+  } catch (err) {
+    console.error('[parties leave]', err);
+    return res.status(500).json({ error: 'Could not leave party.' });
+  }
+});
+
+// DELETE /api/parties/:id — host ends the party for everyone.
+app.delete('/api/parties/:id', requirePremium, async (req, res) => {
+  try {
+    await dbEndParty(req.params.id, req._premiumSession.username);
+    broadcastToParty(req.params.id, { type: 'party_ended', payload: {} });
+    dbWriteActivity('party_ended', req._premiumSession.username, null, { partyId: req.params.id });
+    return res.json({ ended: true });
+  } catch (err) {
+    return res.status(403).json({ error: err.message });
+  }
+});
+
+// POST /api/parties/:id/playback — host/cohost only. This is the entire
+// sync mechanism: the caller pushes an intent, every connected guest
+// receives it over SSE and drives their OWN PlaybackManager/playItem in
+// response (see collabPartyHandlePlaybackEvent client-side) — the server
+// never touches audio itself, it's just relaying host intent, same
+// division of responsibility Shared Playlists already has between
+// Postgres changes and client-side re-render.
+app.post('/api/parties/:id/playback', requirePremium, async (req, res) => {
+  const { action, rowId, positionSeconds } = req.body;
+  if (!['play', 'pause', 'seek', 'track_change'].includes(action)) {
+    return res.status(400).json({ error: 'Invalid playback action.' });
+  }
+  try {
+    const party = await dbGetParty(req.params.id);
+    if (!party || party.ended_at) return res.status(404).json({ error: 'Party not found or has ended.' });
+    const role = await dbGetPartyRole(party.id, req._premiumSession.username);
+    if (role !== 'host' && role !== 'cohost') return res.status(403).json({ error: 'Only the host can control playback.' });
+
+    const patch = {};
+    if (action === 'play') patch.is_playing = true;
+    if (action === 'pause') patch.is_playing = false;
+    if (action === 'seek') patch.position_seconds = Number.isFinite(positionSeconds) ? positionSeconds : 0;
+    if (action === 'track_change') {
+      patch.current_row_id = rowId || null;
+      patch.position_seconds = 0;
+      patch.is_playing = true;
+    }
+    const updated = await dbSetPartyPlayback(party.id, patch);
+    broadcastToParty(party.id, {
+      type: 'playback', payload: {
+        action, rowId: updated.current_row_id, isPlaying: updated.is_playing,
+        positionSeconds: updated.position_seconds, positionUpdatedAt: updated.position_updated_at,
+        actor: req._premiumSession.username,
+      },
+    });
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('[parties playback]', err);
+    return res.status(500).json({ error: 'Could not update playback.' });
+  }
+});
+
+// POST /api/parties/:id/transfer-host
+app.post('/api/parties/:id/transfer-host', requirePremium, async (req, res) => {
+  const { toUsername } = req.body;
+  if (!toUsername) return res.status(400).json({ error: '"toUsername" is required.' });
+  try {
+    await dbTransferPartyHost(req.params.id, req._premiumSession.username, normalizeUsername(toUsername));
+    broadcastToParty(req.params.id, {
+      type: 'host_transferred',
+      payload: { from: req._premiumSession.username, to: normalizeUsername(toUsername) },
+    });
+    return res.json({ transferred: true });
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+});
+
+// PATCH /api/parties/:id/permissions — host only.
+app.patch('/api/parties/:id/permissions', requirePremium, async (req, res) => {
+  const { guestCanQueue, queueRequiresApproval } = req.body;
+  const patch = {};
+  if (typeof guestCanQueue === 'boolean') patch.guest_can_queue = guestCanQueue;
+  if (typeof queueRequiresApproval === 'boolean') patch.queue_requires_approval = queueRequiresApproval;
+  if (!Object.keys(patch).length) return res.status(400).json({ error: 'No permission fields provided.' });
+  try {
+    await dbUpdatePartyPermissions(req.params.id, req._premiumSession.username, patch);
+    broadcastToParty(req.params.id, { type: 'permissions', payload: patch });
+    return res.json({ updated: true });
+  } catch (err) {
+    return res.status(403).json({ error: err.message });
+  }
+});
+
+// POST /api/parties/:id/queue — add a track. Auto-approved unless the
+// party has queue_requires_approval on AND the caller isn't host/cohost.
+app.post('/api/parties/:id/queue', requirePremium, async (req, res) => {
+  const { trackData } = req.body;
+  if (!trackData || typeof trackData !== 'object') return res.status(400).json({ error: '"trackData" object is required.' });
+  try {
+    const party = await dbGetParty(req.params.id);
+    if (!party || party.ended_at) return res.status(404).json({ error: 'Party not found or has ended.' });
+    const role = await dbGetPartyRole(party.id, req._premiumSession.username);
+    if (!role) return res.status(404).json({ error: 'Party not found.' });
+    const isHostOrCohost = role === 'host' || role === 'cohost';
+    if (!isHostOrCohost && !party.guest_can_queue) {
+      return res.status(403).json({ error: 'The host has turned off guest song requests.' });
+    }
+    const status = (!isHostOrCohost && party.queue_requires_approval) ? 'pending' : 'approved';
+    const row = await dbAddToPartyQueue(party.id, trackData, req._premiumSession.username, status);
+    broadcastToParty(party.id, {
+      type: 'queue_add', payload: {
+        rowId: row.id, trackTitle: trackData.title || trackData.id || 'Untitled',
+        addedBy: req._premiumSession.username, status,
+      },
+    });
+    return res.status(201).json({ rowId: row.id, status });
+  } catch (err) {
+    console.error('[parties queue add]', err);
+    return res.status(500).json({ error: 'Could not add to queue.' });
+  }
+});
+
+// POST /api/parties/:id/queue/:rowId/approve — host/cohost only.
+app.post('/api/parties/:id/queue/:rowId/approve', requirePremium, async (req, res) => {
+  try {
+    const party = await dbGetParty(req.params.id);
+    const role = party ? await dbGetPartyRole(party.id, req._premiumSession.username) : null;
+    if (!party || (role !== 'host' && role !== 'cohost')) return res.status(404).json({ error: 'Party not found.' });
+    const row = await dbSetPartyQueueStatus(party.id, req.params.rowId, 'approved');
+    if (row) broadcastToParty(party.id, { type: 'queue_approved', payload: { rowId: row.id } });
+    return res.json({ approved: true });
+  } catch (err) {
+    console.error('[parties queue approve]', err);
+    return res.status(500).json({ error: 'Could not approve request.' });
+  }
+});
+
+// POST /api/parties/:id/queue/:rowId/reject — host/cohost only.
+app.post('/api/parties/:id/queue/:rowId/reject', requirePremium, async (req, res) => {
+  try {
+    const party = await dbGetParty(req.params.id);
+    const role = party ? await dbGetPartyRole(party.id, req._premiumSession.username) : null;
+    if (!party || (role !== 'host' && role !== 'cohost')) return res.status(404).json({ error: 'Party not found.' });
+    await dbRemoveFromPartyQueue(party.id, req.params.rowId);
+    broadcastToParty(party.id, { type: 'queue_rejected', payload: { rowId: req.params.rowId } });
+    return res.json({ rejected: true });
+  } catch (err) {
+    console.error('[parties queue reject]', err);
+    return res.status(500).json({ error: 'Could not reject request.' });
+  }
+});
+
+// DELETE /api/parties/:id/queue/:rowId — host/cohost, or the guest who
+// added it, may remove it (same "owner or editor" spirit as playlist
+// track removal above).
+app.delete('/api/parties/:id/queue/:rowId', requirePremium, async (req, res) => {
+  try {
+    const party = await dbGetParty(req.params.id);
+    if (!party) return res.status(404).json({ error: 'Party not found.' });
+    const role = await dbGetPartyRole(party.id, req._premiumSession.username);
+    if (!role) return res.status(404).json({ error: 'Party not found.' });
+    const queue = await dbGetPartyQueue(party.id);
+    const row = queue.find(q => q.id === req.params.rowId);
+    const canRemove = role === 'host' || role === 'cohost' || row?.added_by === req._premiumSession.username;
+    if (!row || !canRemove) return res.status(403).json({ error: 'Not authorised to remove this track.' });
+    await dbRemoveFromPartyQueue(party.id, req.params.rowId);
+    broadcastToParty(party.id, { type: 'queue_removed', payload: { rowId: req.params.rowId } });
+    return res.json({ removed: true });
+  } catch (err) {
+    console.error('[parties queue remove]', err);
+    return res.status(500).json({ error: 'Could not remove track.' });
+  }
+});
+
+// POST /api/parties/:id/chat
+const partyChatRateLimitHits = new Map();
+app.post('/api/parties/:id/chat', requirePremium, async (req, res) => {
+  const { message } = req.body;
+  if (typeof message !== 'string' || !message.trim()) return res.status(400).json({ error: '"message" is required.' });
+  const key = req._premiumSession.username;
+  const now = Date.now();
+  const times = (partyChatRateLimitHits.get(key) || []).filter(t => now - t < 10_000);
+  if (times.length >= 10) return res.status(429).json({ error: 'Sending messages too fast — slow down.' });
+  times.push(now); partyChatRateLimitHits.set(key, times);
+  try {
+    const party = await dbGetParty(req.params.id);
+    const role = party ? await dbGetPartyRole(party.id, req._premiumSession.username) : null;
+    if (!party || !role) return res.status(404).json({ error: 'Party not found.' });
+    const row = await dbAddPartyChatMessage(party.id, req._premiumSession.username, message.trim());
+    broadcastToParty(party.id, {
+      type: 'chat', payload: { id: row.id, username: row.username, message: row.message, createdAt: row.created_at },
+    });
+    return res.status(201).json({ sent: true });
+  } catch (err) {
+    console.error('[parties chat]', err);
+    return res.status(500).json({ error: 'Could not send message.' });
+  }
+});
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, times] of partyChatRateLimitHits) {
+    const fresh = times.filter(t => now - t < 10_000);
+    if (!fresh.length) partyChatRateLimitHits.delete(key); else partyChatRateLimitHits.set(key, fresh);
+  }
+}, 60_000);
+
+// GET /api/parties/:id/realtime — SSE stream, same shape as
+// GET /api/playlists/:id/realtime above (heartbeat, single Set<res> per
+// room, teardown on close).
+app.get('/api/parties/:id/realtime', async (req, res) => {
+  const token = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
+  const sess = await dbGetSession(token);
+  if (!sess || !sess.isPremium) return res.status(401).end();
+
+  const { id } = req.params;
+  const party = await dbGetParty(id);
+  const role = party ? await dbGetPartyRole(id, sess.username) : null;
+  if (!party || party.ended_at || (!role && !party.is_public)) return res.status(404).end();
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+  res.write(': connected\n\n');
+
+  if (!partySseClients.has(id)) partySseClients.set(id, new Set());
+  partySseClients.get(id).add(res);
+
+  const heartbeat = setInterval(() => {
+    try { res.write(': ping\n\n'); } catch (_) { clearInterval(heartbeat); }
+  }, 25_000);
+
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    removePartySseClient(id, res);
+  });
+});
+
 // Public playlists for a profile — mounted under /api/profiles so it reads
 // naturally from the profile viewer, but intentionally returns [] (not 404)
 // for a private or nonexistent profile rather than erroring, since the
