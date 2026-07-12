@@ -6822,6 +6822,7 @@ let discoverPeopleLoaded    = false;
 let discoverArtistsLoaded   = false;
 let discoverPostsLoaded     = false;
 let discoverVideosLoaded    = false;
+let tasteGraphLoaded        = false; // Taste Graph ("For You") — same load-once-then-cache pattern as the other Discover panes
 let discoverArtistsSort     = 'trending'; // 'trending' | 'new' | 'search'
 let discoverArtistsSearchTimer = null;
 let discoverTracksData    = []; // separate cache from chartsTracks — same shape, different lifecycle/UI
@@ -8662,7 +8663,7 @@ function pcoResumeIfPending() {
 }
 
 // Pane name → tab id suffix mapping
-const DISCOVER_PANES = ['Tracks', 'Finder', 'Artists', 'Posts', 'Playlists', 'People', 'Videos'];
+const DISCOVER_PANES = ['Tracks', 'Finder', 'Artists', 'Posts', 'Playlists', 'People', 'Videos', 'Foryou'];
 
 function setDiscoverTab(tab) {
   if (discoverTab === tab) return;
@@ -8684,6 +8685,7 @@ function setDiscoverTab(tab) {
   if (tab === 'playlists' && !discoverPlaylistsLoaded) loadDiscoverPlaylists();
   if (tab === 'people'    && !discoverPeopleLoaded)    loadDiscoverPeople();
   if (tab === 'videos'    && !discoverVideosLoaded)    loadDiscoverVideos();
+  if (tab === 'foryou'    && !tasteGraphLoaded)         loadTasteGraph();
 }
 
 function setDiscoverTracksWindow(win) {
@@ -8938,6 +8940,212 @@ async function loadDiscoverPlaylists() {
     console.error('[loadDiscoverPlaylists]', err);
     list.innerHTML = '<div class="empty-panel">Could not load playlists — server may be offline.</div>';
   }
+}
+
+// ── Discovery: For You (Taste Graph) ────────────────────────────────────────
+// See GET /api/taste server-side for the six-plus-one recommendation
+// modules this renders. Every module returns tracks/artists/playlists in
+// the SAME shapes Discover's other panes already use (tasteShapeTrack
+// mirrors Discover/Charts' track fields specifically so this can reuse
+// resolveChartTrack for play/queue instead of a parallel resolution path),
+// so this file only adds rendering + one dedicated play/queue pair, not a
+// new data-fetching pattern.
+let tasteGraphData = null; // last-loaded /api/taste response, cached like discoverTracksData etc.
+
+async function loadTasteGraph() {
+  const loading   = $('tasteGraphLoading');
+  const errorEl   = $('tasteGraphError');
+  const signedOut = $('tasteGraphSignedOut');
+  const notEnough = $('tasteGraphNotEnough');
+  const content   = $('tasteGraphContent');
+  if (!loading) return;
+
+  [errorEl, signedOut, notEnough, content].forEach(el => { if (el) el.style.display = 'none'; });
+
+  if (!AUTH.loggedIn || !AUTH.token) {
+    loading.style.display = 'none';
+    if (signedOut) signedOut.style.display = 'block';
+    return;
+  }
+
+  loading.style.display = 'block';
+  try {
+    const res = await fetch(`/api/taste?token=${encodeURIComponent(AUTH.token)}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not load your Taste Graph.');
+    tasteGraphLoaded = true;
+    tasteGraphData = data;
+    loading.style.display = 'none';
+
+    if (!data.hasEnoughHistory) {
+      if (notEnough) notEnough.style.display = 'block';
+      return;
+    }
+    if (content) content.style.display = 'block';
+    renderTasteGraph();
+  } catch (err) {
+    console.error('[loadTasteGraph]', err);
+    loading.style.display = 'none';
+    if (errorEl) errorEl.style.display = 'block';
+  }
+}
+
+// One shared section-header template so all seven modules look consistent
+// without seven near-identical render functions — takes the section's own
+// list-rendering closure so each module can still shape its rows however
+// it needs to (tracks vs artists vs playlists are genuinely different
+// row shapes).
+function renderTasteSection(containerId, title, subtitle, items, rowsHtmlFn) {
+  const el = $(containerId);
+  if (!el) return;
+  if (!items || !items.length) { el.innerHTML = ''; el.style.display = 'none'; return; }
+  el.style.display = 'block';
+  el.innerHTML = `
+    <div style="margin:14px 0 8px;">
+      <div style="font-size:0.5rem;color:var(--text-main);font-weight:700;letter-spacing:0.03em;">${escapeHtml(title)}</div>
+      ${subtitle ? `<div style="font-size:0.4rem;color:var(--text-muted);margin-top:2px;">${escapeHtml(subtitle)}</div>` : ''}
+    </div>
+    ${rowsHtmlFn(items)}
+  `;
+}
+
+// Play/queue for any taste-graph track row — mirrors playFromDiscoverTracks/
+// queueFromDiscoverTracks exactly, just reading from a flat lookup table
+// keyed by track id instead of a single flat array, since taste tracks are
+// scattered across several differently-shaped sections (becauseYouListened
+// is grouped by seed artist, the rest are flat lists) rather than one list
+// an index could point into.
+let _tasteTrackLookup = new Map(); // track.id -> track
+function tasteIndexTrack(t) { if (t && t.id) _tasteTrackLookup.set(t.id, t); return t; }
+
+async function playFromTaste(trackId) {
+  const t = _tasteTrackLookup.get(trackId);
+  if (!t) return;
+  try {
+    const item = await resolveChartTrack(t, 'discover');
+    if (!state.allowDups && state.queue.some(q => q.originalUrl === item.originalUrl)) {
+      const qi = state.queue.findIndex(q => q.originalUrl === item.originalUrl);
+      playItem(qi);
+      return;
+    }
+    state.queue.push(item);
+    save(); renderQueue();
+    playItem(state.queue.length - 1);
+  } catch (err) {
+    showToast('Error', err.message || 'Could not play this track.', 'error');
+  }
+}
+
+async function queueFromTaste(trackId) {
+  const t = _tasteTrackLookup.get(trackId);
+  if (!t) return;
+  try {
+    const item = await resolveChartTrack(t, 'discover');
+    if (!state.allowDups && state.queue.some(q => q.originalUrl === item.originalUrl)) {
+      showToast('Already in Queue', t.title, 'info');
+      return;
+    }
+    state.queue.push(item);
+    save(); renderQueue();
+    showToast('Added to Queue', t.title, 'success');
+  } catch (err) {
+    showToast('Error', err.message || 'Could not add this track.', 'error');
+  }
+}
+
+function tasteTrackRow(t, { meta = '' } = {}) {
+  tasteIndexTrack(t);
+  const cfg = PLATFORM_CONFIG[t.platform] || { label: t.platform || '?', color: 'var(--text-muted)' };
+  return `
+    <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);">
+      <div style="flex:1;min-width:0;cursor:pointer;" onclick="playFromTaste('${t.id}')">
+        <div style="font-size:0.52rem;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(t.title || 'Untitled')}${t.isExplicit ? ' <span class="explicit-badge">E</span>' : ''}</div>
+        <div style="font-size:0.4rem;color:var(--text-muted);">${t.artistName ? escapeHtml(t.artistName) + ' · ' : ''}<span style="color:${cfg.color};">${escapeHtml(cfg.label)}</span>${meta ? ' · ' + meta : ''}</div>
+      </div>
+      <button onclick="event.stopPropagation(); queueFromTaste('${t.id}')" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.38rem;padding:3px 7px;border-radius:var(--radius);cursor:pointer;flex-shrink:0;text-transform:uppercase;" title="Add to queue">+</button>
+    </div>
+  `;
+}
+
+function tasteArtistRow(a) {
+  return `
+    <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);cursor:pointer;" onclick="closeDiscoverOverlay(); openArtistProfile('${a.id}')">
+      <div style="width:26px;height:26px;border-radius:50%;background:var(--surface3) center/cover;flex:0 0 auto;display:flex;align-items:center;justify-content:center;font-size:0.44rem;color:var(--text-muted);${a.avatarUrl ? `background-image:url('${a.avatarUrl}');` : ''}">${a.avatarUrl ? '' : escapeHtml((a.name || '?')[0].toUpperCase())}</div>
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:0.52rem;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(a.name)}${a.isVerified ? ' <span style="color:var(--accent3);">✓</span>' : ''}</div>
+        <div style="font-size:0.4rem;color:var(--text-muted);">${a.genre ? escapeHtml(a.genre) + ' · ' : ''}${formatCompactCount(a.followerCount)} follower${a.followerCount === 1 ? '' : 's'}</div>
+      </div>
+    </div>
+  `;
+}
+
+function tastePlaylistRow(p) {
+  return `
+    <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);cursor:pointer;" onclick="closeDiscoverOverlay(); openPlaylistViewer('${p.id}')">
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:0.52rem;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(p.name)}</div>
+        <div style="font-size:0.4rem;color:var(--text-muted);">by @${escapeHtml(p.owner)} · ${p.trackCount} track${p.trackCount === 1 ? '' : 's'}${p.matchingTracks ? ` · ${p.matchingTracks} match your taste` : ''}</div>
+      </div>
+    </div>
+  `;
+}
+
+// Distinct from activityTimeAgo (used by the Activity Feed) rather than a
+// silent duplicate: that one is tuned for seconds/minutes/hours-old events,
+// which would show something like "4320h ago" for a track rediscovered
+// after 6 months — not useful at Taste Graph's day/week/month timescale.
+function tasteRelativeTime(iso) {
+  if (!iso) return '';
+  const days = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 86400000));
+  if (days === 0) return 'today';
+  if (days === 1) return 'yesterday';
+  if (days < 30) return `${days}d ago`;
+  return `${Math.round(days / 30)}mo ago`;
+}
+
+function renderTasteGraph() {
+  const d = tasteGraphData;
+  if (!d) return;
+  _tasteTrackLookup = new Map();
+
+  // "Because you listened to X" — grouped by seed artist, so this is the
+  // one section that isn't a flat list; render one sub-block per seed.
+  const becauseEl = $('tasteSectionBecauseYou');
+  if (becauseEl) {
+    const groups = d.becauseYouListened || [];
+    if (!groups.length) { becauseEl.innerHTML = ''; becauseEl.style.display = 'none'; }
+    else {
+      becauseEl.style.display = 'block';
+      becauseEl.innerHTML = groups.map(g => `
+        <div style="margin:14px 0 8px;">
+          <div style="font-size:0.5rem;color:var(--text-main);font-weight:700;letter-spacing:0.03em;">Because you listened to ${escapeHtml(g.becauseOf)}</div>
+        </div>
+        ${(g.tracks || []).map(t => tasteTrackRow(t)).join('')}
+      `).join('');
+    }
+  }
+
+  renderTasteSection('tasteSectionRediscovered', '🔁 Recently Rediscovered', 'Tracks you drifted from, then came back to.',
+    d.recentlyRediscovered, items => items.map(t => tasteTrackRow(t, { meta: `back since ${tasteRelativeTime(t.playedAgainAt)}` })).join(''));
+
+  renderTasteSection('tasteSectionForgotten', '💭 Recently Forgotten Favorites', "Tracks you used to love that have gone quiet.",
+    d.recentlyForgotten, items => items.map(t => tasteTrackRow(t)).join(''));
+
+  renderTasteSection('tasteSectionTrending', '📈 Trending In Your Taste', 'Popular right now, and matches what you listen to.',
+    d.trendingInTaste, items => items.map(t => tasteTrackRow(t)).join(''));
+
+  renderTasteSection('tasteSectionSimilarArtists', '★ Similar Artists', 'New artists near your top genres.',
+    d.similarArtists, items => items.map(a => tasteArtistRow(a)).join(''));
+
+  renderTasteSection('tasteSectionSimilarPlaylists', '⊞ Similar Playlists', 'Public playlists with tracks from artists you play.',
+    d.similarPlaylists, items => items.map(p => tastePlaylistRow(p)).join(''));
+
+  // Skipped tracks are explicitly diagnostic, not a recommendation feed
+  // (see dbTasteRecentlySkipped's server-side comment on why skip is too
+  // noisy a signal to treat as "don't recommend this") — framed to the
+  // listener as a mirror, not a suggestion to act on.
+  renderTasteSection('tasteSectionSkipped', '⏭ You Tend To Skip These', "Just a pattern — not a judgment.",
+    d.recentlySkipped, items => items.map(t => tasteTrackRow(t)).join(''));
 }
 
 async function loadDiscoverPeople() {
