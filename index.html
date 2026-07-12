@@ -4721,6 +4721,7 @@ body.oled-mode {
 
     <!-- Sub-tabs -->
     <div style="display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap;">
+      <button id="discoverTabForyou" onclick="setDiscoverTab('foryou')" class="discover-tab-btn" style="flex:1;min-width:80px;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.44rem;letter-spacing:0.05em;text-transform:uppercase;padding:7px 4px;border-radius:var(--radius);cursor:pointer;transition:color 0.15s,border-color 0.15s;">✨ For You</button>
       <button id="discoverTabTracks" onclick="setDiscoverTab('tracks')" class="discover-tab-btn discover-tab-active" style="flex:1;min-width:80px;background:none;border:1px solid var(--accent3);color:var(--accent3);font-family:'Space Mono',monospace;font-size:0.44rem;letter-spacing:0.05em;text-transform:uppercase;padding:7px 4px;border-radius:var(--radius);cursor:pointer;transition:color 0.15s,border-color 0.15s;">📊 Charts</button>
       <button id="discoverTabFinder" onclick="setDiscoverTab('finder')" class="discover-tab-btn" style="flex:1;min-width:80px;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.44rem;letter-spacing:0.05em;text-transform:uppercase;padding:7px 4px;border-radius:var(--radius);cursor:pointer;transition:color 0.15s,border-color 0.15s;">🎵 Find</button>
       <button id="discoverTabArtists" onclick="setDiscoverTab('artists')" class="discover-tab-btn" style="flex:1;min-width:80px;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.44rem;letter-spacing:0.05em;text-transform:uppercase;padding:7px 4px;border-radius:var(--radius);cursor:pointer;transition:color 0.15s,border-color 0.15s;">★ Artists</button>
@@ -4728,6 +4729,28 @@ body.oled-mode {
       <button id="discoverTabPlaylists" onclick="setDiscoverTab('playlists')" class="discover-tab-btn" style="flex:1;min-width:80px;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.44rem;letter-spacing:0.05em;text-transform:uppercase;padding:7px 4px;border-radius:var(--radius);cursor:pointer;transition:color 0.15s,border-color 0.15s;">⊞ Playlists</button>
       <button id="discoverTabPeople" onclick="setDiscoverTab('people')" class="discover-tab-btn" style="flex:1;min-width:80px;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.44rem;letter-spacing:0.05em;text-transform:uppercase;padding:7px 4px;border-radius:var(--radius);cursor:pointer;transition:color 0.15s,border-color 0.15s;">⊕ People</button>
       <button id="discoverTabVideos" onclick="setDiscoverTab('videos')" class="discover-tab-btn" style="flex:1;min-width:80px;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.44rem;letter-spacing:0.05em;text-transform:uppercase;padding:7px 4px;border-radius:var(--radius);cursor:pointer;transition:color 0.15s,border-color 0.15s;">🎬 Videos</button>
+    </div>
+
+    <!-- For You sub-view — Taste Graph, built entirely from this account's
+         own listening history/likes/follows/playlists. See GET /api/taste. -->
+    <div id="discoverPaneForyou" class="discover-pane" style="display:none;">
+      <div id="tasteGraphSignedOut" style="display:none;text-align:center;padding:24px 8px;color:var(--text-muted);font-size:0.5rem;line-height:1.8;">
+        Sign in to see recommendations built from your own listening history.
+      </div>
+      <div id="tasteGraphNotEnough" style="display:none;text-align:center;padding:24px 8px;color:var(--text-muted);font-size:0.5rem;line-height:1.8;">
+        Keep listening — your Taste Graph unlocks once FREQ has a bit more history to work with.
+      </div>
+      <div id="tasteGraphContent" style="display:none;">
+        <div id="tasteSectionBecauseYou"></div>
+        <div id="tasteSectionRediscovered"></div>
+        <div id="tasteSectionForgotten"></div>
+        <div id="tasteSectionTrending"></div>
+        <div id="tasteSectionSimilarArtists"></div>
+        <div id="tasteSectionSimilarPlaylists"></div>
+        <div id="tasteSectionSkipped"></div>
+      </div>
+      <div id="tasteGraphLoading" class="empty-panel">Loading…</div>
+      <div id="tasteGraphError" style="display:none;" class="empty-panel">Could not load your Taste Graph — server may be offline.</div>
     </div>
 
     <!-- Charts sub-view (was "Tracks" — this is play-ranked charts data, renamed for clarity) -->
@@ -6554,10 +6577,41 @@ $('profileLookupInput')?.addEventListener('keydown', (e) => {
 // unconditionally for every platform (local + every embed type), so this
 // reuses that exact call site rather than scattering a second hook through
 // the platform-specific branches below it.
+// ─── Taste Graph: play-completion tracking ─────────────────────────────────
+// The only signal FREQ has for "was this actually listened to or abandoned"
+// — nothing tracked this before. A track's outcome isn't knowable at the
+// moment it STARTS (that's when logPlay's own /api/plays call fires), only
+// once it ends one way or another, so this is reported alongside the NEXT
+// track's own logPlay call as `previousPlay` rather than needing a second
+// endpoint/round-trip per track. `naturalEnd` is flipped by a listener
+// further down (grouped with localAudio's other 'ended' handling, since
+// localAudio itself isn't defined yet at this point in the file); playItem()
+// reads _tastePlayState BEFORE overwriting it for the new track via this
+// function, so "did the track that's about to be replaced reach its natural
+// end" is always evaluated at the right moment, regardless of whether that
+// replacement came from auto-advance, a manual skip, or repeat-one looping
+// back on itself.
+//
+// Embed platforms (YouTube/Spotify/SoundCloud/etc, played through an
+// iframe) never touch localAudio at all — there's no cross-origin way to
+// observe when or whether an embedded player actually finishes a track.
+// `trackable: false` marks those plays so completion stays genuinely
+// unknown (never reported as either true or false) rather than every embed
+// play silently being mislabeled "skipped" just because localAudio's
+// 'ended' event could never have fired for it.
+let _tastePlayState = null; // { rowId, naturalEnd, trackable } | null
+
 async function logPlay(item) {
   if (!item || !item.originalUrl) return;
+  // Snapshot + reset before the async call, not after — playItem() may
+  // already be mid-flight into the NEXT track by the time this resolves
+  // (logPlay is fire-and-forget from playItem, not awaited), so grabbing
+  // the previous state late could race against 'ended' firing for the
+  // track this very call is about to start.
+  const previous = _tastePlayState;
+  _tastePlayState = null;
   try {
-    await fetch('/api/plays', {
+    const res = await fetch('/api/plays', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -6599,12 +6653,30 @@ async function logPlay(item) {
         // which is correct — the server defaults those to 'direct'.
         source: item.playSource || undefined,
         token: AUTH.loggedIn ? AUTH.token : undefined,
+        // Taste Graph: report how the PREVIOUS track ended, keyed by the
+        // playRowId that call's own response handed back. Omitted entirely
+        // (not sent as null/false) when there's no previous row to report
+        // on (first track of a session) OR that previous play wasn't
+        // trackable to begin with (an embed) — the server treats a missing
+        // previousPlay as "nothing to enrich," never as "mark it skipped".
+        previousPlay: (previous && previous.rowId && previous.trackable)
+          ? { rowId: previous.rowId, completed: !!previous.naturalEnd }
+          : undefined,
       }),
     });
+    const data = await res.json().catch(() => null);
+    // 'local' = a real file, 'freq' = a published FREQ track streamed from
+    // Supabase Storage — both play through localAudio and can fire 'ended'.
+    // Every other platform value is an iframe embed; see this block's
+    // header comment for why those can never report a real outcome.
+    const trackable = item.platform === 'local' || item.platform === 'freq';
+    if (data && data.playRowId) _tastePlayState = { rowId: data.playRowId, naturalEnd: false, trackable };
   } catch (_) {
     // Charts tracking is best-effort — never surface this to the listener.
   }
 }
+
+
 
 const CHARTS_BASE = '/api/charts';
 let chartsWindow = 'all'; // 'all' | '7d' — mirrors activityScope's pattern of a module-level UI-state var
@@ -15967,6 +16039,15 @@ function advanceTrack() {
 }
 
 // ─── Local audio auto-advance ─────────────────────────────────────────────────
+// Taste Graph completion signal — see _tastePlayState's declaration up near
+// logPlay() for why this can't be registered up there (localAudio doesn't
+// exist yet at that point in the file). Registered here instead, ahead of
+// the auto-advance listener below, so it always sees 'ended' fire before
+// anything else reacts to it.
+localAudio.addEventListener('ended', () => {
+  if (_tastePlayState) _tastePlayState.naturalEnd = true;
+});
+
 localAudio.addEventListener('ended', () => {
   // Crossfade Beta lets the outgoing track's <audio> element keep playing
   // silently (gain ramped to 0) in the background while the temp element
