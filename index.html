@@ -4388,6 +4388,36 @@ body.oled-mode {
             <option value="">— No release (standalone) —</option>
           </select>
 
+          <!-- Music Video — reuses the exact same three-step direct-to-storage
+               upload as Publish Track (POST /api/videos/upload-url → signed
+               PUT → POST /api/videos/:id/confirm), then attaches/replaces via
+               POST /api/tracks/:trackId/video, same route Publish's own
+               post-publish attach call uses. Wasn't reachable from Edit Track
+               at all before — an artist who skipped the video step at
+               publish time, or who wants to swap it out later, had no way
+               back in. -->
+          <label style="display:block;font-size:0.42rem;color:var(--text-dim);letter-spacing:0.04em;text-transform:uppercase;margin-bottom:5px;">🎬 Music Video</label>
+          <div style="border:1px dashed var(--border);border-radius:var(--radius);padding:9px 10px;margin-bottom:16px;">
+            <div id="editTrackVideoAttachedState" style="display:none;align-items:center;justify-content:space-between;margin-bottom:6px;">
+              <span style="font-size:0.46rem;color:var(--accent3);">✓ Video attached</span>
+              <button type="button" onclick="removeEditTrackVideo()" style="background:none;border:none;color:var(--text-muted);font-size:0.42rem;cursor:pointer;text-decoration:underline;">Remove</button>
+            </div>
+            <div id="editTrackVideoIdleState">
+              <button type="button" onclick="$('editTrackVideoFileInput')?.click()" style="width:100%;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.46rem;padding:8px;border-radius:var(--radius);cursor:pointer;text-transform:uppercase;letter-spacing:0.04em;">
+                <span id="editTrackVideoBtnLabel">+ Add Music Video</span>
+              </button>
+              <div style="font-size:0.38rem;color:var(--text-muted);margin-top:4px;">MP4, WebM, or MOV · up to 500MB</div>
+            </div>
+            <input type="file" id="editTrackVideoFileInput" accept="video/mp4,video/webm,video/quicktime" style="display:none;" />
+            <div id="editTrackVideoProgressWrap" style="display:none;">
+              <div style="font-size:0.44rem;color:var(--text-muted);margin-bottom:3px;display:flex;justify-content:space-between;">
+                <span id="editTrackVideoStatus">Uploading…</span>
+                <span id="editTrackVideoPercent"></span>
+              </div>
+              <div class="cloud-upload-progress"><div class="cloud-upload-bar" id="editTrackVideoBar"></div></div>
+            </div>
+          </div>
+
           <!-- Collaborators — inline version of the standalone Credits modal,
                reusing the exact same backend routes (GET/POST/DELETE
                /api/tracks/:id/collaborators) so adding a credit from here
@@ -10816,7 +10846,7 @@ async function loadDashTracks() {
           <div style="font-size:0.4rem;color:var(--text-muted);">${formatCompactCount(t.playCount)} plays</div>
         </div>
         <div style="display:flex;gap:4px;flex-shrink:0;">
-          <button class="dash-track-action-btn" onclick="${escapeHtml(`openEditTrackOverlay('${t.id}', ${JSON.stringify(t.title)}, ${JSON.stringify(t.coverUrl || '')}, ${JSON.stringify(t.description || '')})`)}" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.38rem;padding:4px 7px;border-radius:var(--radius);cursor:pointer;">Edit</button>
+          <button class="dash-track-action-btn" onclick="${escapeHtml(`openEditTrackOverlay('${t.id}', ${JSON.stringify(t.title)}, ${JSON.stringify(t.coverUrl || '')}, ${JSON.stringify(t.description || '')}, ${JSON.stringify(t.releaseId || '')}, ${JSON.stringify(!!t.hasVideo)})`)}" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.38rem;padding:4px 7px;border-radius:var(--radius);cursor:pointer;">Edit</button>
           <button class="dash-track-action-btn" onclick="${escapeHtml(`openManageCollaboratorsModal('track', '${t.id}', ${JSON.stringify(t.title)})`)}" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.38rem;padding:4px 7px;border-radius:var(--radius);cursor:pointer;">Credits</button>
           <button class="dash-track-action-btn accent3" onclick="${escapeHtml(`openTrackAnalyticsModal('${t.id}', ${JSON.stringify(t.title)})`)}" style="background:none;border:1px solid var(--accent3);color:var(--accent3);font-family:'Space Mono',monospace;font-size:0.38rem;padding:4px 7px;border-radius:var(--radius);cursor:pointer;">Analytics</button>
           <button onclick="deleteDashTrack('${t.id}')" style="background:none;border:1px solid var(--accent2);color:var(--accent2);font-family:'Space Mono',monospace;font-size:0.38rem;padding:4px 7px;border-radius:var(--radius);cursor:pointer;">Delete</button>
@@ -10828,7 +10858,7 @@ async function loadDashTracks() {
   }
 }
 
-async function openEditTrackOverlay(trackId, title, coverUrl, description) {
+async function openEditTrackOverlay(trackId, title, coverUrl, description, releaseId, hasVideo) {
   editingTrackId = trackId;
   $('editTrackTitle').value = title || '';
   $('editTrackCoverUrl').value = coverUrl || '';
@@ -10845,14 +10875,19 @@ async function openEditTrackOverlay(trackId, title, coverUrl, description) {
       opt.textContent = `${r.title} (${r.releaseType})`;
       sel.appendChild(opt);
     });
-    // Try to detect current release from cache (best-effort)
-    sel.value = '';
+    // Pre-select the track's ACTUAL current release, passed in from
+    // GET /api/artists/:id/tracks' releaseId field — this used to
+    // unconditionally reset to "" (No release) regardless of the track's
+    // real assignment, so editing a track that WAS on a release silently
+    // looked like it wasn't, and saving from here would have unlinked it.
+    sel.value = releaseId || '';
   }
   $('editTrackCollabSearchInput').value = '';
   $('editTrackCollabSearchResults').innerHTML = '';
   $('editTrackCollabStatus').textContent = '';
   editTrackCollabSelectedArtist = null;
   loadEditTrackCollabList();
+  resetEditTrackVideoUI(!!hasVideo);
   const overlay = $('editTrackOverlay');
   if (overlay) {
     overlay.style.display = 'block';
@@ -10864,6 +10899,110 @@ function closeEditTrackOverlay() {
   const overlay = $('editTrackOverlay');
   if (overlay) overlay.style.display = 'none';
   editingTrackId = null;
+}
+
+// ── Edit Track > Music Video ────────────────────────────────────────────────
+// Same three-step direct-to-storage upload as Publish Track (extractVideoMeta/
+// uploadVideoToSignedUrlXHR/PUBLISH_VIDEO_MAX_BYTES/PUBLISH_VIDEO_MIME_TYPES
+// are all reused as-is from there, not redefined here), just attached via
+// POST /api/tracks/:trackId/video directly since the track already exists —
+// Publish Track's flow only differs in that it has to wait for the track to
+// get an id back from the publish call first.
+let editTrackVideoFileId = null; // set once step 3 (confirm) succeeds for a NEW upload in this modal session
+
+function resetEditTrackVideoUI(hasVideo) {
+  editTrackVideoFileId = null;
+  const attached = $('editTrackVideoAttachedState');
+  const idle = $('editTrackVideoIdleState');
+  const progress = $('editTrackVideoProgressWrap');
+  const btnLabel = $('editTrackVideoBtnLabel');
+  if (progress) progress.style.display = 'none';
+  if (idle) idle.style.display = '';
+  if (attached) attached.style.display = hasVideo ? 'flex' : 'none';
+  if (btnLabel) btnLabel.textContent = hasVideo ? '+ Replace Music Video' : '+ Add Music Video';
+}
+
+$('editTrackVideoFileInput')?.addEventListener('change', async function() {
+  const file = this.files?.[0]; this.value = '';
+  if (!file || !editingTrackId) return;
+  if (!PUBLISH_VIDEO_MIME_TYPES.includes(file.type)) {
+    showToast('Unsupported Format', 'Upload MP4, WebM, or MOV.', 'error');
+    return;
+  }
+  if (file.size > PUBLISH_VIDEO_MAX_BYTES) {
+    showToast('File Too Large', `Video exceeds the ${PUBLISH_VIDEO_MAX_BYTES / 1048576}MB limit.`, 'error');
+    return;
+  }
+
+  $('editTrackVideoIdleState').style.display = 'none';
+  $('editTrackVideoAttachedState').style.display = 'none';
+  $('editTrackVideoProgressWrap').style.display = '';
+  $('editTrackVideoStatus').textContent = 'Starting upload…';
+  $('editTrackVideoBar').style.width = '0%';
+
+  try {
+    const urlRes = await fetch('/api/videos/upload-url', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: AUTH.token, filename: file.name, mimeType: file.type, size: file.size }),
+    });
+    const urlData = await urlRes.json();
+    if (!urlRes.ok) {
+      if (urlRes.status === 401) { handleTokenExpiry(); return; }
+      throw new Error(urlData.error || 'Could not start video upload.');
+    }
+
+    $('editTrackVideoStatus').textContent = 'Uploading…';
+    await uploadVideoToSignedUrlXHR(urlData.uploadUrl, file, frac => {
+      $('editTrackVideoBar').style.width = Math.round(frac * 100) + '%';
+      $('editTrackVideoPercent').textContent = Math.round(frac * 100) + '%';
+    });
+
+    $('editTrackVideoStatus').textContent = 'Finishing up…';
+    const meta = await extractVideoMeta(file);
+    const confirmRes = await fetch(`/api/videos/${encodeURIComponent(urlData.videoFileId)}/confirm`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: AUTH.token, duration: meta.duration, width: meta.width, height: meta.height }),
+    });
+    const confirmData = await confirmRes.json();
+    if (!confirmRes.ok) throw new Error(confirmData.error || 'Could not finish video upload.');
+    editTrackVideoFileId = confirmData.id;
+
+    // Attach immediately — unlike Publish Track (which has to wait for the
+    // track itself to exist), the track here already has an id, so there's
+    // no reason to hold the attach until "Save Changes" is clicked. Matches
+    // the mental model of every other action in this modal (Credits add/
+    // remove also apply immediately, not on Save).
+    $('editTrackVideoStatus').textContent = 'Attaching to track…';
+    const attachRes = await fetch(`/api/tracks/${encodeURIComponent(editingTrackId)}/video`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: AUTH.token, videoFileId: editTrackVideoFileId }),
+    });
+    const attachData = await attachRes.json();
+    if (!attachRes.ok) throw new Error(attachData.error || 'Could not attach video to track.');
+
+    resetEditTrackVideoUI(true);
+    showToast('Video Attached', file.name.length > 40 ? file.name.slice(0, 37) + '…' : file.name, 'success');
+  } catch (err) {
+    showToast('Video Upload Error', err.message || 'Could not upload video.', 'error');
+    resetEditTrackVideoUI(false);
+  }
+});
+
+async function removeEditTrackVideo() {
+  if (!editingTrackId) return;
+  if (!confirm('Remove this music video from the track? This deletes the uploaded video file too.')) return;
+  try {
+    const res = await fetch(`/api/tracks/${encodeURIComponent(editingTrackId)}/video`, {
+      method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: AUTH.token }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Could not remove video.');
+    resetEditTrackVideoUI(false);
+    showToast('Video Removed', 'The music video was detached from this track.', 'success');
+  } catch (err) {
+    showToast('Error', err.message || 'Could not remove video.', 'error');
+  }
 }
 
 // ── Edit Track > Collaborators (inline) ─────────────────────────────────────
