@@ -1089,7 +1089,7 @@ async function dbGetArtistTracks(artistId, { sort = 'plays', limit = 20 } = {}) 
   const col = sort === 'trending' ? 'play_count_7d' : 'play_count';
   const { data, error } = await supabase
     .from('tracks')
-    .select('id, original_url, platform, title, play_count, play_count_7d, last_played_at, cover_url, cloud_file_id, published_at, like_count, is_explicit')
+    .select('id, original_url, platform, title, description, play_count, play_count_7d, last_played_at, cover_url, cloud_file_id, published_at, like_count, is_explicit')
     .eq('artist_id', artistId)
     .eq('is_published', true)
     .order(col, { ascending: false })
@@ -8934,10 +8934,21 @@ app.get('/api/artists/:id/tracks', async (req, res) => {
         .select('track_id').in('track_id', tracks.map(t => t.id));
       videoTrackIds = new Set((videos || []).map(v => v.track_id));
     }
+    // Batched current-release lookup — same one-query-for-all-tracks shape
+    // as videoTrackIds above. Powers Edit Track's release dropdown actually
+    // pre-selecting the track's current release instead of always resetting
+    // to "No release (standalone)" on open regardless of the real value.
+    let releaseIdByTrack = new Map();
+    if (tracks.length) {
+      const { data: links } = await supabase.from('artist_release_tracks')
+        .select('track_id, release_id').in('track_id', tracks.map(t => t.id));
+      releaseIdByTrack = new Map((links || []).map(l => [l.track_id, l.release_id]));
+    }
     return res.json({
       tracks: tracks.map(t => ({
         id: t.id, originalUrl: t.original_url, platform: t.platform,
         title: t.title || t.original_url,
+        description: t.description || null,
         playCount: t.play_count, playCount7d: t.play_count_7d,
         likeCount: t.like_count || 0,
         lastPlayedAt: t.last_played_at,
@@ -8948,6 +8959,7 @@ app.get('/api/artists/:id/tracks', async (req, res) => {
         isExplicit: !!t.is_explicit,
         collaborators: (collabsByTrack.get(t.id) || []).map(shapeCollaborator),
         hasVideo: videoTrackIds.has(t.id),
+        releaseId: releaseIdByTrack.get(t.id) || null,
       })),
     });
   } catch (err) {
