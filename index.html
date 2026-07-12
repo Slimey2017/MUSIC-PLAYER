@@ -535,42 +535,62 @@ header {
 .local-player{display:none;flex-direction:column;align-items:center;justify-content:center;flex:1;padding:32px;gap:22px;background:var(--bg);}
 .local-player.visible{display:flex;}
 
-/* Motion Canvas stage — a contained, rounded 16:9 box (replaces the old
-   square artwork). Static cover art is always present as the base layer
-   (object-fit:cover, so it fills 16:9 the same way a video would rather
-   than letterboxing) — a track with no Motion Canvas looks exactly like
-   this with the canvas layer simply absent, so "nothing breaks" per spec.
-   Width scales with the viewport like the old artwork did, just wider;
-   height follows from aspect-ratio rather than being set directly. */
+/* Motion Canvas stage — a separate 16:9 backdrop layer that sits BEHIND the
+   square album artwork. It never replaces or resizes the artwork; it's a
+   wide, rounded, blurred/darkened panel the artwork is centered on top of.
+   Two things can live in this stage:
+     1. The Motion Canvas video itself (published tracks that have one), or
+     2. A fallback background (see .local-canvas-fallback below) for every
+        other track, so the layout/visual weight never jumps between
+        "has canvas" and "doesn't" — per spec, no UI jumping or resizing.
+   Width scales with the viewport; height follows from aspect-ratio. */
+.local-canvas-stage{
+  width:clamp(260px,64vw,760px);aspect-ratio:16/9;
+  border-radius:14px;background:var(--surface2);border:1px solid var(--border);
+  position:relative;overflow:hidden;
+  display:flex;align-items:center;justify-content:center;
+  /* .local-player has gap:22px between flex children — this negative
+     margin overcomes that gap plus adds real overlap, so the artwork
+     visibly sits on top of the backdrop rather than just touching it. */
+  margin-bottom:-90px;
+}
+/* Both backdrop layers (video + fallback) share this sizing/behavior:
+   fill the stage, sit at the back, blurred + darkened + low-opacity so the
+   artwork on top always reads clearly, and cross-fade with playback. */
+.motion-canvas-video,.local-canvas-fallback{
+  width:100%;height:100%;object-fit:cover;display:block;position:absolute;inset:0;
+  opacity:0;transition:opacity 0.5s ease;
+  filter:blur(18px) brightness(0.55) saturate(1.1);
+  transform:scale(1.15); /* hides blur edge falloff */
+}
+.motion-canvas-video.visible,.local-canvas-fallback.visible{
+  opacity:var(--motion-canvas-opacity,0.5);
+}
+/* Fallback background image (blurred, enlarged copy of the album art) —
+   only ever shown when the current track has no Motion Canvas attached,
+   so the 16:9 stage is never left empty/blank behind the artwork. */
+.local-canvas-fallback{z-index:1;}
+.motion-canvas-video{z-index:2;}
+/* Subtle vignette across the bottom of the stage so nothing behind the
+   artwork/title ever looks like it's competing for attention. */
+.local-canvas-stage::after{
+  content:'';position:absolute;inset:0;pointer-events:none;z-index:3;
+  background:linear-gradient(180deg,rgba(0,0,0,0) 55%,rgba(0,0,0,0.4) 100%);
+}
+
+/* Square album artwork — always centered, always this shape, regardless of
+   whether a Motion Canvas or fallback backdrop is present behind it. This
+   is "today's" artwork box, unchanged in size/shape/behavior. */
 .local-artwork{
-  width:clamp(280px,56vw,640px);aspect-ratio:16/9;
+  width:clamp(160px,34vw,320px);aspect-ratio:1/1;
   border-radius:10px;background:var(--surface2);border:1px solid var(--border);
   display:flex;align-items:center;justify-content:center;font-size:3.5rem;
-  position:relative;overflow:hidden;
+  position:relative;overflow:hidden;z-index:4;
+  box-shadow:0 8px 32px rgba(0,0,0,0.45);
 }
 .local-artwork-img{width:100%;height:100%;object-fit:cover;display:none;position:absolute;inset:0;}
 .local-artwork-img.visible{display:block;}
 .local-artwork-placeholder{position:absolute;font-size:3.5rem;opacity:0.2;}
-
-/* Motion Canvas video layer — sits above the static artwork, below the
-   play/scrub overlay. Muted/looped/playsinline in the element attributes
-   (see markup); opacity is user-controlled via Settings (--motion-canvas-
-   opacity, default 0.5 per spec's 40-60% default) so the static artwork
-   underneath always shows through unless the person cranks it to 100%. */
-.motion-canvas-video{
-  width:100%;height:100%;object-fit:cover;display:none;position:absolute;inset:0;
-  opacity:var(--motion-canvas-opacity,0.5);transition:opacity 0.4s ease;
-}
-.motion-canvas-video.visible{display:block;}
-/* Subtle vignette so player-bar text/controls that sit below the stage
-   stay legible against a bright or busy canvas without needing a hard
-   scrim over the whole thing — matches the "enhance, don't compete" brief. */
-.local-artwork::after{
-  content:'';position:absolute;inset:0;pointer-events:none;
-  background:linear-gradient(180deg,rgba(0,0,0,0) 55%,rgba(0,0,0,0.35) 100%);
-  opacity:0;transition:opacity 0.4s ease;
-}
-.local-artwork.has-canvas::after{opacity:1;}
 
 .local-title{font-family:'Unbounded',sans-serif;font-size:0.95rem;font-weight:700;text-align:center;color:var(--text);letter-spacing:-0.01em;max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .local-meta{font-size:0.6rem;color:var(--text-dim);text-align:center;}
@@ -3245,22 +3265,31 @@ body.oled-mode {
 
     <!-- Local Audio Player -->
     <div class="local-player" id="localPlayer">
-      <div class="local-artwork" id="localArtwork">
-        <img class="local-artwork-img" id="localArtworkImg" alt="Album art" />
-        <span class="local-artwork-placeholder">♪</span>
-        <!-- Motion Canvas — a short, muted, looping 16:9 background video
-             ("living album cover" — see spec). Sits above the static
-             artwork, below the play/scrub overlay (appended after this in
-             the DOM, see "Artwork hover overlay" JS). muted+playsinline are
-             required for autoplay to be allowed at all; loop handles the
-             seamless repeat; disablePictureInPicture/disableRemotePlayback
-             match the same casual-download-deterrent posture as the main
-             <audio> element — not real protection, just no obvious
-             right-click affordances on a background loop. -->
+      <!-- Motion Canvas stage — a 16:9 cinematic backdrop that sits BEHIND
+           the square album artwork below. It is background only: it never
+           resizes, stretches, or replaces the artwork. Exactly one of the
+           two layers inside is visible at a time (toggled via setMotionCanvas
+           in JS):
+             - #motionCanvasVideo: the published track's Motion Canvas video,
+               when it has one.
+             - #localCanvasFallback: a blurred/darkened copy of the current
+               album artwork, when it doesn't — so the stage is never blank
+               and the layout never jumps between tracks. -->
+      <div class="local-canvas-stage" id="localCanvasStage">
+        <img class="local-canvas-fallback" id="localCanvasFallback" alt="" aria-hidden="true" />
+        <!-- muted+playsinline are required for autoplay to be allowed at
+             all; loop handles the seamless repeat; disablePictureInPicture/
+             disableRemotePlayback match the same casual-download-deterrent
+             posture as the main <audio> element — not real protection, just
+             no obvious right-click affordances on a background loop. -->
         <video class="motion-canvas-video" id="motionCanvasVideo"
           muted loop playsinline preload="none"
           disablePictureInPicture disableRemotePlayback
           oncontextmenu="return false;"></video>
+      </div>
+      <div class="local-artwork" id="localArtwork">
+        <img class="local-artwork-img" id="localArtworkImg" alt="Album art" />
+        <span class="local-artwork-placeholder">♪</span>
       </div>
       <div class="local-title" id="localTitle">Unknown Track</div>
       <div class="local-meta" id="localMeta">Local File</div>
@@ -14792,6 +14821,8 @@ const localFormat     = $('localFormat');
 const localSize       = $('localSize');
 const localArtworkImg = $('localArtworkImg');
 const localArtwork    = $('localArtwork');
+const localCanvasStage    = $('localCanvasStage');
+const localCanvasFallback = $('localCanvasFallback');
 const motionCanvasVideo = $('motionCanvasVideo');
 const nowPlatform     = $('nowPlatform');
 const nowDot          = $('nowDot');
@@ -16537,8 +16568,10 @@ async function playItem(index) {
     if (item.artworkUrl) {
       localArtworkImg.src = item.artworkUrl;
       localArtworkImg.classList.add('visible');
+      if (localCanvasFallback) localCanvasFallback.src = item.artworkUrl;
     } else {
       localArtworkImg.classList.remove('visible');
+      if (localCanvasFallback) localCanvasFallback.removeAttribute('src');
     }
     setMotionCanvas(item);
 
@@ -19389,12 +19422,16 @@ async function deleteCloudFile(index) {
 // A short, muted, looping video attached to a published FREQ track (see
 // server.js's Motion Canvas system + resolvePublishedTrack above, which is
 // where item.motionCanvasUrl/motionCanvasMimeType come from). This is NOT
-// the Music Video "Watch Video" feature — it plays silently behind the
-// existing player UI as a living album cover, never its own audio/controls.
+// the Music Video "Watch Video" feature — it plays silently as a backdrop
+// BEHIND the square album artwork, never its own audio/controls, and never
+// resizes/replaces the artwork itself (see .local-canvas-stage in CSS).
 //
 // setMotionCanvas(item) is the single entry point, called from playItem()
 // right after the static artwork is set. It owns:
-//   - swapping the <video> src and toggling .visible/.has-canvas
+//   - swapping the <video> src and toggling .visible on #motionCanvasVideo
+//   - falling back to a blurred copy of the album art (#localCanvasFallback,
+//     via showCanvasFallback()) when this track has no canvas, so the 16:9
+//     backdrop is never blank and the layout never jumps between tracks
 //   - NOT autoplaying until localAudio actually starts (the 'playing'
 //     listener below drives that), so the canvas never runs ahead of audio
 //   - fully clearing state for tracks/platforms with no canvas — local
@@ -19416,10 +19453,17 @@ function setMotionCanvas(item) {
   const url = item?.motionCanvasUrl;
   if (!url || !motionCanvasEnabled()) {
     clearMotionCanvas();
+    // No Motion Canvas for this track (or it's disabled) — fall back to the
+    // blurred-artwork backdrop so the 16:9 stage is never left empty and
+    // the layout stays identical between "has canvas" and "doesn't".
+    showCanvasFallback();
     return;
   }
   _motionCanvasActive = true;
-  localArtwork.classList.add('has-canvas');
+  // Swap backdrop layers: video on top, fallback hidden underneath. Both
+  // stay in the DOM at all times — only opacity/visibility toggles — so
+  // there's no resizing or reflow when a track's canvas status changes.
+  localCanvasFallback?.classList.remove('visible');
   // Only reassign src when it's actually different — resolvePublishedTrack
   // reissues a fresh signed URL on every /stream call (see comment there),
   // so a same-track replay would otherwise restart the <video> element
@@ -19438,11 +19482,23 @@ function setMotionCanvas(item) {
 
 function clearMotionCanvas() {
   _motionCanvasActive = false;
-  localArtwork?.classList.remove('has-canvas');
   motionCanvasVideo?.classList.remove('visible');
   if (motionCanvasVideo && !motionCanvasVideo.paused) motionCanvasVideo.pause();
   if (motionCanvasVideo) motionCanvasVideo.removeAttribute('src');
   if (motionCanvasVideo) delete motionCanvasVideo.dataset.srcKey;
+}
+
+// Shows the blurred-artwork fallback backdrop (no Motion Canvas on this
+// track). Fades in only once there's actually an image to show and
+// playback has started, mirroring the Motion Canvas's own fade behavior —
+// see the localAudio 'playing'/'pause' listeners below, which drive both
+// layers identically so the backdrop always feels like one consistent
+// system rather than two different features bolted together.
+function showCanvasFallback() {
+  if (!localCanvasFallback) return;
+  if (!motionCanvasEnabled()) { localCanvasFallback.classList.remove('visible'); return; }
+  if (!localCanvasFallback.getAttribute('src')) { localCanvasFallback.classList.remove('visible'); return; }
+  if (!localAudio.paused) localCanvasFallback.classList.add('visible');
 }
 
 // Keep the canvas in lockstep with real audio playback state — covers
@@ -19453,9 +19509,11 @@ localAudio.addEventListener('playing', () => {
   if (_motionCanvasActive && motionCanvasVideo?.paused && motionCanvasEnabled()) {
     motionCanvasVideo.play().catch(() => {}); // autoplay can still be blocked in rare cases; static art underneath already covers that gracefully
   }
+  if (!_motionCanvasActive) showCanvasFallback(); // fade the fallback backdrop in when playback starts
 });
 localAudio.addEventListener('pause', () => {
   if (_motionCanvasActive && motionCanvasVideo && !motionCanvasVideo.paused) motionCanvasVideo.pause();
+  if (!_motionCanvasActive) localCanvasFallback?.classList.remove('visible'); // fade out on stop, same as the Motion Canvas video does
 });
 
 // Pause when the tab is hidden — per spec, don't waste GPU/battery on an
@@ -19478,11 +19536,12 @@ function applyMotionCanvasEnabledState() {
   if (!motionCanvasEnabled()) {
     if (!motionCanvasVideo.paused) motionCanvasVideo.pause();
     motionCanvasVideo.classList.remove('visible');
-    localArtwork?.classList.remove('has-canvas');
+    localCanvasFallback?.classList.remove('visible');
   } else if (_motionCanvasActive) {
     motionCanvasVideo.classList.add('visible');
-    localArtwork?.classList.add('has-canvas');
     if (!localAudio.paused) motionCanvasVideo.play().catch(() => {});
+  } else {
+    showCanvasFallback();
   }
 }
 
