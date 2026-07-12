@@ -8154,6 +8154,257 @@ app.get('/api/discover/videos', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
+//  MOTION CANVAS  — a short, muted, looping 16:9 video that plays as the
+//  animated background of the Now Playing screen for a published FREQ track.
+//  This is NOT Spotify Canvas's vertical 9:16 clip and NOT the Music Video
+//  system above — it's a "living album cover" behind the existing player UI,
+//  never a separately-watchable thing, so it has no play/watch/like counters
+//  of its own (see track_motion_canvas migration).
+//
+//  Upload flow mirrors Music Video's direct-to-storage pattern exactly:
+//    1. POST /api/motion-canvas/upload-url   { token, filename, mimeType, size }
+//    2. Browser PUTs the file bytes directly to the returned signedUrl.
+//    3. POST /api/motion-canvas/:id/confirm  { token, duration?, width?, height? }
+//    4. POST /api/tracks/:trackId/motion-canvas  { token, motionCanvasFileId }
+//       → attaches the ready file to the track (creates/replaces the
+//         track_motion_canvas row). One canvas per track (v1) — re-attaching
+//         replaces the existing row; the old motion_canvas_files row is left
+//         unattached rather than auto-deleted, same recoverable-mistake
+//         philosophy as track_videos above.
+//
+//  Playback is NOT a standalone endpoint — GET /api/tracks/:trackId/stream
+//  (the audio route) includes motionCanvasUrl/motionCanvasMimeType inline
+//  when a canvas is attached, since the two always play together and the
+//  frontend already calls that route on every track load. A visitor never
+//  needs to know a canvas exists before deciding to play the track, so there
+//  is nothing to gain from a second round trip.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const MOTION_CANVAS_BUCKET = 'motion-canvas';
+const MOTION_CANVAS_MAX_BYTES = 50 * 1048576; // 50MB — matches the bucket's own file_size_limit; generous for a 3-15s clip, this is just a fast friendly error before requesting a signed URL
+const MOTION_CANVAS_MAX_DURATION_SECONDS = 15;
+const MOTION_CANVAS_SIGNED_UPLOAD_TTL_SECONDS = 60 * 15; // 15 minutes — these are small files, no need for the 30-minute window Music Video gets
+const MOTION_CANVAS_MIME_TYPES = { 'video/mp4': 'mp4', 'video/webm': 'webm' };
+
+function guessMotionCanvasExtFromMime(mimeType) {
+  return MOTION_CANVAS_MIME_TYPES[mimeType] || 'mp4';
+}
+
+async function dbGetMotionCanvasFile(id, username) {
+  const { data, error } = await supabase
+    .from('motion_canvas_files').select('*').eq('id', id).eq('owner', username).maybeSingle();
+  if (error) { console.error('[db] getMotionCanvasFile:', error.message); return null; }
+  return data;
+}
+
+async function dbInsertMotionCanvasFile(row) {
+  const { data, error } = await supabase.from('motion_canvas_files').insert(row).select().single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+async function dbGetTrackMotionCanvas(trackId) {
+  const { data, error } = await supabase
+    .from('track_motion_canvas').select('*, motion_canvas_files(*)').eq('track_id', trackId).maybeSingle();
+  if (error) { console.error('[db] getTrackMotionCanvas:', error.message); return null; }
+  return data;
+}
+
+// POST /api/motion-canvas/upload-url   { token, filename, mimeType, size }
+app.post('/api/motion-canvas/upload-url', rateLimit, async (req, res) => {
+  const { token, filename, mimeType, size } = req.body || {};
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  if (!MOTION_CANVAS_MIME_TYPES[mimeType]) {
+    return res.status(400).json({ error: 'Unsupported format. Upload MP4 or WebM.' });
+  }
+  const sizeNum = Number(size);
+  if (!Number.isFinite(sizeNum) || sizeNum <= 0) {
+    return res.status(400).json({ error: '"size" (bytes) is required.' });
+  }
+  if (sizeNum > MOTION_CANVAS_MAX_BYTES) {
+    return res.status(413).json({ error: `Motion Canvas exceeds the ${MOTION_CANVAS_MAX_BYTES / 1048576}MB limit.` });
+  }
+
+  try {
+    const safeName = String(filename || 'canvas').replace(/[^a-zA-Z0-9._-]/g, '_').slice(-150);
+    const ext = guessMotionCanvasExtFromMime(mimeType);
+    const storagePath = `${sess.username}/${Date.now()}-${crypto.randomBytes(4).toString('hex')}-${safeName.replace(/\.[a-zA-Z0-9]+$/, '')}.${ext}`;
+
+    const row = await dbInsertMotionCanvasFile({
+      owner: sess.username,
+      filename: String(filename || 'canvas').slice(0, 255),
+      mime_type: mimeType,
+      size: sizeNum,
+      storage_path: storagePath,
+      upload_status: 'pending',
+    });
+
+    const { data, error } = await supabase.storage
+      .from(MOTION_CANVAS_BUCKET)
+      .createSignedUploadUrl(storagePath, { upsert: false });
+    if (error) throw new Error(error.message);
+
+    return res.status(201).json({
+      motionCanvasFileId: row.id,
+      uploadUrl: data.signedUrl,
+      uploadToken: data.token,
+      storagePath,
+      expiresIn: MOTION_CANVAS_SIGNED_UPLOAD_TTL_SECONDS,
+    });
+  } catch (err) {
+    console.error('[motion-canvas upload-url]', err);
+    return res.status(500).json({ error: 'Could not start Motion Canvas upload.' });
+  }
+});
+
+// POST /api/motion-canvas/:id/confirm   { token, duration?, width?, height? }
+// Same "attach is the real gate, this is not re-verified against Storage"
+// reasoning as Music Video's confirm step. Additionally soft-warns (not
+// blocks) when duration exceeds the 3-15s guidance, since a hard block here
+// would fight a browser whose metadata read came back slightly off; the
+// spec's real intent (short, loopable) is enforced by artist expectations
+// and the UI's guidance text, not a server-side rejection.
+app.post('/api/motion-canvas/:id/confirm', rateLimit, async (req, res) => {
+  const { token, duration, width, height } = req.body || {};
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  try {
+    const file = await dbGetMotionCanvasFile(req.params.id, sess.username);
+    if (!file) return res.status(404).json({ error: 'Motion Canvas upload not found.' });
+
+    const patch = { upload_status: 'ready', ready_at: new Date().toISOString() };
+    if (duration != null && Number.isFinite(Number(duration))) patch.duration = Number(duration);
+    if (width != null && Number.isFinite(Number(width)))       patch.width = Math.round(Number(width));
+    if (height != null && Number.isFinite(Number(height)))     patch.height = Math.round(Number(height));
+
+    const { data, error } = await supabase
+      .from('motion_canvas_files').update(patch).eq('id', file.id).select().single();
+    if (error) throw new Error(error.message);
+
+    return res.json({
+      id: data.id, filename: data.filename, mimeType: data.mime_type,
+      size: data.size, duration: data.duration, width: data.width, height: data.height,
+      uploadStatus: data.upload_status,
+      durationWarning: (data.duration && Number(data.duration) > MOTION_CANVAS_MAX_DURATION_SECONDS)
+        ? `This clip is ${Math.round(data.duration)}s — Motion Canvas works best at 3-15s and will still loop, just less seamlessly.`
+        : null,
+    });
+  } catch (err) {
+    console.error('[motion-canvas confirm]', err);
+    return res.status(500).json({ error: 'Could not confirm Motion Canvas upload.' });
+  }
+});
+
+// DELETE /api/motion-canvas/:id   { token }
+// Lets an artist abandon a pending/ready upload never attached to a track.
+// Mirrors DELETE /api/videos/:id — blocked while attached, same reasoning.
+app.delete('/api/motion-canvas/:id', rateLimit, async (req, res) => {
+  const token = req.body?.token || (req.headers.authorization || '').replace('Bearer ', '');
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  try {
+    const file = await dbGetMotionCanvasFile(req.params.id, sess.username);
+    if (!file) return res.status(404).json({ error: 'Motion Canvas not found.' });
+
+    const { data: attached } = await supabase
+      .from('track_motion_canvas').select('id').eq('motion_canvas_file_id', file.id).maybeSingle();
+    if (attached) {
+      return res.status(409).json({ error: 'This Motion Canvas is attached to a track. Remove it from the track first.' });
+    }
+
+    const { error: removeErr } = await supabase.storage.from(MOTION_CANVAS_BUCKET).remove([file.storage_path]);
+    if (removeErr) console.error('[motion-canvas delete] storage:', removeErr.message);
+    await supabase.from('motion_canvas_files').delete().eq('id', file.id).eq('owner', sess.username);
+    return res.json({ ok: true, deleted: file.filename });
+  } catch (err) {
+    console.error('[motion-canvas delete]', err);
+    return res.status(500).json({ error: 'Could not delete Motion Canvas.' });
+  }
+});
+
+// POST /api/tracks/:trackId/motion-canvas   { token, motionCanvasFileId }
+// Attaches a ready, owned motion_canvas_files row to a track the caller's
+// artist page owns. One canvas per track (v1) — re-attaching replaces the
+// existing track_motion_canvas row.
+app.post('/api/tracks/:trackId/motion-canvas', rateLimit, async (req, res) => {
+  const { token, motionCanvasFileId } = req.body || {};
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  if (!motionCanvasFileId) return res.status(400).json({ error: '"motionCanvasFileId" is required.' });
+  try {
+    const track = await dbGetTrackById(req.params.trackId);
+    if (!track || !track.cloud_file_id) return res.status(404).json({ error: 'Track not found.' });
+    const artist = await supabase.from('artists').select('account_id').eq('id', track.artist_id).maybeSingle();
+    if (!artist.data || artist.data.account_id !== sess.username) {
+      return res.status(403).json({ error: 'Only the artist who owns this track can attach a Motion Canvas.' });
+    }
+
+    const file = await dbGetMotionCanvasFile(motionCanvasFileId, sess.username);
+    if (!file) return res.status(404).json({ error: 'Motion Canvas upload not found.' });
+    if (file.upload_status !== 'ready') {
+      return res.status(409).json({ error: 'This Motion Canvas upload has not finished processing yet.' });
+    }
+
+    const existing = await dbGetTrackMotionCanvas(track.id);
+    let row;
+    if (existing) {
+      const { data, error } = await supabase
+        .from('track_motion_canvas')
+        .update({ motion_canvas_file_id: file.id, updated_at: new Date().toISOString() })
+        .eq('id', existing.id).select().single();
+      if (error) throw new Error(error.message);
+      row = data;
+    } else {
+      const { data, error } = await supabase
+        .from('track_motion_canvas')
+        .insert({ track_id: track.id, motion_canvas_file_id: file.id })
+        .select().single();
+      if (error) throw new Error(error.message);
+      row = data;
+    }
+
+    return res.status(201).json({ id: row.id, trackId: row.track_id, motionCanvasFileId: row.motion_canvas_file_id });
+  } catch (err) {
+    console.error('[track motion-canvas attach]', err);
+    return res.status(500).json({ error: 'Could not attach Motion Canvas to track.' });
+  }
+});
+
+// DELETE /api/tracks/:trackId/motion-canvas   { token }
+// Detaches (deletes the track_motion_canvas row) and removes the underlying
+// file from Storage + motion_canvas_files — unlike DELETE /api/motion-canvas/:id,
+// this IS allowed to remove an attached one, since detaching is the point.
+app.delete('/api/tracks/:trackId/motion-canvas', rateLimit, async (req, res) => {
+  const token = req.body?.token || (req.headers.authorization || '').replace('Bearer ', '');
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  try {
+    const track = await dbGetTrackById(req.params.trackId);
+    if (!track) return res.status(404).json({ error: 'Track not found.' });
+    const artist = await supabase.from('artists').select('account_id').eq('id', track.artist_id).maybeSingle();
+    if (!artist.data || artist.data.account_id !== sess.username) {
+      return res.status(403).json({ error: 'Only the artist who owns this track can remove its Motion Canvas.' });
+    }
+
+    const row = await dbGetTrackMotionCanvas(track.id);
+    if (!row) return res.status(404).json({ error: 'This track has no Motion Canvas.' });
+
+    await supabase.from('track_motion_canvas').delete().eq('id', row.id);
+    const { data: file } = await supabase.from('motion_canvas_files').select('storage_path').eq('id', row.motion_canvas_file_id).maybeSingle();
+    if (file) {
+      const { error: removeErr } = await supabase.storage.from(MOTION_CANVAS_BUCKET).remove([file.storage_path]);
+      if (removeErr) console.error('[track motion-canvas delete] storage:', removeErr.message);
+      await supabase.from('motion_canvas_files').delete().eq('id', row.motion_canvas_file_id);
+    }
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('[track motion-canvas detach]', err);
+    return res.status(500).json({ error: 'Could not remove Motion Canvas.' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
 //  NAMED INDEXES  — server-curated playlists fetchable by slug
 //  GET /api/index/:name  → { name, tracks: [...], total, fetchedAt }
 //  GET /api/index        → { indexes: ['flex', ...] }
@@ -8934,6 +9185,14 @@ app.get('/api/artists/:id/tracks', async (req, res) => {
         .select('track_id').in('track_id', tracks.map(t => t.id));
       videoTrackIds = new Set((videos || []).map(v => v.track_id));
     }
+    // Batched Motion Canvas-attached check, same shape as videoTrackIds —
+    // backs Edit Track's "has canvas" state without an N+1 per track row.
+    let canvasTrackIds = new Set();
+    if (tracks.length) {
+      const { data: canvases } = await supabase.from('track_motion_canvas')
+        .select('track_id').in('track_id', tracks.map(t => t.id));
+      canvasTrackIds = new Set((canvases || []).map(c => c.track_id));
+    }
     // Batched current-release lookup — same one-query-for-all-tracks shape
     // as videoTrackIds above. Powers Edit Track's release dropdown actually
     // pre-selecting the track's current release instead of always resetting
@@ -8959,6 +9218,7 @@ app.get('/api/artists/:id/tracks', async (req, res) => {
         isExplicit: !!t.is_explicit,
         collaborators: (collabsByTrack.get(t.id) || []).map(shapeCollaborator),
         hasVideo: videoTrackIds.has(t.id),
+        hasMotionCanvas: canvasTrackIds.has(t.id),
         releaseId: releaseIdByTrack.get(t.id) || null,
       })),
     });
@@ -10081,12 +10341,31 @@ app.get('/api/tracks/:trackId/stream', rateLimit, async (req, res) => {
 
     const collaborators = (await dbGetTrackCollaborators(track.id)).map(shapeCollaborator);
 
+    // Motion Canvas rides along with the audio stream response rather than
+    // a separate endpoint — see the Motion Canvas system comment block —
+    // since the frontend always calls this route on track load and the two
+    // always play together. Signed the same way as the audio itself, same
+    // TTL, so both links expire/refresh in lockstep with no separate
+    // freshness bookkeeping needed client-side.
+    let motionCanvasUrl = null, motionCanvasMimeType = null;
+    const canvasRow = await dbGetTrackMotionCanvas(track.id);
+    const canvasFile = canvasRow?.motion_canvas_files;
+    if (canvasFile && canvasFile.upload_status === 'ready') {
+      const { data: canvasSigned, error: canvasErr } = await supabase.storage
+        .from(MOTION_CANVAS_BUCKET)
+        .createSignedUrl(canvasFile.storage_path, SIGNED_URL_TTL_SECONDS);
+      if (!canvasErr && canvasSigned) {
+        motionCanvasUrl = canvasSigned.signedUrl;
+        motionCanvasMimeType = canvasFile.mime_type;
+      }
+    }
+
     return res.json({
       id: track.id, title: track.title, coverUrl: track.cover_url,
       artistId: track.artist_id, artistName: track.artist_name,
       mimeType: cloudFile.mime_type, duration: cloudFile.duration,
       url: data.signedUrl, expiresIn: SIGNED_URL_TTL_SECONDS,
-      collaborators,
+      collaborators, motionCanvasUrl, motionCanvasMimeType,
     });
   } catch (err) {
     console.error('[track stream]', err);
