@@ -534,10 +534,44 @@ header {
 /* ─── Local Audio Player ──────────────────────────────────────────── */
 .local-player{display:none;flex-direction:column;align-items:center;justify-content:center;flex:1;padding:32px;gap:22px;background:var(--bg);}
 .local-player.visible{display:flex;}
-.local-artwork{width:clamp(160px,32vw,320px);height:clamp(160px,32vw,320px);border-radius:8px;background:var(--surface2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:3.5rem;position:relative;overflow:hidden;}
-.local-artwork-img{width:100%;height:100%;object-fit:cover;display:none;}
+
+/* Motion Canvas stage — a contained, rounded 16:9 box (replaces the old
+   square artwork). Static cover art is always present as the base layer
+   (object-fit:cover, so it fills 16:9 the same way a video would rather
+   than letterboxing) — a track with no Motion Canvas looks exactly like
+   this with the canvas layer simply absent, so "nothing breaks" per spec.
+   Width scales with the viewport like the old artwork did, just wider;
+   height follows from aspect-ratio rather than being set directly. */
+.local-artwork{
+  width:clamp(280px,56vw,640px);aspect-ratio:16/9;
+  border-radius:10px;background:var(--surface2);border:1px solid var(--border);
+  display:flex;align-items:center;justify-content:center;font-size:3.5rem;
+  position:relative;overflow:hidden;
+}
+.local-artwork-img{width:100%;height:100%;object-fit:cover;display:none;position:absolute;inset:0;}
 .local-artwork-img.visible{display:block;}
 .local-artwork-placeholder{position:absolute;font-size:3.5rem;opacity:0.2;}
+
+/* Motion Canvas video layer — sits above the static artwork, below the
+   play/scrub overlay. Muted/looped/playsinline in the element attributes
+   (see markup); opacity is user-controlled via Settings (--motion-canvas-
+   opacity, default 0.5 per spec's 40-60% default) so the static artwork
+   underneath always shows through unless the person cranks it to 100%. */
+.motion-canvas-video{
+  width:100%;height:100%;object-fit:cover;display:none;position:absolute;inset:0;
+  opacity:var(--motion-canvas-opacity,0.5);transition:opacity 0.4s ease;
+}
+.motion-canvas-video.visible{display:block;}
+/* Subtle vignette so player-bar text/controls that sit below the stage
+   stay legible against a bright or busy canvas without needing a hard
+   scrim over the whole thing — matches the "enhance, don't compete" brief. */
+.local-artwork::after{
+  content:'';position:absolute;inset:0;pointer-events:none;
+  background:linear-gradient(180deg,rgba(0,0,0,0) 55%,rgba(0,0,0,0.35) 100%);
+  opacity:0;transition:opacity 0.4s ease;
+}
+.local-artwork.has-canvas::after{opacity:1;}
+
 .local-title{font-family:'Unbounded',sans-serif;font-size:0.95rem;font-weight:700;text-align:center;color:var(--text);letter-spacing:-0.01em;max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .local-meta{font-size:0.6rem;color:var(--text-dim);text-align:center;}
 .local-audio{width:100%;max-width:480px;accent-color:var(--accent);}
@@ -3214,6 +3248,19 @@ body.oled-mode {
       <div class="local-artwork" id="localArtwork">
         <img class="local-artwork-img" id="localArtworkImg" alt="Album art" />
         <span class="local-artwork-placeholder">♪</span>
+        <!-- Motion Canvas — a short, muted, looping 16:9 background video
+             ("living album cover" — see spec). Sits above the static
+             artwork, below the play/scrub overlay (appended after this in
+             the DOM, see "Artwork hover overlay" JS). muted+playsinline are
+             required for autoplay to be allowed at all; loop handles the
+             seamless repeat; disablePictureInPicture/disableRemotePlayback
+             match the same casual-download-deterrent posture as the main
+             <audio> element — not real protection, just no obvious
+             right-click affordances on a background loop. -->
+        <video class="motion-canvas-video" id="motionCanvasVideo"
+          muted loop playsinline preload="none"
+          disablePictureInPicture disableRemotePlayback
+          oncontextmenu="return false;"></video>
       </div>
       <div class="local-title" id="localTitle">Unknown Track</div>
       <div class="local-meta" id="localMeta">Local File</div>
@@ -3562,6 +3609,21 @@ body.oled-mode {
           <input type="checkbox" id="settingReducedMotion" onchange="applyReducedMotion(this.checked)" />
           <div class="settings-track"></div>
         </label>
+      </div>
+      <div class="settings-row">
+        <div>
+          <div class="settings-row-label">Motion Canvas Opacity</div>
+          <div class="settings-row-desc">Animated background on published tracks that have one</div>
+        </div>
+        <select class="settings-select" id="settingMotionCanvasOpacity" onchange="applyMotionCanvasOpacity(this.value)">
+          <option value="0">Off</option>
+          <option value="0.2">20%</option>
+          <option value="0.4">40%</option>
+          <option value="0.5" selected>50% (Default)</option>
+          <option value="0.6">60%</option>
+          <option value="0.8">80%</option>
+          <option value="1">100%</option>
+        </select>
       </div>
       <div class="settings-row">
         <div>
@@ -4006,6 +4068,34 @@ body.oled-mode {
         <div class="cloud-upload-progress"><div class="cloud-upload-bar" id="publishVideoBar"></div></div>
       </div>
       <div id="publishVideoReadyState" style="display:none;font-size:0.46rem;color:var(--accent3);">✓ <span id="publishVideoReadyName"></span> ready to attach</div>
+    </div>
+
+    <!-- Motion Canvas (Optional) — a short, muted, looping 16:9 background
+         for the Now Playing screen. Same direct-to-storage upload pattern
+         as Music Video above (see publishCanvasFileInput's change handler);
+         attached via POST /api/tracks/:trackId/motion-canvas right after
+         publish succeeds, same "track needs an id first" reasoning. This is
+         NOT the Music Video feature — it never has its own audio/controls,
+         just plays silently behind the player UI. -->
+    <div style="border:1px dashed var(--border);border-radius:var(--radius);padding:9px 10px;margin-bottom:10px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+        <span style="font-size:0.46rem;color:var(--text-dim);">🎞 Motion Canvas <span style="color:var(--text-muted);">(optional)</span></span>
+        <button type="button" id="publishCanvasClearBtn" onclick="clearPublishCanvasSelection()" style="display:none;background:none;border:none;color:var(--text-muted);font-size:0.42rem;cursor:pointer;text-decoration:underline;">Remove</button>
+      </div>
+      <div id="publishCanvasIdleState">
+        <button type="button" onclick="$('publishCanvasFileInput')?.click()" style="width:100%;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.46rem;padding:8px;border-radius:var(--radius);cursor:pointer;text-transform:uppercase;letter-spacing:0.04em;">+ Add Motion Canvas</button>
+        <div style="font-size:0.38rem;color:var(--text-muted);margin-top:4px;">MP4 or WebM · 16:9, muted, 3–15s · up to 50MB</div>
+      </div>
+      <input type="file" id="publishCanvasFileInput" accept="video/mp4,video/webm" style="display:none;" />
+      <div id="publishCanvasProgressWrap" style="display:none;">
+        <div style="font-size:0.44rem;color:var(--text-muted);margin-bottom:3px;display:flex;justify-content:space-between;">
+          <span id="publishCanvasStatus">Uploading…</span>
+          <span id="publishCanvasPercent"></span>
+        </div>
+        <div class="cloud-upload-progress"><div class="cloud-upload-bar" id="publishCanvasBar"></div></div>
+      </div>
+      <div id="publishCanvasReadyState" style="display:none;font-size:0.46rem;color:var(--accent3);">✓ <span id="publishCanvasReadyName"></span> ready to attach</div>
+      <div id="publishCanvasWarning" style="display:none;font-size:0.4rem;color:#ffa502;margin-top:4px;"></div>
     </div>
 
     <div id="publishTrackStatus" style="font-size:0.42rem;color:var(--text-muted);margin-bottom:10px;min-height:1.2em;"></div>
@@ -10183,6 +10273,8 @@ async function resolvePublishedTrack(trackId) {
     collaborators: data.collaborators || [],
     freqTrackId: data.id, // marks this as a refreshable signed-url item, parallel to cloudFileId
     urlExpiresAt: Date.now() + ttlMs,
+    motionCanvasUrl: data.motionCanvasUrl || null,
+    motionCanvasMimeType: data.motionCanvasMimeType || null,
   };
 }
 
@@ -10205,6 +10297,13 @@ async function refreshPublishedTrackUrl(item) {
   if (!item.artist && data.artistName) item.artist = data.artistName;
   if (!item.artistId && data.artistId) item.artistId = data.artistId;
   if (!item.collaborators?.length && data.collaborators) item.collaborators = data.collaborators;
+  // Motion Canvas's signed URL shares the audio's TTL and is reissued on
+  // every /stream call, so always overwrite (not just backfill) — an item
+  // resolved before a canvas was attached, or before one was removed,
+  // should pick up the current state rather than being stuck with whatever
+  // was true at first resolve.
+  item.motionCanvasUrl = data.motionCanvasUrl || null;
+  item.motionCanvasMimeType = data.motionCanvasMimeType || null;
   return true;
 }
 
@@ -10453,6 +10552,7 @@ async function openPublishTrackModal(cloudFileId) {
   $('publishTrackStatus').textContent = '';
   $('publishTrackSourceFilename').textContent = '';
   resetPublishVideoSelection();
+  resetPublishCanvasSelection();
 
   // Populate the release dropdown from the cached releases list — refresh
   // first in case a release was created since the dashboard last loaded.
@@ -10468,6 +10568,7 @@ function closePublishTrackModal() {
   publishingCloudFileId = null;
   publishingCoverUrl = null;
   resetPublishVideoSelection();
+  resetPublishCanvasSelection();
 }
 
 $('publishCoverPreviewWrap')?.addEventListener('click', () => $('publishCoverFileInput')?.click());
@@ -10620,6 +10721,112 @@ $('publishVideoFileInput')?.addEventListener('change', async function() {
   }
 });
 
+// ── Motion Canvas upload (direct-to-storage) ────────────────────────────
+// Same three-step pattern as Music Video immediately above, against the
+// separate /api/motion-canvas/* routes and 'motion-canvas' bucket (see
+// server.js's Motion Canvas system comment). publishCanvasFileId is null
+// until step 3 succeeds; the submit handler only attaches a canvas to the
+// track if this is set. extractVideoMeta/uploadVideoToSignedUrlXHR above
+// are format-agnostic (they just read/PUT a video Blob) so they're reused
+// as-is rather than duplicated.
+let publishCanvasFileId = null;
+const PUBLISH_CANVAS_MAX_BYTES = 50 * 1048576; // keep in sync with MOTION_CANVAS_MAX_BYTES in server.js
+const PUBLISH_CANVAS_MIME_TYPES = ['video/mp4', 'video/webm'];
+const PUBLISH_CANVAS_MAX_DURATION = 15; // soft guidance only — see server-side durationWarning
+
+function resetPublishCanvasSelection() {
+  publishCanvasFileId = null;
+  $('publishCanvasIdleState').style.display = '';
+  $('publishCanvasProgressWrap').style.display = 'none';
+  $('publishCanvasReadyState').style.display = 'none';
+  $('publishCanvasClearBtn').style.display = 'none';
+  $('publishCanvasWarning').style.display = 'none';
+  $('publishCanvasBar').style.width = '0%';
+}
+function clearPublishCanvasSelection() {
+  // Best-effort cleanup of the orphaned motion_canvas_files row — harmless
+  // dead weight server-side if this fails, same reasoning as the video
+  // equivalent above.
+  if (publishCanvasFileId) {
+    fetch(`/api/motion-canvas/${encodeURIComponent(publishCanvasFileId)}`, {
+      method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: AUTH.token }),
+    }).catch(() => {});
+  }
+  resetPublishCanvasSelection();
+}
+
+$('publishCanvasFileInput')?.addEventListener('change', async function() {
+  const file = this.files?.[0]; this.value = '';
+  if (!file) return;
+  if (!PUBLISH_CANVAS_MIME_TYPES.includes(file.type)) {
+    showToast('Unsupported Format', 'Upload MP4 or WebM.', 'error');
+    return;
+  }
+  if (file.size > PUBLISH_CANVAS_MAX_BYTES) {
+    showToast('File Too Large', `Motion Canvas exceeds the ${PUBLISH_CANVAS_MAX_BYTES / 1048576}MB limit.`, 'error');
+    return;
+  }
+
+  $('publishCanvasIdleState').style.display = 'none';
+  $('publishCanvasProgressWrap').style.display = '';
+  $('publishCanvasWarning').style.display = 'none';
+  $('publishCanvasStatus').textContent = 'Starting upload…';
+  $('publishCanvasBar').style.width = '0%';
+
+  try {
+    // Step 1 — pending row + signed upload URL
+    const urlRes = await fetch('/api/motion-canvas/upload-url', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: AUTH.token, filename: file.name, mimeType: file.type, size: file.size }),
+    });
+    const urlData = await urlRes.json();
+    if (!urlRes.ok) {
+      if (urlRes.status === 401) { handleTokenExpiry(); return; }
+      throw new Error(urlData.error || 'Could not start Motion Canvas upload.');
+    }
+
+    // Step 2 — direct PUT to Supabase Storage
+    $('publishCanvasStatus').textContent = 'Uploading…';
+    await uploadVideoToSignedUrlXHR(urlData.uploadUrl, file, frac => {
+      $('publishCanvasBar').style.width = Math.round(frac * 100) + '%';
+      $('publishCanvasPercent').textContent = Math.round(frac * 100) + '%';
+    });
+
+    // Step 3 — confirm, with metadata read from the file itself
+    $('publishCanvasStatus').textContent = 'Finishing up…';
+    const meta = await extractVideoMeta(file);
+    const confirmRes = await fetch(`/api/motion-canvas/${encodeURIComponent(urlData.motionCanvasFileId)}/confirm`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: AUTH.token, duration: meta.duration, width: meta.width, height: meta.height }),
+    });
+    const confirmData = await confirmRes.json();
+    if (!confirmRes.ok) throw new Error(confirmData.error || 'Could not finish Motion Canvas upload.');
+
+    publishCanvasFileId = confirmData.id;
+    $('publishCanvasProgressWrap').style.display = 'none';
+    $('publishCanvasReadyState').style.display = '';
+    $('publishCanvasReadyName').textContent = file.name.length > 30 ? file.name.slice(0, 27) + '…' : file.name;
+    $('publishCanvasClearBtn').style.display = '';
+
+    // Soft guidance only — a clip outside 16:9 or >15s still gets attached
+    // and still plays, per spec's "prefer forgiving over blocking" intent
+    // for guidance-level constraints (unlike format/size, which are hard).
+    const warnings = [];
+    if (meta.width && meta.height && Math.abs((meta.width / meta.height) - (16 / 9)) > 0.15) {
+      warnings.push('This clip isn\'t quite 16:9 — it may be cropped in the player.');
+    }
+    if (confirmData.durationWarning) warnings.push(confirmData.durationWarning);
+    if (warnings.length) {
+      $('publishCanvasWarning').textContent = warnings.join(' ');
+      $('publishCanvasWarning').style.display = '';
+    }
+  } catch (err) {
+    showToast('Motion Canvas Upload Error', err.message || 'Could not upload Motion Canvas.', 'error');
+    resetPublishCanvasSelection();
+  }
+});
+
 $('publishTrackSubmitBtn')?.addEventListener('click', async () => {
   if (!viewedArtist || !publishingCloudFileId) return;
   const btn = $('publishTrackSubmitBtn');
@@ -10660,6 +10867,23 @@ $('publishTrackSubmitBtn')?.addEventListener('click', async () => {
         }
       } catch (_) {
         showToast('Video Not Attached', 'Track published, but the video could not be attached. Try again from the Tracks tab.', 'error');
+      }
+    }
+
+    // Same best-effort attach for Motion Canvas — a failure here must
+    // never be reported as a publish failure either.
+    if (publishCanvasFileId) {
+      try {
+        const canvasRes = await fetch(`${TRACKS_BASE}/${encodeURIComponent(data.id)}/motion-canvas`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: AUTH.token, motionCanvasFileId: publishCanvasFileId }),
+        });
+        if (!canvasRes.ok) {
+          const canvasErr = await canvasRes.json().catch(() => ({}));
+          showToast('Motion Canvas Not Attached', canvasErr.error || 'Track published, but the Motion Canvas could not be attached. Try again from the Tracks tab.', 'error');
+        }
+      } catch (_) {
+        showToast('Motion Canvas Not Attached', 'Track published, but the Motion Canvas could not be attached. Try again from the Tracks tab.', 'error');
       }
     }
 
@@ -14567,6 +14791,8 @@ const localMeta       = $('localMeta');
 const localFormat     = $('localFormat');
 const localSize       = $('localSize');
 const localArtworkImg = $('localArtworkImg');
+const localArtwork    = $('localArtwork');
+const motionCanvasVideo = $('motionCanvasVideo');
 const nowPlatform     = $('nowPlatform');
 const nowDot          = $('nowDot');
 const prevBtn         = $('prevBtn');
@@ -16314,6 +16540,7 @@ async function playItem(index) {
     } else {
       localArtworkImg.classList.remove('visible');
     }
+    setMotionCanvas(item);
 
     // Build and start visualizer
     buildEQVisualizer();
@@ -18415,6 +18642,7 @@ const SETTINGS_DEFAULTS = {
   confirmClear:false, defaultRepeat:0, notifications:false, history:true,
   analytics:false, hwAccel:true, debug:false, fft:128, embedRetry:true,
   reducedMotion:false, scanlines:true, noise:true, compactCards:false, glow:true,
+  motionCanvasOpacity:0.5, // 0-1; 0 = "Off" option in Settings. 0.5 matches spec's 40-60% default band.
 };
 Object.keys(SETTINGS_DEFAULTS).forEach(k => { if (!(k in SETTINGS)) SETTINGS[k] = SETTINGS_DEFAULTS[k]; });
 
@@ -18443,11 +18671,25 @@ function openSettingsModal() {
   $('settingDebug').checked         = SETTINGS.debug;
   $('settingFFT').value             = SETTINGS.fft;
   $('settingEmbedRetry').checked    = SETTINGS.embedRetry;
+  $('settingMotionCanvasOpacity').value = SETTINGS.motionCanvasOpacity;
   $('settingsOverlay').classList.add('open');
   playSfx('click');
 }
 function closeSettingsModal() { $('settingsOverlay').classList.remove('open'); playSfx('click'); }
-function applyReducedMotion(v) { saveSetting('reducedMotion',v); document.documentElement.style.setProperty('--anim-scale', v ? '0' : '1'); }
+function applyReducedMotion(v) {
+  saveSetting('reducedMotion',v);
+  document.documentElement.style.setProperty('--anim-scale', v ? '0' : '1');
+  // Reduced Motion overrides Motion Canvas regardless of its own opacity
+  // setting (see motionCanvasEnabled()) — toggling it should stop/resume
+  // the canvas immediately rather than waiting for the next track.
+  if (typeof applyMotionCanvasEnabledState === 'function') applyMotionCanvasEnabledState();
+}
+function applyMotionCanvasOpacity(v) {
+  const num = Math.max(0, Math.min(1, parseFloat(v)));
+  saveSetting('motionCanvasOpacity', num);
+  document.documentElement.style.setProperty('--motion-canvas-opacity', num);
+  if (typeof applyMotionCanvasEnabledState === 'function') applyMotionCanvasEnabledState();
+}
 function applyScanlines(v)     { saveSetting('scanlines',v); document.documentElement.style.setProperty('--scanlines', v ? '1' : '0'); }
 function applyNoise(v)         { saveSetting('noise',v); document.body.style.setProperty('--noise-opacity', v ? '0.5' : '0'); document.body.classList.toggle('no-noise',!v); }
 function applyCompactCards(v)  { saveSetting('compactCards',v); document.body.classList.toggle('compact-cards',v); }
@@ -19143,6 +19385,107 @@ async function deleteCloudFile(index) {
   });
 })();
 
+// ─── 11b. Motion Canvas — animated 16:9 Now Playing background ───────────────
+// A short, muted, looping video attached to a published FREQ track (see
+// server.js's Motion Canvas system + resolvePublishedTrack above, which is
+// where item.motionCanvasUrl/motionCanvasMimeType come from). This is NOT
+// the Music Video "Watch Video" feature — it plays silently behind the
+// existing player UI as a living album cover, never its own audio/controls.
+//
+// setMotionCanvas(item) is the single entry point, called from playItem()
+// right after the static artwork is set. It owns:
+//   - swapping the <video> src and toggling .visible/.has-canvas
+//   - NOT autoplaying until localAudio actually starts (the 'playing'
+//     listener below drives that), so the canvas never runs ahead of audio
+//   - fully clearing state for tracks/platforms with no canvas — local
+//     files, YouTube, cloud-only uploads with no canvas attached, etc. —
+//     since setMotionCanvas is only ever called for platform:'freq' items
+//     but must still leave a clean slate when THIS track has no canvas.
+let _motionCanvasActive = false; // true only when the current queue item actually has a canvas attached
+
+function motionCanvasEnabled() {
+  // Off entirely if the user set opacity to 0 (Settings "Off" option) or
+  // has Reduced Motion on — a background animation is exactly the kind of
+  // motion that setting exists to suppress, so it overrides the per-track
+  // opacity regardless of what it's set to.
+  return !SETTINGS.reducedMotion && (SETTINGS.motionCanvasOpacity ?? 0.5) > 0;
+}
+
+function setMotionCanvas(item) {
+  if (!motionCanvasVideo || !localArtwork) return;
+  const url = item?.motionCanvasUrl;
+  if (!url || !motionCanvasEnabled()) {
+    clearMotionCanvas();
+    return;
+  }
+  _motionCanvasActive = true;
+  localArtwork.classList.add('has-canvas');
+  // Only reassign src when it's actually different — resolvePublishedTrack
+  // reissues a fresh signed URL on every /stream call (see comment there),
+  // so a same-track replay would otherwise restart the <video> element
+  // (and its preload) on a URL that points at the identical file.
+  if (motionCanvasVideo.dataset.srcKey !== item.id) {
+    motionCanvasVideo.dataset.srcKey = item.id;
+    motionCanvasVideo.src = url;
+    motionCanvasVideo.load();
+  }
+  motionCanvasVideo.classList.add('visible');
+  // Actual play() is deferred to localAudio's 'playing' event below rather
+  // than fired here — playItem() calls PlaybackManager.requestPlay()
+  // asynchronously, so starting the canvas immediately would frequently
+  // race ahead of real audio start, especially on a slow connection.
+}
+
+function clearMotionCanvas() {
+  _motionCanvasActive = false;
+  localArtwork?.classList.remove('has-canvas');
+  motionCanvasVideo?.classList.remove('visible');
+  if (motionCanvasVideo && !motionCanvasVideo.paused) motionCanvasVideo.pause();
+  if (motionCanvasVideo) motionCanvasVideo.removeAttribute('src');
+  if (motionCanvasVideo) delete motionCanvasVideo.dataset.srcKey;
+}
+
+// Keep the canvas in lockstep with real audio playback state — covers
+// every play/pause path (spacebar, media keys, DJ BOOM, Listening Party
+// sync, the artwork-click toggle above) since they all ultimately act on
+// the same <audio> element rather than needing each call site updated.
+localAudio.addEventListener('playing', () => {
+  if (_motionCanvasActive && motionCanvasVideo?.paused && motionCanvasEnabled()) {
+    motionCanvasVideo.play().catch(() => {}); // autoplay can still be blocked in rare cases; static art underneath already covers that gracefully
+  }
+});
+localAudio.addEventListener('pause', () => {
+  if (_motionCanvasActive && motionCanvasVideo && !motionCanvasVideo.paused) motionCanvasVideo.pause();
+});
+
+// Pause when the tab is hidden — per spec, don't waste GPU/battery on an
+// animation nobody can see. Resumes automatically on return IF audio is
+// still actually playing (not just "was playing before the tab hid").
+document.addEventListener('visibilitychange', () => {
+  if (!motionCanvasVideo || !_motionCanvasActive) return;
+  if (document.hidden) {
+    if (!motionCanvasVideo.paused) motionCanvasVideo.pause();
+  } else if (!localAudio.paused && motionCanvasEnabled()) {
+    motionCanvasVideo.play().catch(() => {});
+  }
+});
+
+// Settings → Reduced Motion toggling mid-playback should take effect
+// immediately, not just on the next track — same "shouldn't have to
+// replay to see a setting apply" bar as the opacity slider below.
+function applyMotionCanvasEnabledState() {
+  if (!motionCanvasVideo) return;
+  if (!motionCanvasEnabled()) {
+    if (!motionCanvasVideo.paused) motionCanvasVideo.pause();
+    motionCanvasVideo.classList.remove('visible');
+    localArtwork?.classList.remove('has-canvas');
+  } else if (_motionCanvasActive) {
+    motionCanvasVideo.classList.add('visible');
+    localArtwork?.classList.add('has-canvas');
+    if (!localAudio.paused) motionCanvasVideo.play().catch(() => {});
+  }
+}
+
 // ─── 12. Track notification on play ─────────────────────────────────────────
 const _origPlayItem = playItem;
 window.playItem = function(i) {
@@ -19443,6 +19786,7 @@ document.addEventListener('keydown', e => {
   if (!SETTINGS.noise)        document.body.classList.add('no-noise');
   if (SETTINGS.compactCards)  document.body.classList.add('compact-cards');
   // Scanlines already handled by CSS var
+  document.documentElement.style.setProperty('--motion-canvas-opacity', SETTINGS.motionCanvasOpacity ?? 0.5);
 })();
 
 // ─── Patch: Close new overlays via clicking outside ──────────────────────────
