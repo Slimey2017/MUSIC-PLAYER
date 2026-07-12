@@ -1893,6 +1893,36 @@ async function dbTasteBecauseYouListened(username, { seedLimit = 3, tracksPerSee
 // will give this more to work with later without changing this function's
 // shape, just its inputs). Ranked by follower_count as the best available
 // "worth surfacing" signal, same ranking Discover → Artists already uses.
+//
+// Radio tags (radio_favorites + radio_recent_plays) widen the genre seed
+// set beyond just the user's played artists — someone who favorites a lot
+// of "lofi,chill" stations is expressing a real taste signal even if none
+// of their track plays happen to have a matching artists.genre value yet.
+// Matched with ILIKE rather than an exact set-membership check like the
+// artist-derived genres above: Radio Browser's tags are free-text listener
+// folksonomy ("hiphop", "hip-hop", "rap") and won't share exact strings
+// with artists.genre, so a substring match is the honest way to connect
+// the two vocabularies without either silently no-op-ing or forcing radio
+// tags to be a controlled vocabulary they were never designed as. This
+// still never touches track_plays/tracks — radio's play-count isolation
+// (see the migration + this module's header comment) is preserved; radio
+// only ever contributes genre/country TEXT here, nothing that could
+// influence a play count or chart position.
+async function dbTasteRadioGenreHints(username, { limit = 6 } = {}) {
+  const [{ data: favs }, { data: recents }] = await Promise.all([
+    supabase.from('radio_favorites').select('tags').eq('owner', username).limit(30),
+    supabase.from('radio_recent_plays').select('tags').eq('owner', username).order('played_at', { ascending: false }).limit(30),
+  ]);
+  const raw = [...(favs || []), ...(recents || [])]
+    .flatMap(r => (r.tags || '').split(',').map(t => t.trim().toLowerCase()))
+    .filter(Boolean);
+  // Most-common tags first, small vocabulary only — this is a hint to widen
+  // an ILIKE search, not a ranked taste profile in its own right.
+  const counts = new Map();
+  for (const tag of raw) counts.set(tag, (counts.get(tag) || 0) + 1);
+  return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, limit).map(([tag]) => tag);
+}
+
 async function dbTasteSimilarArtists(username, { limit = 12 } = {}) {
   const myPlays = await dbTasteGetUserPlays(username, { days: 180 });
   if (myPlays.length < TASTE_MIN_HISTORY_ROWS) return [];
@@ -1903,21 +1933,51 @@ async function dbTasteSimilarArtists(username, { limit = 12 } = {}) {
     .from('artists').select('id, genre').in('id', seeds.map(s => s.artistId));
   if (error) { console.error('[db] tasteSimilarArtists seeds:', error.message); return []; }
   const genres = [...new Set((seedArtists || []).map(a => a.genre).filter(Boolean))];
-  if (!genres.length) return [];
 
   const followedIds = new Set((await dbGetFollowedArtistIds(username)) || []);
   const knownIds = new Set(seeds.map(s => s.artistId));
 
-  const { data: candidates, error: err2 } = await supabase
-    .from('artists')
-    .select('id, name, genre, avatar_url, follower_count, is_verified')
-    .in('genre', genres)
-    .order('follower_count', { ascending: false })
-    .limit(limit + seeds.length + 10); // over-fetch to survive filtering out seeds/already-followed below
-  if (err2) { console.error('[db] tasteSimilarArtists candidates:', err2.message); return []; }
+  // Exact genre matches (from the user's own played artists) and radio-tag
+  // substring matches are two different query shapes — run both and merge,
+  // rather than trying to force one .in()/.ilike() call to do both jobs.
+  const candidateRows = [];
+  if (genres.length) {
+    const { data, error: err2 } = await supabase
+      .from('artists')
+      .select('id, name, genre, avatar_url, follower_count, is_verified')
+      .in('genre', genres)
+      .order('follower_count', { ascending: false })
+      .limit(limit + seeds.length + 10); // over-fetch to survive filtering out seeds/already-followed below
+    if (err2) console.error('[db] tasteSimilarArtists candidates:', err2.message);
+    else candidateRows.push(...(data || []));
+  }
 
-  return (candidates || [])
-    .filter(a => !knownIds.has(a.id) && !followedIds.has(a.id))
+  const radioTags = await dbTasteRadioGenreHints(username);
+  if (radioTags.length) {
+    // One OR-of-ILIKE query across a small tag set, capped separately from
+    // the exact-genre fetch above so a listener with lots of radio activity
+    // but few played artists still gets real candidates back.
+    const orExpr = radioTags.map(tag => `genre.ilike.%${tag.replace(/[%_,]/g, '')}%`).join(',');
+    const { data, error: err3 } = await supabase
+      .from('artists')
+      .select('id, name, genre, avatar_url, follower_count, is_verified')
+      .or(orExpr)
+      .order('follower_count', { ascending: false })
+      .limit(limit + 10);
+    if (err3) console.error('[db] tasteSimilarArtists radio candidates:', err3.message);
+    else candidateRows.push(...(data || []));
+  }
+
+  if (!candidateRows.length) return [];
+  const seen = new Set();
+  const merged = [];
+  for (const a of candidateRows) {
+    if (seen.has(a.id) || knownIds.has(a.id) || followedIds.has(a.id)) continue;
+    seen.add(a.id);
+    merged.push(a);
+  }
+  return merged
+    .sort((a, b) => (b.follower_count || 0) - (a.follower_count || 0))
     .slice(0, limit)
     .map(a => ({
       id: a.id, name: a.name, genre: a.genre, avatarUrl: a.avatar_url,
@@ -5633,7 +5693,11 @@ app.get('/api/playlists/:id/edit-log', async (req, res) => {
 //  meaningful anonymous version of "your taste"), but NOT Premium-gated:
 //  this reads the same track_plays/track_likes/artist_followers data every
 //  signed-in listener already generates just by using FREQ normally, same
-//  "available to every account" spirit as Discover and Charts.
+//  "available to every account" spirit as Discover and Charts. Similar
+//  Artists additionally widens its genre seed using radio_favorites/
+//  radio_recent_plays TAGS ONLY (see dbTasteRadioGenreHints) — those two
+//  tables happen to be Premium-only to WRITE, but nothing here requires
+//  Premium to read a signal that already exists on the account.
 //
 //  All six modules are computed in parallel — they're independent reads
 //  over different (or differently-windowed) slices of the same handful of
