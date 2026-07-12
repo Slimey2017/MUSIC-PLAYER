@@ -1645,7 +1645,16 @@ async function dbLogPlay(originalUrl, { platform, title, username, listenerKey, 
   // to 'direct' for anything unrecognized or absent, matching the column's
   // DB-level default so Creator Insights never has to special-case nulls.
   const safeSource = PLAY_SOURCES.includes(source) ? source : 'direct';
-  await supabase.from('track_plays').insert({ track_id: trackId, username: username || null, source: safeSource });
+  // .select().single() here (rather than a bare .insert()) so the row's id
+  // comes back — Taste Graph's completed/skipped signal (see
+  // dbMarkPlayOutcome below) needs to reach back and update THIS exact row
+  // a little later, once the client knows how the track actually ended.
+  const { data: playRow, error: insertErr } = await supabase
+    .from('track_plays')
+    .insert({ track_id: trackId, username: username || null, source: safeSource })
+    .select('id')
+    .single();
+  if (insertErr) console.error('[db] logPlay insert:', insertErr.message);
 
   // Atomic increment via the increment_track_play_count() RPC (see migration)
   // rather than read-count-then-write, which would race under concurrent
@@ -1653,8 +1662,26 @@ async function dbLogPlay(originalUrl, { platform, title, username, listenerKey, 
   const { data, error } = await supabase.rpc('increment_track_play_count', {
     p_track_id: trackId, p_title: title || null,
   });
-  if (error) { console.error('[db] logPlay increment:', error.message); return { trackId, counted: true }; }
-  return { trackId, counted: true, playCount: data };
+  if (error) { console.error('[db] logPlay increment:', error.message); return { trackId, counted: true, playRowId: playRow?.id || null }; }
+  return { trackId, counted: true, playCount: data, playRowId: playRow?.id || null };
+}
+
+// Taste Graph's one honest signal beyond "this track was played": whether
+// it was actually listened through or abandoned early. Nothing in FREQ
+// tracked this before — the client can only know the outcome of a play
+// AFTER it ends, by which point the next /api/plays call for the following
+// track is what reports it (see POST /api/plays' `previousPlay` field), so
+// this updates a row that was inserted moments earlier by dbLogPlay rather
+// than being written at play-start time. Scoped to `username` as well as
+// `id` purely as a safety check — a client can only ever report the
+// outcome of ITS OWN previous play, never an arbitrary row id for someone
+// else's listen.
+async function dbMarkPlayOutcome(playRowId, username, completed) {
+  if (!playRowId) return;
+  await supabase.from('track_plays')
+    .update({ completed: !!completed })
+    .eq('id', playRowId)
+    .eq('username', username || null);
 }
 
 // ─── Creator Insights ──────────────────────────────────────────────────────
@@ -1726,6 +1753,403 @@ async function dbGetArtistInsights(artistId, { days = 30 } = {}) {
       }))
       .sort((a, b) => b.playsInWindow - a.playsInWindow),
   };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  TASTE GRAPH — recommendations built entirely from FREQ's own data.
+//  GET /api/taste — see full route doc further below, near the route itself.
+//
+//  Sources used, and exactly which existing table backs each (per the
+//  Phase 4 brief's own list):
+//    Listening history   → track_plays (username, track_id, played_at)
+//    Liked songs         → track_likes
+//    Favorite artists    → artist_followers
+//    Playlists           → playlists_v2 + playlist_tracks
+//    Radio stations      → radio_recent_plays / radio_favorites (tags/country
+//                          only — deliberately never joined into play-count-
+//                          style weighting; see that table's own doc comment
+//                          for why radio stays isolated from track_plays)
+//    Skipped tracks      → track_plays.completed = false (new column, see
+//                          migrations/create_taste_graph.sql and logPlay()
+//                          client-side for how this gets populated)
+//
+//  No external ML, no embeddings, no third-party API. Everything below is
+//  co-occurrence and recency arithmetic over rows FREQ already has,
+//  computed in JS the same way dbGetArtistInsights above aggregates raw
+//  track_plays rows rather than leaning on a SQL GROUP BY — consistent
+//  with this file's existing "simple to read and debug at today's data
+//  volume" preference. Revisit with real SQL aggregation if a user's row
+//  counts ever make this noticeably slow; not a concern yet.
+//
+//  Every dbTaste* helper below degrades to an empty result for a user with
+//  too little history rather than erroring — a brand new account should see
+//  "keep listening to unlock recommendations", not a 500.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const TASTE_MIN_HISTORY_ROWS = 5; // below this, there's not enough signal to recommend anything meaningful
+
+// Raw plays for one user in a lookback window, joined to the track's
+// artist_id/artist_name/title/cover — the one query nearly every Taste
+// Graph helper below starts from, so it's centralized here rather than
+// each helper re-selecting the same join with slightly different columns.
+async function dbTasteGetUserPlays(username, { days = 90, limit = 500 } = {}) {
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+  const { data, error } = await supabase
+    .from('track_plays')
+    .select('track_id, played_at, completed, tracks(id, title, artist_id, artist_name, cover_url, platform, original_url, is_explicit)')
+    .eq('username', username)
+    .gte('played_at', since)
+    .order('played_at', { ascending: false })
+    .limit(limit);
+  if (error) { console.error('[db] tasteGetUserPlays:', error.message); return []; }
+  // Supabase's embedded-resource join returns null for a track_plays row
+  // whose track was since deleted (e.g. an unpublished/removed track) —
+  // filter those out here once so every downstream helper can assume
+  // row.tracks is always present rather than null-checking repeatedly.
+  return (data || []).filter(row => row.tracks);
+}
+
+// Top artists by play frequency within a user's recent history — the seed
+// for "similar artists" and "because you listened to". Excludes artists
+// the user already follows when `excludeFollowed` is passed, since those
+// two Taste Graph modules serve different purposes (one surfaces NEW
+// artists, the other explicitly reinforces existing follows elsewhere).
+function tasteTopArtistsFromPlays(plays, { limit = 10 } = {}) {
+  const counts = new Map(); // artist_id -> { artistId, artistName, plays }
+  for (const row of plays) {
+    const t = row.tracks;
+    if (!t.artist_id) continue; // unpublished/unresolved tracks have no artist link — nothing to graph
+    const cur = counts.get(t.artist_id) || { artistId: t.artist_id, artistName: t.artist_name, plays: 0 };
+    cur.plays++;
+    counts.set(t.artist_id, cur);
+  }
+  return [...counts.values()].sort((a, b) => b.plays - a.plays).slice(0, limit);
+}
+
+// "Because you listened to {artist}" — for each of the user's top few
+// artists, find OTHER listeners of that same artist (via track_plays) and
+// surface tracks THEY played by DIFFERENT artists the requesting user
+// hasn't played much. This is plain co-occurrence — "people who listened
+// to X also listened to Y" — computed from real rows, not a trained model.
+async function dbTasteBecauseYouListened(username, { seedLimit = 3, tracksPerSeed = 6 } = {}) {
+  const myPlays = await dbTasteGetUserPlays(username, { days: 90 });
+  if (myPlays.length < TASTE_MIN_HISTORY_ROWS) return [];
+  const myArtistIds = new Set(myPlays.map(r => r.tracks.artist_id).filter(Boolean));
+  const seeds = tasteTopArtistsFromPlays(myPlays, { limit: seedLimit });
+  if (!seeds.length) return [];
+
+  const results = [];
+  for (const seed of seeds) {
+    // Other listeners of this seed artist, most recent first, capped —
+    // this is a fan-out query per seed artist (at most seedLimit of them,
+    // so 3 extra queries typically), not a full-table scan.
+    const { data: coListeners, error } = await supabase
+      .from('track_plays')
+      .select('username, tracks!inner(artist_id)')
+      .eq('tracks.artist_id', seed.artistId)
+      .not('username', 'is', null)
+      .neq('username', username)
+      .order('played_at', { ascending: false })
+      .limit(200);
+    if (error || !coListeners?.length) continue;
+    const otherUsernames = [...new Set(coListeners.map(r => r.username))].slice(0, 25);
+    if (!otherUsernames.length) continue;
+
+    // What ELSE those listeners played, excluding the seed artist itself
+    // and anything the requesting user already has meaningful history
+    // with — the point is surfacing something new, not echoing their own
+    // top artist back at them.
+    const { data: theirOtherPlays, error: err2 } = await supabase
+      .from('track_plays')
+      .select('track_id, tracks!inner(id, title, artist_id, artist_name, cover_url, platform, original_url, is_explicit)')
+      .in('username', otherUsernames)
+      .neq('tracks.artist_id', seed.artistId)
+      .order('played_at', { ascending: false })
+      .limit(150);
+    if (err2 || !theirOtherPlays?.length) continue;
+
+    const trackCounts = new Map(); // track_id -> { track, count }
+    for (const row of theirOtherPlays) {
+      const t = row.tracks;
+      if (!t || myArtistIds.has(t.artist_id)) continue; // skip artists the user already knows well
+      const cur = trackCounts.get(t.id) || { track: t, count: 0 };
+      cur.count++;
+      trackCounts.set(t.id, cur);
+    }
+    const topForSeed = [...trackCounts.values()]
+      .sort((a, b) => b.count - a.count)
+      .slice(0, tracksPerSeed)
+      .map(({ track }) => track);
+    if (topForSeed.length) {
+      results.push({ becauseOf: seed.artistName, tracks: topForSeed.map(tasteShapeTrack) });
+    }
+  }
+  return results;
+}
+
+// "Similar artists" — other artists sharing a genre with the user's top
+// artists (artists.genre is the one genre signal that exists today; see
+// this module's header comment — Step 4's richer audio-analysis metadata
+// will give this more to work with later without changing this function's
+// shape, just its inputs). Ranked by follower_count as the best available
+// "worth surfacing" signal, same ranking Discover → Artists already uses.
+async function dbTasteSimilarArtists(username, { limit = 12 } = {}) {
+  const myPlays = await dbTasteGetUserPlays(username, { days: 180 });
+  if (myPlays.length < TASTE_MIN_HISTORY_ROWS) return [];
+  const seeds = tasteTopArtistsFromPlays(myPlays, { limit: 5 });
+  if (!seeds.length) return [];
+
+  const { data: seedArtists, error } = await supabase
+    .from('artists').select('id, genre').in('id', seeds.map(s => s.artistId));
+  if (error) { console.error('[db] tasteSimilarArtists seeds:', error.message); return []; }
+  const genres = [...new Set((seedArtists || []).map(a => a.genre).filter(Boolean))];
+  if (!genres.length) return [];
+
+  const followedIds = new Set((await dbGetFollowedArtistIds(username)) || []);
+  const knownIds = new Set(seeds.map(s => s.artistId));
+
+  const { data: candidates, error: err2 } = await supabase
+    .from('artists')
+    .select('id, name, genre, avatar_url, follower_count, is_verified')
+    .in('genre', genres)
+    .order('follower_count', { ascending: false })
+    .limit(limit + seeds.length + 10); // over-fetch to survive filtering out seeds/already-followed below
+  if (err2) { console.error('[db] tasteSimilarArtists candidates:', err2.message); return []; }
+
+  return (candidates || [])
+    .filter(a => !knownIds.has(a.id) && !followedIds.has(a.id))
+    .slice(0, limit)
+    .map(a => ({
+      id: a.id, name: a.name, genre: a.genre, avatarUrl: a.avatar_url,
+      followerCount: a.follower_count || 0, isVerified: !!a.is_verified,
+    }));
+}
+
+// "Similar playlists" — public playlists that contain at least one track
+// by an artist the user actually listens to. playlist_tracks.track_data is
+// jsonb (denormalized per-track snapshot, not a foreign key to `tracks` —
+// see dbAddTrackToPlaylist), so this can't be a server-side join; it reads
+// public playlists' track_data client-side-of-the-query (in JS, after
+// fetching) and checks each one's artist field against the user's known
+// artist names. Matches by artist NAME rather than artist_id because
+// track_data is a point-in-time snapshot that was never guaranteed to
+// carry artist_id even when the live tracks row has one.
+async function dbTasteSimilarPlaylists(username, { limit = 8 } = {}) {
+  const myPlays = await dbTasteGetUserPlays(username, { days: 180 });
+  if (myPlays.length < TASTE_MIN_HISTORY_ROWS) return [];
+  const myArtistNames = new Set(
+    myPlays.map(r => (r.tracks.artist_name || '').toLowerCase().trim()).filter(Boolean)
+  );
+  if (!myArtistNames.size) return [];
+
+  const { data: playlists, error } = await supabase
+    .from('playlists_v2')
+    .select('id, name, description, owner, cover_url, like_count, track_count')
+    .eq('is_public', true)
+    .gt('track_count', 0)
+    .order('like_count', { ascending: false })
+    .limit(60); // scan a bounded candidate set rather than every public playlist on the platform
+  if (error) { console.error('[db] tasteSimilarPlaylists playlists:', error.message); return []; }
+  if (!playlists?.length) return [];
+
+  const scored = [];
+  for (const pl of playlists) {
+    const { data: tracks } = await supabase
+      .from('playlist_tracks').select('track_data').eq('playlist_id', pl.id).limit(50);
+    let matches = 0;
+    for (const row of (tracks || [])) {
+      const artist = (row.track_data?.artist || row.track_data?.artistName || '').toLowerCase().trim();
+      if (artist && myArtistNames.has(artist)) matches++;
+    }
+    if (matches > 0) scored.push({ playlist: pl, matches });
+  }
+  return scored
+    .sort((a, b) => b.matches - a.matches)
+    .slice(0, limit)
+    .map(({ playlist: p, matches }) => ({
+      id: p.id, name: p.name, description: p.description, owner: p.owner,
+      coverUrl: p.cover_url, likeCount: p.like_count || 0, trackCount: p.track_count || 0,
+      matchingTracks: matches,
+    }));
+}
+
+// "Trending in your taste" — tracks currently trending platform-wide
+// (play_count_7d, same signal Charts uses) narrowed to artists the user
+// already has history with, OR sharing a genre with their top artists.
+// This is the intersection of "popular right now" and "matches your
+// taste", not just a copy of the global trending chart.
+async function dbTasteTrendingInTaste(username, { limit = 12 } = {}) {
+  const myPlays = await dbTasteGetUserPlays(username, { days: 90 });
+  if (myPlays.length < TASTE_MIN_HISTORY_ROWS) return [];
+  const myArtistIds = new Set(myPlays.map(r => r.tracks.artist_id).filter(Boolean));
+
+  const { data: seedArtists } = await supabase
+    .from('artists').select('genre').in('id', [...myArtistIds]).limit(20);
+  const myGenres = new Set((seedArtists || []).map(a => a.genre).filter(Boolean));
+
+  const { data: trending, error } = await supabase
+    .from('tracks')
+    .select('id, title, artist_id, artist_name, cover_url, platform, original_url, play_count_7d, is_explicit, artists(genre)')
+    .eq('is_published', true)
+    .gt('play_count_7d', 0)
+    .order('play_count_7d', { ascending: false })
+    .limit(80); // bounded candidate pool from the trending edge, then filtered down to taste-matches
+  if (error) { console.error('[db] tasteTrendingInTaste:', error.message); return []; }
+
+  return (trending || [])
+    .filter(t => myArtistIds.has(t.artist_id) || (t.artists?.genre && myGenres.has(t.artists.genre)))
+    .slice(0, limit)
+    .map(t => ({
+      id: t.id, title: t.title, artistId: t.artist_id, artistName: t.artist_name,
+      coverUrl: t.cover_url, platform: t.platform, originalUrl: t.original_url,
+      playCount7d: t.play_count_7d, isExplicit: !!t.is_explicit,
+    }));
+}
+
+// Shared recency-bucket helper for "recently rediscovered" and "recently
+// forgotten favorites" — both compare an OLDER window against a RECENT
+// window of the same user's track_plays, just asking opposite questions
+// of the same two buckets (played-then-quiet-then-played-again vs
+// played-a-lot-then-gone-quiet). Centralizing the two-window fetch avoids
+// four near-identical Supabase calls across the two functions below.
+async function dbTasteGetPlayBuckets(username, { recentDays = 14, olderDays = 120 } = {}) {
+  const recentSince = new Date(Date.now() - recentDays * 24 * 60 * 60 * 1000).toISOString();
+  const olderSince  = new Date(Date.now() - olderDays  * 24 * 60 * 60 * 1000).toISOString();
+  const [{ data: recent, error: e1 }, { data: older, error: e2 }] = await Promise.all([
+    supabase.from('track_plays')
+      .select('track_id, played_at, tracks(id, title, artist_id, artist_name, cover_url, platform, original_url, is_explicit)')
+      .eq('username', username).gte('played_at', recentSince).order('played_at', { ascending: false }).limit(300),
+    supabase.from('track_plays')
+      .select('track_id, played_at, tracks(id, title, artist_id, artist_name, cover_url, platform, original_url, is_explicit)')
+      .eq('username', username).gte('played_at', olderSince).lt('played_at', recentSince).order('played_at', { ascending: false }).limit(300),
+  ]);
+  if (e1 || e2) { console.error('[db] tasteGetPlayBuckets:', e1?.message || e2?.message); return { recent: [], older: [] }; }
+  return {
+    recent: (recent || []).filter(r => r.tracks),
+    older:  (older  || []).filter(r => r.tracks),
+  };
+}
+
+// "Recently rediscovered" — tracks played in the OLDER window, went quiet
+// (no plays at all in the gap between older and recent), then got played
+// again in the RECENT window. A real "oh, this again!" pattern rather than
+// just "played twice recently".
+async function dbTasteRecentlyRediscovered(username, { limit = 10 } = {}) {
+  const { recent, older } = await dbTasteGetPlayBuckets(username, { recentDays: 14, olderDays: 150 });
+  if (recent.length < 2 || older.length < 2) return [];
+  // "Went quiet in between" is approximated by requiring the older play to
+  // be from ≥30 days before the recent one — a true gap-detection would
+  // need every play timestamp for the track, which the buckets already
+  // discard by design (the two-window fetch above only fetches the
+  // EDGES); a 30-day floor is deliberately conservative for a "quiet
+  // enough to count as rediscovered" reading.
+  const recentByTrack = new Map(recent.map(r => [r.track_id, r.played_at]));
+  const olderByTrack  = new Map(older.map(r  => [r.track_id, r.played_at]));
+  const rediscovered = [];
+  for (const [trackId, recentAt] of recentByTrack) {
+    const olderAt = olderByTrack.get(trackId);
+    if (!olderAt) continue;
+    const gapDays = (new Date(recentAt) - new Date(olderAt)) / (1000 * 60 * 60 * 24);
+    if (gapDays >= 30) {
+      const track = recent.find(r => r.track_id === trackId)?.tracks;
+      if (track) rediscovered.push({ track, lastPlayedBefore: olderAt, playedAgainAt: recentAt });
+    }
+  }
+  return rediscovered.slice(0, limit).map(r => ({
+    ...tasteShapeTrack(r.track), lastPlayedBefore: r.lastPlayedBefore, playedAgainAt: r.playedAgainAt,
+  }));
+}
+
+// "Recently forgotten favorites" — tracks the user clearly liked (either
+// explicitly via track_likes, or implicitly via heavy play volume in the
+// older window) that have had ZERO plays in the recent window. The
+// opposite question from rediscovered: "you used to love this, where'd it go?"
+async function dbTasteRecentlyForgotten(username, { limit = 10 } = {}) {
+  const { recent, older } = await dbTasteGetPlayBuckets(username, { recentDays: 21, olderDays: 180 });
+  const recentTrackIds = new Set(recent.map(r => r.track_id));
+
+  // Older-window play counts per track — "heavy" is relative to this
+  // user's own history (top quartile-ish), not a fixed global number, so
+  // a light listener's favorites aren't held to a power-listener's bar.
+  const olderCounts = new Map(); // track_id -> { track, count }
+  for (const row of older) {
+    const cur = olderCounts.get(row.track_id) || { track: row.tracks, count: 0 };
+    cur.count++;
+    olderCounts.set(row.track_id, cur);
+  }
+  const countsSorted = [...olderCounts.values()].sort((a, b) => b.count - a.count);
+  const heavyThreshold = countsSorted.length >= 4
+    ? countsSorted[Math.floor(countsSorted.length / 4)].count // top quartile cutoff
+    : 2; // small history: anything played 2+ times counts as a "favorite"
+
+  const forgottenFromPlays = countsSorted
+    .filter(({ track, count }) => track && count >= heavyThreshold && !recentTrackIds.has(track.id));
+
+  // Explicit likes are an even stronger signal than play volume — pull the
+  // user's liked tracks and add any that have gone quiet, even if their
+  // historical play count never crossed the heavy threshold above (someone
+  // can like a track after just one or two plays).
+  const { data: likedRows, error } = await supabase
+    .from('track_likes').select('track_id, tracks(id, title, artist_id, artist_name, cover_url, platform, original_url, is_explicit)')
+    .eq('username', username).limit(200);
+  if (error) console.error('[db] tasteRecentlyForgotten likes:', error.message);
+  const forgottenFromLikes = (likedRows || [])
+    .filter(row => row.tracks && !recentTrackIds.has(row.tracks.id))
+    .map(row => ({ track: row.tracks, count: null }));
+
+  const seen = new Set();
+  const merged = [];
+  for (const entry of [...forgottenFromLikes, ...forgottenFromPlays]) {
+    if (!entry.track || seen.has(entry.track.id)) continue;
+    seen.add(entry.track.id);
+    merged.push(entry.track);
+  }
+  return merged.slice(0, limit).map(tasteShapeTrack);
+}
+
+// Consistent public shape for a `tracks` row wherever Taste Graph returns
+// one — mirrors the field names Discover/Charts already use client-side
+// (playFromDiscoverTracks-style rows) so the frontend can reuse the same
+// resolveChartTrack() play/queue path without a parallel shape to handle.
+function tasteShapeTrack(t) {
+  return {
+    id: t.id, title: t.title, artistId: t.artist_id, artistName: t.artist_name,
+    coverUrl: t.cover_url, platform: t.platform, originalUrl: t.original_url,
+    isExplicit: !!t.is_explicit,
+  };
+}
+
+async function dbGetFollowedArtistIds(username) {
+  const { data, error } = await supabase
+    .from('artist_followers').select('artist_id').eq('follower_username', username);
+  if (error) { console.error('[db] getFollowedArtistIds:', error.message); return []; }
+  return (data || []).map(r => r.artist_id);
+}
+
+// Skipped tracks — the one Taste Graph source that's purely diagnostic
+// rather than recommendation fuel: surfaced back to the user as "you tend
+// to skip these" rather than fed into any of the modules above, since a
+// skip is a much weaker/noisier signal than a play (someone can skip a
+// track they like because they weren't in the mood, not because they
+// dislike it) and treating it as strong negative signal would be a
+// confident claim the data doesn't support.
+async function dbTasteRecentlySkipped(username, { limit = 10, days = 30 } = {}) {
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+  const { data, error } = await supabase
+    .from('track_plays')
+    .select('track_id, played_at, tracks(id, title, artist_id, artist_name, cover_url, platform, original_url, is_explicit)')
+    .eq('username', username).eq('completed', false)
+    .gte('played_at', since).order('played_at', { ascending: false }).limit(limit * 3);
+  if (error) { console.error('[db] tasteRecentlySkipped:', error.message); return []; }
+  const seen = new Set();
+  const out = [];
+  for (const row of (data || [])) {
+    if (!row.tracks || seen.has(row.tracks.id)) continue;
+    seen.add(row.tracks.id);
+    out.push(tasteShapeTrack(row.tracks));
+    if (out.length >= limit) break;
+  }
+  return out;
 }
 
 async function dbGetTopTracks({ window = 'all', limit = 50 } = {}) {
@@ -5200,6 +5624,66 @@ app.get('/api/playlists/:id/edit-log', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
+//  TASTE GRAPH
+//  GET /api/taste   ?token=   → { hasEnoughHistory, becauseYouListened, similarArtists,
+//                                 similarPlaylists, trendingInTaste, recentlyRediscovered,
+//                                 recentlyForgotten, recentlySkipped }
+//
+//  Auth required (recommendations are inherently per-user — there's no
+//  meaningful anonymous version of "your taste"), but NOT Premium-gated:
+//  this reads the same track_plays/track_likes/artist_followers data every
+//  signed-in listener already generates just by using FREQ normally, same
+//  "available to every account" spirit as Discover and Charts.
+//
+//  All six modules are computed in parallel — they're independent reads
+//  over different (or differently-windowed) slices of the same handful of
+//  tables, not a pipeline where one depends on another's output, so there's
+//  no reason to serialize them.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+app.get('/api/taste', async (req, res) => {
+  const token = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Sign in to see your Taste Graph.' });
+  try {
+    const recentPlays = await dbTasteGetUserPlays(sess.username, { days: 90, limit: 20 });
+    const hasEnoughHistory = recentPlays.length >= TASTE_MIN_HISTORY_ROWS;
+    if (!hasEnoughHistory) {
+      // Cheap, honest early return — every module below needs at least
+      // TASTE_MIN_HISTORY_ROWS to produce anything meaningful, so there's
+      // no point firing ~6 more queries just to get empty arrays back.
+      return res.json({
+        hasEnoughHistory: false,
+        becauseYouListened: [], similarArtists: [], similarPlaylists: [],
+        trendingInTaste: [], recentlyRediscovered: [], recentlyForgotten: [], recentlySkipped: [],
+      });
+    }
+
+    const [
+      becauseYouListened, similarArtists, similarPlaylists,
+      trendingInTaste, recentlyRediscovered, recentlyForgotten, recentlySkipped,
+    ] = await Promise.all([
+      dbTasteBecauseYouListened(sess.username),
+      dbTasteSimilarArtists(sess.username),
+      dbTasteSimilarPlaylists(sess.username),
+      dbTasteTrendingInTaste(sess.username),
+      dbTasteRecentlyRediscovered(sess.username),
+      dbTasteRecentlyForgotten(sess.username),
+      dbTasteRecentlySkipped(sess.username),
+    ]);
+
+    return res.json({
+      hasEnoughHistory: true,
+      becauseYouListened, similarArtists, similarPlaylists,
+      trendingInTaste, recentlyRediscovered, recentlyForgotten, recentlySkipped,
+    });
+  } catch (err) {
+    console.error('[taste graph]', err);
+    return res.status(500).json({ error: 'Could not load your Taste Graph right now.' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
 //  PLAYLIST LIKES
 //  POST    /api/playlists/:id/like     { token }  → like (idempotent)
 //  DELETE  /api/playlists/:id/like     { token }  → unlike (idempotent)
@@ -5337,15 +5821,21 @@ app.get('/api/playlists/:id', async (req, res) => {
 });
 // ═══════════════════════════════════════════════════════════════════════════════
 //  COMMUNITY CHARTS — play tracking + rankings
-//  POST /api/plays                { originalUrl, platform?, title?, token?, trackId? }
+//  POST /api/plays                { originalUrl, platform?, title?, token?, trackId?, previousPlay? }
 //  GET  /api/charts/tracks         ?window=all|7d&limit=
 //
 //  Logging a play does NOT require auth — anonymous listeners count toward
 //  Charts too, same as a real radio audience. token is optional; when
-//  present and valid it attaches a username to the track_plays row (purely
-//  informational, no per-user feature reads this yet) and is included in
-//  the cooldown key so a signed-in listener's cooldown follows them across
-//  IP changes. When absent, the IP is used as the cooldown key instead.
+//  present and valid it attaches a username to the track_plays row and
+//  (new, Taste Graph) is required for previousPlay to be honored — the
+//  cooldown key also follows a signed-in listener across IP changes. When
+//  absent, the IP is used as the cooldown key instead.
+//
+//  previousPlay?: { rowId, completed } — best-effort report of how the
+//  PREVIOUS track (not this one) actually ended: reached natural completion
+//  vs abandoned early. See logPlay() client-side and dbMarkPlayOutcome
+//  server-side. Response includes playRowId so the client can report THIS
+//  play's outcome later, when the track after it starts.
 //
 //  This route deliberately sits on the generic per-IP `rateLimit` (120/min)
 //  rather than a bespoke limiter — same tier as /api/resolve and
@@ -5355,7 +5845,7 @@ app.get('/api/playlists/:id', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 app.post('/api/plays', rateLimit, async (req, res) => {
-  const { originalUrl, platform, title, artist, token, trackId, source } = req.body || {};
+  const { originalUrl, platform, title, artist, token, trackId, source, previousPlay } = req.body || {};
   if (!originalUrl || typeof originalUrl !== 'string') {
     return res.status(400).json({ error: '"originalUrl" is required.' });
   }
@@ -5403,7 +5893,22 @@ app.post('/api/plays', rateLimit, async (req, res) => {
       source: safeSource,
     });
     if (!result) return res.status(500).json({ error: 'Could not log play.' });
-    return res.json({ counted: result.counted, playCount: result.playCount ?? null });
+
+    // Taste Graph completion signal for the PREVIOUS track, piggybacked on
+    // this request rather than a dedicated endpoint — see logPlay()
+    // client-side for why this is the natural place to learn it (the
+    // client only knows how a track ended once the NEXT one starts). Only
+    // trusted for signed-in listeners reporting on their OWN previous row
+    // (dbMarkPlayOutcome re-checks the username server-side too), and only
+    // a well-formed uuid + boolean is accepted — silently ignored otherwise
+    // rather than erroring, since this is a best-effort enrichment of an
+    // already-successful play log, not something the response should fail
+    // over.
+    if (sess && previousPlay && UUID_RE.test(previousPlay.rowId || '') && typeof previousPlay.completed === 'boolean') {
+      dbMarkPlayOutcome(previousPlay.rowId, sess.username, previousPlay.completed).catch(() => {});
+    }
+
+    return res.json({ counted: result.counted, playCount: result.playCount ?? null, playRowId: result.playRowId ?? null });
   } catch (err) {
     console.error('[plays log]', err);
     return res.status(500).json({ error: 'Could not log play.' });
