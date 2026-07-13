@@ -116,6 +116,33 @@ async function submitVerificationClaim() {
       if (res.status === 401) { handleTokenExpiry(); return; }
       throw new Error(data.error || 'Could not start verification.');
     }
+
+    // Backend generated + stored the token; it hands back the real link so
+    // WE send it (real browser context — EmailJS's API blocks server-side
+    // calls unless "non-browser applications" is explicitly enabled on the
+    // account, which is why this moved to the frontend).
+    try {
+      await emailjs.send(
+        FREQ_VERIFICATION_EMAILJS.SERVICE_ID,
+        FREQ_VERIFICATION_EMAILJS.TEMPLATE_ID,
+        {
+          email: data.contactEmail || contactEmail,
+          artistName: data.artistName || 'there',
+          verifyUrl: data.verifyUrl,
+          expiresInHours: String(data.expiresInHours || 24),
+        },
+        { publicKey: FREQ_VERIFICATION_EMAILJS.PUBLIC_KEY }
+      );
+    } catch (emailErr) {
+      console.error('[verification email] EmailJS send failed:', emailErr);
+      // Request already exists server-side at this point — don't block the
+      // user on a delivery hiccup, just tell them plainly and let "Check
+      // Again" / a resend action retry later rather than losing the request.
+      showToast('Started, but email may not have sent', 'You can retry from the pending screen.', 'warning');
+      await loadVerificationSection();
+      return;
+    }
+
     showToast('Verification started', 'Check your email to confirm your address.', 'success');
     await loadVerificationSection();
   } catch (err) {
