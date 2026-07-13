@@ -98,6 +98,48 @@ const { createSupabaseClientFromEnv, createFallbackSupabaseClient } = require('.
 const { verifyPremiumNow, verifyPremiumIfDue } = require('./lib/premiumVerification');
 const { getConfiguredProviders } = require('./lib/premium-providers');
 const radio = require('./lib/radio');
+
+// ─── EmailJS (transactional email) ─────────────────────────────────────────
+// Used for artist-verification emails (magic-link confirm + status updates).
+// EmailJS's REST API takes service_id + template_id + a public key (safe to
+// ship in code) and, for server-side/no-CAPTCHA sends, a private key that
+// MUST stay in .env only. If any of these env vars are missing, sends are
+// skipped and just logged (safe no-op for local dev / before setup).
+const EMAILJS_SERVICE_ID = process.env.EMAILJS_SERVICE_ID || 'service_gfpf5hf';
+const EMAILJS_TEMPLATE_ID_VERIFY = process.env.EMAILJS_TEMPLATE_ID_VERIFY || 'template_hy427sb';
+const EMAILJS_TEMPLATE_ID_STATUS = process.env.EMAILJS_TEMPLATE_ID_STATUS || process.env.EMAILJS_TEMPLATE_ID_VERIFY || 'template_hy427sb';
+const EMAILJS_PUBLIC_KEY = process.env.EMAILJS_PUBLIC_KEY || 'pYuzWgI7zierUF20O';
+const EMAILJS_PRIVATE_KEY = process.env.EMAILJS_PRIVATE_KEY || ''; // optional but recommended for server-side sends
+const EMAILJS_ENABLED = Boolean(EMAILJS_SERVICE_ID && EMAILJS_TEMPLATE_ID_VERIFY && EMAILJS_PUBLIC_KEY);
+
+if (!EMAILJS_ENABLED) {
+  console.warn('[email] EMAILJS_SERVICE_ID not set; verification emails will only be logged, not sent.');
+}
+
+// Low-level EmailJS REST call. template_params keys must match the {{vars}}
+// used inside the EmailJS template editor exactly.
+async function sendEmailJs({ templateId, templateParams }) {
+  if (!EMAILJS_ENABLED) return { skipped: true };
+  const body = {
+    service_id: EMAILJS_SERVICE_ID,
+    template_id: templateId,
+    user_id: EMAILJS_PUBLIC_KEY,
+    template_params: templateParams,
+  };
+  if (EMAILJS_PRIVATE_KEY) body.accessToken = EMAILJS_PRIVATE_KEY;
+
+  const res = await fetch('https://api.emailjs.com/api/v1.0/email/send', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`EmailJS send failed (${res.status}): ${text}`);
+  }
+  return { skipped: false };
+}
+
 let verificationCore;
 try {
   verificationCore = require('./lib/verificationCore');
@@ -163,9 +205,35 @@ const fallbackVerificationCore = {
   },
   async sendVerificationEmail({ to, artistName, verifyUrl, expiresInHours }) {
     console.log(`[verification email] ${artistName} <${to}> (${expiresInHours}h): ${verifyUrl}`);
+    try {
+      await sendEmailJs({
+        templateId: EMAILJS_TEMPLATE_ID_VERIFY,
+        templateParams: {
+          email: to,
+          artistName: artistName || 'there',
+          verifyUrl,
+          expiresInHours: String(expiresInHours || 24),
+        },
+      });
+    } catch (err) {
+      console.error('[verification email] EmailJS send failed:', err?.message || err);
+    }
   },
   async sendStatusUpdateEmail({ to, artistName, status, reason }) {
     console.log(`[verification status email] ${artistName} <${to}>: ${status}${reason ? ` - ${reason}` : ''}`);
+    try {
+      await sendEmailJs({
+        templateId: EMAILJS_TEMPLATE_ID_STATUS,
+        templateParams: {
+          email: to,
+          artistName: artistName || 'your artist page',
+          status: status || '',
+          reason: reason || '',
+        },
+      });
+    } catch (err) {
+      console.error('[verification status email] EmailJS send failed:', err?.message || err);
+    }
   },
   async transitionStatus(supabase, requestId, fromStatus, toStatus, { actor = 'system', detail = {} } = {}) {
     const { data, error } = await supabase.from('artist_verification_requests')
