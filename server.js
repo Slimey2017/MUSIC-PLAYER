@@ -8405,6 +8405,364 @@ app.delete('/api/tracks/:trackId/motion-canvas', rateLimit, async (req, res) => 
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
+//  ARTIST VERIFICATION  — liveness capture + AI-generated-content screening,
+//  reviewed by a human admin. This does NOT attempt to confirm who someone
+//  claims to be (no identity/face matching against any named person) — it
+//  only establishes two things, both left for an admin to weigh:
+//    1. Liveness: the artist recorded themselves live, following an
+//       on-screen action prompt (turn head / blink), rather than submitting
+//       a static photo or a pre-made clip. The prompt itself is generated
+//       and returned by upload-url and re-checked against nothing server-
+//       side (there's no computer-vision gesture verification here) — it
+//       exists to make lazy/scripted spoofing more friction-heavy, not to
+//       be an automated pass/fail gate.
+//    2. AI-generation likelihood: both the still frame and the video are
+//       run through Sightengine's `genai` model on confirm. This returns a
+//       confidence score, not a verdict — no submission is auto-approved
+//       or auto-rejected from this score alone. It's surfaced to the admin
+//       alongside the media itself.
+//  The actual decision — approve/reject — is always a human admin action
+//  via the review endpoints below, which is what finally flips
+//  artists.is_verified (same column the existing manual
+//  POST/DELETE /api/admin/artists/:id/verify routes already toggle;
+//  this feature adds an evidence trail in front of that same switch,
+//  it doesn't replace it — an admin can still verify/unverify directly
+//  if they already have out-of-band confidence).
+//
+//  Upload flow mirrors Motion Canvas's direct-to-storage pattern:
+//    1. POST /api/verification/upload-url  { token, kind:'photo'|'video', filename, mimeType, size }
+//    2. Browser PUTs bytes directly to the returned signedUrl.
+//    3. POST /api/verification/:id/confirm { token }
+//       → runs the Sightengine genai check server-side, stores the score.
+//    4. POST /api/verification/submit      { token, photoFileId, videoFileId }
+//       → creates the actual review request once both files are ready.
+//  Admin side:
+//    GET   /api/admin/verification-requests            requireAdmin
+//    GET   /api/admin/verification-requests/:id         requireAdmin  (includes signed media URLs)
+//    POST  /api/admin/verification-requests/:id/approve requireAdmin  → sets artists.is_verified = true
+//    POST  /api/admin/verification-requests/:id/reject  requireAdmin  { reason? }
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const VERIFICATION_BUCKET = 'verification-submissions'; // PRIVATE bucket — never expose publicly, this is biometric-adjacent media
+const VERIFICATION_MAX_BYTES = { photo: 8 * 1048576, video: 40 * 1048576 }; // 8MB photo, 40MB for a few seconds of video
+const VERIFICATION_SIGNED_UPLOAD_TTL_SECONDS = 60 * 15;
+const VERIFICATION_SIGNED_READ_TTL_SECONDS = 60 * 10; // short-lived — only an admin viewing the review screen should ever see this
+const VERIFICATION_MIME_TYPES = {
+  photo: { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' },
+  video: { 'video/mp4': 'mp4', 'video/webm': 'webm' },
+};
+const VERIFICATION_ACTION_PROMPTS = [
+  'Turn your head slowly to the left, then back to center.',
+  'Turn your head slowly to the right, then back to center.',
+  'Blink twice, slowly.',
+  'Nod your head once, slowly.',
+  'Look up, then back to center.',
+];
+
+function guessVerificationExtFromMime(kind, mimeType) {
+  return (VERIFICATION_MIME_TYPES[kind] || {})[mimeType] || (kind === 'video' ? 'mp4' : 'jpg');
+}
+
+async function dbGetVerificationFile(id, username) {
+  const { data, error } = await supabase
+    .from('verification_files').select('*').eq('id', id).eq('owner', username).maybeSingle();
+  if (error) { console.error('[db] getVerificationFile:', error.message); return null; }
+  return data;
+}
+
+async function dbInsertVerificationFile(row) {
+  const { data, error } = await supabase.from('verification_files').insert(row).select().single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+// Calls Sightengine's genai model on a file already sitting in our private
+// bucket. Sightengine needs a URL it can fetch, so this mints a short-lived
+// signed read URL first rather than proxying bytes through our own server.
+// Returns { aiScore: number|null, raw: object|null } — aiScore stays null
+// (never a fabricated 0) if Sightengine isn't configured or the call fails,
+// so a missing score reads honestly as "not screened" rather than "clean."
+async function runSightengineGenAICheck(storagePath) {
+  if (!process.env.SIGHTENGINE_API_USER || !process.env.SIGHTENGINE_API_SECRET) {
+    return { aiScore: null, raw: null, skipped: 'not_configured' };
+  }
+  try {
+    const { data: signed, error: signErr } = await supabase.storage
+      .from(VERIFICATION_BUCKET)
+      .createSignedUrl(storagePath, 300); // 5 minutes — just long enough for Sightengine to fetch it
+    if (signErr) throw new Error(signErr.message);
+
+    const params = new URLSearchParams({
+      url: signed.signedUrl,
+      models: 'genai',
+      api_user: process.env.SIGHTENGINE_API_USER,
+      api_secret: process.env.SIGHTENGINE_API_SECRET,
+    });
+    const resp = await fetch(`https://api.sightengine.com/1.0/check.json?${params.toString()}`);
+    const json = await resp.json();
+    if (json.status !== 'success') throw new Error(json?.error?.message || 'Sightengine check failed.');
+    const aiScore = typeof json?.type?.ai_generated === 'number' ? json.type.ai_generated : null;
+    return { aiScore, raw: json, skipped: null };
+  } catch (err) {
+    console.error('[sightengine genai check]', err.message);
+    return { aiScore: null, raw: null, skipped: 'error' };
+  }
+}
+
+// POST /api/verification/upload-url   { token, kind:'photo'|'video', filename, mimeType, size }
+app.post('/api/verification/upload-url', rateLimit, async (req, res) => {
+  const { token, kind, filename, mimeType, size } = req.body || {};
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  if (kind !== 'photo' && kind !== 'video') {
+    return res.status(400).json({ error: '"kind" must be "photo" or "video".' });
+  }
+  if (!VERIFICATION_MIME_TYPES[kind][mimeType]) {
+    return res.status(400).json({ error: kind === 'photo' ? 'Unsupported format. Upload JPEG, PNG, or WebP.' : 'Unsupported format. Upload MP4 or WebM.' });
+  }
+  const sizeNum = Number(size);
+  if (!Number.isFinite(sizeNum) || sizeNum <= 0) {
+    return res.status(400).json({ error: '"size" (bytes) is required.' });
+  }
+  if (sizeNum > VERIFICATION_MAX_BYTES[kind]) {
+    return res.status(413).json({ error: `File exceeds the ${VERIFICATION_MAX_BYTES[kind] / 1048576}MB limit.` });
+  }
+
+  try {
+    const safeName = String(filename || kind).replace(/[^a-zA-Z0-9._-]/g, '_').slice(-150);
+    const ext = guessVerificationExtFromMime(kind, mimeType);
+    const storagePath = `${sess.username}/${Date.now()}-${crypto.randomBytes(4).toString('hex')}-${safeName.replace(/\.[a-zA-Z0-9]+$/, '')}.${ext}`;
+
+    const row = await dbInsertVerificationFile({
+      owner: sess.username,
+      kind,
+      filename: String(filename || kind).slice(0, 255),
+      mime_type: mimeType,
+      size: sizeNum,
+      storage_path: storagePath,
+      upload_status: 'pending',
+    });
+
+    const { data, error } = await supabase.storage
+      .from(VERIFICATION_BUCKET)
+      .createSignedUploadUrl(storagePath, { upsert: false });
+    if (error) throw new Error(error.message);
+
+    return res.status(201).json({
+      verificationFileId: row.id,
+      uploadUrl: data.signedUrl,
+      uploadToken: data.token,
+      storagePath,
+      expiresIn: VERIFICATION_SIGNED_UPLOAD_TTL_SECONDS,
+    });
+  } catch (err) {
+    console.error('[verification upload-url]', err);
+    return res.status(500).json({ error: 'Could not start upload.' });
+  }
+});
+
+// POST /api/verification/:id/confirm   { token }
+// Runs the Sightengine genai check right after the file lands in Storage —
+// this is the one point where we know the bytes actually exist and are
+// stable, same "confirm is the real gate" reasoning as Motion Canvas.
+app.post('/api/verification/:id/confirm', rateLimit, async (req, res) => {
+  const { token } = req.body || {};
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  try {
+    const file = await dbGetVerificationFile(req.params.id, sess.username);
+    if (!file) return res.status(404).json({ error: 'Upload not found.' });
+
+    const { aiScore, skipped } = await runSightengineGenAICheck(file.storage_path);
+
+    const { data, error } = await supabase.from('verification_files')
+      .update({ upload_status: 'ready', ready_at: new Date().toISOString(), ai_score: aiScore, ai_check_skipped: skipped })
+      .eq('id', file.id).select().single();
+    if (error) throw new Error(error.message);
+
+    return res.json({
+      id: data.id, kind: data.kind, uploadStatus: data.upload_status,
+      aiScore: data.ai_score, aiCheckSkipped: data.ai_check_skipped,
+    });
+  } catch (err) {
+    console.error('[verification confirm]', err);
+    return res.status(500).json({ error: 'Could not confirm upload.' });
+  }
+});
+
+// GET /api/verification/prompt — a random liveness action prompt for the
+// capture UI to display. Stateless; the same prompt text is echoed back in
+// the submission (client sends promptShown) purely as context for whoever
+// reviews it, not as something the server verifies was followed.
+app.get('/api/verification/prompt', rateLimit, (req, res) => {
+  const prompt = VERIFICATION_ACTION_PROMPTS[Math.floor(Math.random() * VERIFICATION_ACTION_PROMPTS.length)];
+  return res.json({ prompt });
+});
+
+// POST /api/verification/submit   { token, photoFileId, videoFileId, promptShown? }
+// Creates the actual review request. Requires the caller to already have
+// (or be creating) an artist page — verification without an artist page
+// to attach it to doesn't mean anything.
+app.post('/api/verification/submit', rateLimit, async (req, res) => {
+  const { token, photoFileId, videoFileId, promptShown } = req.body || {};
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  if (!photoFileId || !videoFileId) {
+    return res.status(400).json({ error: 'Both a photo and a video are required.' });
+  }
+  try {
+    const [photo, video] = await Promise.all([
+      dbGetVerificationFile(photoFileId, sess.username),
+      dbGetVerificationFile(videoFileId, sess.username),
+    ]);
+    if (!photo || photo.kind !== 'photo' || photo.upload_status !== 'ready') {
+      return res.status(400).json({ error: 'Photo upload is not ready.' });
+    }
+    if (!video || video.kind !== 'video' || video.upload_status !== 'ready') {
+      return res.status(400).json({ error: 'Video upload is not ready.' });
+    }
+
+    const artist = await dbGetArtistByAccount(sess.username);
+    if (!artist) {
+      return res.status(400).json({ error: 'You need an artist page before requesting verification.' });
+    }
+
+    // One open (pending) request per artist at a time — resubmitting
+    // replaces rather than piles up duplicates for the admin queue.
+    await supabase.from('artist_verification_requests')
+      .delete().eq('artist_id', artist.id).eq('status', 'pending');
+
+    const { data: reqRow, error } = await supabase.from('artist_verification_requests').insert({
+      artist_id: artist.id,
+      submitted_by: sess.username,
+      photo_file_id: photo.id,
+      video_file_id: video.id,
+      prompt_shown: promptShown ? String(promptShown).slice(0, 300) : null,
+      status: 'pending',
+    }).select().single();
+    if (error) throw new Error(error.message);
+
+    return res.status(201).json({ id: reqRow.id, status: reqRow.status });
+  } catch (err) {
+    console.error('[verification submit]', err);
+    return res.status(500).json({ error: 'Could not submit verification request.' });
+  }
+});
+
+// GET /api/verification/mine   ?token=   — lets an artist see their own
+// pending/past request status without needing admin access.
+app.get('/api/verification/mine', rateLimit, async (req, res) => {
+  const token = req.query.token;
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  try {
+    const artist = await dbGetArtistByAccount(sess.username);
+    if (!artist) return res.json({ request: null });
+    const { data, error } = await supabase.from('artist_verification_requests')
+      .select('id, status, reason, created_at, decided_at')
+      .eq('artist_id', artist.id).order('created_at', { ascending: false }).limit(1).maybeSingle();
+    if (error) throw new Error(error.message);
+    return res.json({ request: data || null });
+  } catch (err) {
+    console.error('[verification mine]', err);
+    return res.status(500).json({ error: 'Could not load verification status.' });
+  }
+});
+
+// ─── Admin review ───────────────────────────────────────────────────────────
+
+// GET /api/admin/verification-requests   requireAdmin   ?status=pending|approved|rejected
+app.get('/api/admin/verification-requests', requireAdmin, async (req, res) => {
+  try {
+    const status = ['pending', 'approved', 'rejected'].includes(req.query.status) ? req.query.status : 'pending';
+    const { data, error } = await supabase.from('artist_verification_requests')
+      .select('*, artists(id, name, slug), photo:verification_files!artist_verification_requests_photo_file_id_fkey(ai_score, ai_check_skipped), video:verification_files!artist_verification_requests_video_file_id_fkey(ai_score, ai_check_skipped)')
+      .eq('status', status).order('created_at', { ascending: true });
+    if (error) throw new Error(error.message);
+    return res.json({ requests: data || [] });
+  } catch (err) {
+    console.error('[admin verification list]', err);
+    return res.status(500).json({ error: 'Could not load verification requests.' });
+  }
+});
+
+// GET /api/admin/verification-requests/:id   requireAdmin
+// Includes short-lived signed URLs for the photo/video — these are only
+// ever minted for an authenticated admin viewing this specific screen,
+// never cached or exposed anywhere else.
+app.get('/api/admin/verification-requests/:id', requireAdmin, async (req, res) => {
+  try {
+    const { data: reqRow, error } = await supabase.from('artist_verification_requests')
+      .select('*, artists(id, name, slug)').eq('id', req.params.id).maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!reqRow) return res.status(404).json({ error: 'Request not found.' });
+
+    const [photo, video] = await Promise.all([
+      supabase.from('verification_files').select('*').eq('id', reqRow.photo_file_id).maybeSingle(),
+      supabase.from('verification_files').select('*').eq('id', reqRow.video_file_id).maybeSingle(),
+    ]);
+
+    let photoUrl = null, videoUrl = null;
+    if (photo.data) {
+      const { data: signed } = await supabase.storage.from(VERIFICATION_BUCKET)
+        .createSignedUrl(photo.data.storage_path, VERIFICATION_SIGNED_READ_TTL_SECONDS);
+      photoUrl = signed?.signedUrl || null;
+    }
+    if (video.data) {
+      const { data: signed } = await supabase.storage.from(VERIFICATION_BUCKET)
+        .createSignedUrl(video.data.storage_path, VERIFICATION_SIGNED_READ_TTL_SECONDS);
+      videoUrl = signed?.signedUrl || null;
+    }
+
+    return res.json({
+      id: reqRow.id, status: reqRow.status, promptShown: reqRow.prompt_shown,
+      createdAt: reqRow.created_at, artist: reqRow.artists,
+      photo: photo.data ? { url: photoUrl, aiScore: photo.data.ai_score, aiCheckSkipped: photo.data.ai_check_skipped } : null,
+      video: video.data ? { url: videoUrl, aiScore: video.data.ai_score, aiCheckSkipped: video.data.ai_check_skipped } : null,
+    });
+  } catch (err) {
+    console.error('[admin verification detail]', err);
+    return res.status(500).json({ error: 'Could not load verification request.' });
+  }
+});
+
+// POST /api/admin/verification-requests/:id/approve   requireAdmin
+// Approving both resolves the request AND flips artists.is_verified —
+// the same column the existing manual verify route uses, so a verified
+// badge looks identical regardless of which path produced it.
+app.post('/api/admin/verification-requests/:id/approve', requireAdmin, async (req, res) => {
+  try {
+    const { data: reqRow, error } = await supabase.from('artist_verification_requests')
+      .update({ status: 'approved', decided_at: new Date().toISOString(), decided_by: req._adminSession.username })
+      .eq('id', req.params.id).select().single();
+    if (error) throw new Error(error.message);
+    if (!reqRow) return res.status(404).json({ error: 'Request not found.' });
+
+    await supabase.from('artists').update({ is_verified: true }).eq('id', reqRow.artist_id);
+    return res.json({ id: reqRow.id, status: 'approved' });
+  } catch (err) {
+    console.error('[admin verification approve]', err);
+    return res.status(500).json({ error: 'Could not approve request.' });
+  }
+});
+
+// POST /api/admin/verification-requests/:id/reject   requireAdmin   { reason? }
+app.post('/api/admin/verification-requests/:id/reject', requireAdmin, async (req, res) => {
+  const { reason } = req.body || {};
+  try {
+    const { data: reqRow, error } = await supabase.from('artist_verification_requests')
+      .update({ status: 'rejected', reason: reason ? String(reason).slice(0, 500) : null, decided_at: new Date().toISOString(), decided_by: req._adminSession.username })
+      .eq('id', req.params.id).select().single();
+    if (error) throw new Error(error.message);
+    if (!reqRow) return res.status(404).json({ error: 'Request not found.' });
+    return res.json({ id: reqRow.id, status: 'rejected' });
+  } catch (err) {
+    console.error('[admin verification reject]', err);
+    return res.status(500).json({ error: 'Could not reject request.' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
 //  NAMED INDEXES  — server-curated playlists fetchable by slug
 //  GET /api/index/:name  → { name, tracks: [...], total, fetchedAt }
 //  GET /api/index        → { indexes: ['flex', ...] }
