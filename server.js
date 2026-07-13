@@ -421,7 +421,7 @@ const supabase = createSupabaseClientFromEnv(process.env) || createFallbackSupab
 // Supabase dashboard/CLI (private, no public access) before this code path
 // runs — storeEncryptedDocument will fail with a clear storage error if the
 // bucket doesn't exist yet, rather than silently writing somewhere public.
-const VERIFICATION_DOC_BUCKET = 'verification-documents';
+const VERIFICATION_DOC_BUCKET = 'verification-docs';
 
 // AES-256-GCM key for verification_documents.encryption_iv/encryption_tag.
 // Set VERIFICATION_DOC_ENCRYPTION_KEY in Render's env vars — any secret
