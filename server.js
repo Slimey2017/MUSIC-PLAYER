@@ -98,6 +98,7 @@ const { createSupabaseClientFromEnv, createFallbackSupabaseClient } = require('.
 const { verifyPremiumNow, verifyPremiumIfDue } = require('./lib/premiumVerification');
 const { getConfiguredProviders } = require('./lib/premium-providers');
 const radio = require('./lib/radio');
+const verificationCore = require('./lib/verificationCore');
 
 // ─── Supabase client (server-side only — uses service role key) ───────────────
 const supabase = createSupabaseClientFromEnv(process.env) || createFallbackSupabaseClient();
@@ -8405,364 +8406,6 @@ app.delete('/api/tracks/:trackId/motion-canvas', rateLimit, async (req, res) => 
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  ARTIST VERIFICATION  — liveness capture + AI-generated-content screening,
-//  reviewed by a human admin. This does NOT attempt to confirm who someone
-//  claims to be (no identity/face matching against any named person) — it
-//  only establishes two things, both left for an admin to weigh:
-//    1. Liveness: the artist recorded themselves live, following an
-//       on-screen action prompt (turn head / blink), rather than submitting
-//       a static photo or a pre-made clip. The prompt itself is generated
-//       and returned by upload-url and re-checked against nothing server-
-//       side (there's no computer-vision gesture verification here) — it
-//       exists to make lazy/scripted spoofing more friction-heavy, not to
-//       be an automated pass/fail gate.
-//    2. AI-generation likelihood: both the still frame and the video are
-//       run through Sightengine's `genai` model on confirm. This returns a
-//       confidence score, not a verdict — no submission is auto-approved
-//       or auto-rejected from this score alone. It's surfaced to the admin
-//       alongside the media itself.
-//  The actual decision — approve/reject — is always a human admin action
-//  via the review endpoints below, which is what finally flips
-//  artists.is_verified (same column the existing manual
-//  POST/DELETE /api/admin/artists/:id/verify routes already toggle;
-//  this feature adds an evidence trail in front of that same switch,
-//  it doesn't replace it — an admin can still verify/unverify directly
-//  if they already have out-of-band confidence).
-//
-//  Upload flow mirrors Motion Canvas's direct-to-storage pattern:
-//    1. POST /api/verification/upload-url  { token, kind:'photo'|'video', filename, mimeType, size }
-//    2. Browser PUTs bytes directly to the returned signedUrl.
-//    3. POST /api/verification/:id/confirm { token }
-//       → runs the Sightengine genai check server-side, stores the score.
-//    4. POST /api/verification/submit      { token, photoFileId, videoFileId }
-//       → creates the actual review request once both files are ready.
-//  Admin side:
-//    GET   /api/admin/verification-requests            requireAdmin
-//    GET   /api/admin/verification-requests/:id         requireAdmin  (includes signed media URLs)
-//    POST  /api/admin/verification-requests/:id/approve requireAdmin  → sets artists.is_verified = true
-//    POST  /api/admin/verification-requests/:id/reject  requireAdmin  { reason? }
-// ═══════════════════════════════════════════════════════════════════════════════
-
-const VERIFICATION_BUCKET = 'verification-submissions'; // PRIVATE bucket — never expose publicly, this is biometric-adjacent media
-const VERIFICATION_MAX_BYTES = { photo: 8 * 1048576, video: 40 * 1048576 }; // 8MB photo, 40MB for a few seconds of video
-const VERIFICATION_SIGNED_UPLOAD_TTL_SECONDS = 60 * 15;
-const VERIFICATION_SIGNED_READ_TTL_SECONDS = 60 * 10; // short-lived — only an admin viewing the review screen should ever see this
-const VERIFICATION_MIME_TYPES = {
-  photo: { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' },
-  video: { 'video/mp4': 'mp4', 'video/webm': 'webm' },
-};
-const VERIFICATION_ACTION_PROMPTS = [
-  'Turn your head slowly to the left, then back to center.',
-  'Turn your head slowly to the right, then back to center.',
-  'Blink twice, slowly.',
-  'Nod your head once, slowly.',
-  'Look up, then back to center.',
-];
-
-function guessVerificationExtFromMime(kind, mimeType) {
-  return (VERIFICATION_MIME_TYPES[kind] || {})[mimeType] || (kind === 'video' ? 'mp4' : 'jpg');
-}
-
-async function dbGetVerificationFile(id, username) {
-  const { data, error } = await supabase
-    .from('verification_files').select('*').eq('id', id).eq('owner', username).maybeSingle();
-  if (error) { console.error('[db] getVerificationFile:', error.message); return null; }
-  return data;
-}
-
-async function dbInsertVerificationFile(row) {
-  const { data, error } = await supabase.from('verification_files').insert(row).select().single();
-  if (error) throw new Error(error.message);
-  return data;
-}
-
-// Calls Sightengine's genai model on a file already sitting in our private
-// bucket. Sightengine needs a URL it can fetch, so this mints a short-lived
-// signed read URL first rather than proxying bytes through our own server.
-// Returns { aiScore: number|null, raw: object|null } — aiScore stays null
-// (never a fabricated 0) if Sightengine isn't configured or the call fails,
-// so a missing score reads honestly as "not screened" rather than "clean."
-async function runSightengineGenAICheck(storagePath) {
-  if (!process.env.SIGHTENGINE_API_USER || !process.env.SIGHTENGINE_API_SECRET) {
-    return { aiScore: null, raw: null, skipped: 'not_configured' };
-  }
-  try {
-    const { data: signed, error: signErr } = await supabase.storage
-      .from(VERIFICATION_BUCKET)
-      .createSignedUrl(storagePath, 300); // 5 minutes — just long enough for Sightengine to fetch it
-    if (signErr) throw new Error(signErr.message);
-
-    const params = new URLSearchParams({
-      url: signed.signedUrl,
-      models: 'genai',
-      api_user: process.env.SIGHTENGINE_API_USER,
-      api_secret: process.env.SIGHTENGINE_API_SECRET,
-    });
-    const resp = await fetch(`https://api.sightengine.com/1.0/check.json?${params.toString()}`);
-    const json = await resp.json();
-    if (json.status !== 'success') throw new Error(json?.error?.message || 'Sightengine check failed.');
-    const aiScore = typeof json?.type?.ai_generated === 'number' ? json.type.ai_generated : null;
-    return { aiScore, raw: json, skipped: null };
-  } catch (err) {
-    console.error('[sightengine genai check]', err.message);
-    return { aiScore: null, raw: null, skipped: 'error' };
-  }
-}
-
-// POST /api/verification/upload-url   { token, kind:'photo'|'video', filename, mimeType, size }
-app.post('/api/verification/upload-url', rateLimit, async (req, res) => {
-  const { token, kind, filename, mimeType, size } = req.body || {};
-  const sess = await dbGetSession(token);
-  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
-  if (kind !== 'photo' && kind !== 'video') {
-    return res.status(400).json({ error: '"kind" must be "photo" or "video".' });
-  }
-  if (!VERIFICATION_MIME_TYPES[kind][mimeType]) {
-    return res.status(400).json({ error: kind === 'photo' ? 'Unsupported format. Upload JPEG, PNG, or WebP.' : 'Unsupported format. Upload MP4 or WebM.' });
-  }
-  const sizeNum = Number(size);
-  if (!Number.isFinite(sizeNum) || sizeNum <= 0) {
-    return res.status(400).json({ error: '"size" (bytes) is required.' });
-  }
-  if (sizeNum > VERIFICATION_MAX_BYTES[kind]) {
-    return res.status(413).json({ error: `File exceeds the ${VERIFICATION_MAX_BYTES[kind] / 1048576}MB limit.` });
-  }
-
-  try {
-    const safeName = String(filename || kind).replace(/[^a-zA-Z0-9._-]/g, '_').slice(-150);
-    const ext = guessVerificationExtFromMime(kind, mimeType);
-    const storagePath = `${sess.username}/${Date.now()}-${crypto.randomBytes(4).toString('hex')}-${safeName.replace(/\.[a-zA-Z0-9]+$/, '')}.${ext}`;
-
-    const row = await dbInsertVerificationFile({
-      owner: sess.username,
-      kind,
-      filename: String(filename || kind).slice(0, 255),
-      mime_type: mimeType,
-      size: sizeNum,
-      storage_path: storagePath,
-      upload_status: 'pending',
-    });
-
-    const { data, error } = await supabase.storage
-      .from(VERIFICATION_BUCKET)
-      .createSignedUploadUrl(storagePath, { upsert: false });
-    if (error) throw new Error(error.message);
-
-    return res.status(201).json({
-      verificationFileId: row.id,
-      uploadUrl: data.signedUrl,
-      uploadToken: data.token,
-      storagePath,
-      expiresIn: VERIFICATION_SIGNED_UPLOAD_TTL_SECONDS,
-    });
-  } catch (err) {
-    console.error('[verification upload-url]', err);
-    return res.status(500).json({ error: 'Could not start upload.' });
-  }
-});
-
-// POST /api/verification/:id/confirm   { token }
-// Runs the Sightengine genai check right after the file lands in Storage —
-// this is the one point where we know the bytes actually exist and are
-// stable, same "confirm is the real gate" reasoning as Motion Canvas.
-app.post('/api/verification/:id/confirm', rateLimit, async (req, res) => {
-  const { token } = req.body || {};
-  const sess = await dbGetSession(token);
-  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
-  try {
-    const file = await dbGetVerificationFile(req.params.id, sess.username);
-    if (!file) return res.status(404).json({ error: 'Upload not found.' });
-
-    const { aiScore, skipped } = await runSightengineGenAICheck(file.storage_path);
-
-    const { data, error } = await supabase.from('verification_files')
-      .update({ upload_status: 'ready', ready_at: new Date().toISOString(), ai_score: aiScore, ai_check_skipped: skipped })
-      .eq('id', file.id).select().single();
-    if (error) throw new Error(error.message);
-
-    return res.json({
-      id: data.id, kind: data.kind, uploadStatus: data.upload_status,
-      aiScore: data.ai_score, aiCheckSkipped: data.ai_check_skipped,
-    });
-  } catch (err) {
-    console.error('[verification confirm]', err);
-    return res.status(500).json({ error: 'Could not confirm upload.' });
-  }
-});
-
-// GET /api/verification/prompt — a random liveness action prompt for the
-// capture UI to display. Stateless; the same prompt text is echoed back in
-// the submission (client sends promptShown) purely as context for whoever
-// reviews it, not as something the server verifies was followed.
-app.get('/api/verification/prompt', rateLimit, (req, res) => {
-  const prompt = VERIFICATION_ACTION_PROMPTS[Math.floor(Math.random() * VERIFICATION_ACTION_PROMPTS.length)];
-  return res.json({ prompt });
-});
-
-// POST /api/verification/submit   { token, photoFileId, videoFileId, promptShown? }
-// Creates the actual review request. Requires the caller to already have
-// (or be creating) an artist page — verification without an artist page
-// to attach it to doesn't mean anything.
-app.post('/api/verification/submit', rateLimit, async (req, res) => {
-  const { token, photoFileId, videoFileId, promptShown } = req.body || {};
-  const sess = await dbGetSession(token);
-  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
-  if (!photoFileId || !videoFileId) {
-    return res.status(400).json({ error: 'Both a photo and a video are required.' });
-  }
-  try {
-    const [photo, video] = await Promise.all([
-      dbGetVerificationFile(photoFileId, sess.username),
-      dbGetVerificationFile(videoFileId, sess.username),
-    ]);
-    if (!photo || photo.kind !== 'photo' || photo.upload_status !== 'ready') {
-      return res.status(400).json({ error: 'Photo upload is not ready.' });
-    }
-    if (!video || video.kind !== 'video' || video.upload_status !== 'ready') {
-      return res.status(400).json({ error: 'Video upload is not ready.' });
-    }
-
-    const artist = await dbGetArtistByAccount(sess.username);
-    if (!artist) {
-      return res.status(400).json({ error: 'You need an artist page before requesting verification.' });
-    }
-
-    // One open (pending) request per artist at a time — resubmitting
-    // replaces rather than piles up duplicates for the admin queue.
-    await supabase.from('artist_verification_requests')
-      .delete().eq('artist_id', artist.id).eq('status', 'pending');
-
-    const { data: reqRow, error } = await supabase.from('artist_verification_requests').insert({
-      artist_id: artist.id,
-      submitted_by: sess.username,
-      photo_file_id: photo.id,
-      video_file_id: video.id,
-      prompt_shown: promptShown ? String(promptShown).slice(0, 300) : null,
-      status: 'pending',
-    }).select().single();
-    if (error) throw new Error(error.message);
-
-    return res.status(201).json({ id: reqRow.id, status: reqRow.status });
-  } catch (err) {
-    console.error('[verification submit]', err);
-    return res.status(500).json({ error: 'Could not submit verification request.' });
-  }
-});
-
-// GET /api/verification/mine   ?token=   — lets an artist see their own
-// pending/past request status without needing admin access.
-app.get('/api/verification/mine', rateLimit, async (req, res) => {
-  const token = req.query.token;
-  const sess = await dbGetSession(token);
-  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
-  try {
-    const artist = await dbGetArtistByAccount(sess.username);
-    if (!artist) return res.json({ request: null });
-    const { data, error } = await supabase.from('artist_verification_requests')
-      .select('id, status, reason, created_at, decided_at')
-      .eq('artist_id', artist.id).order('created_at', { ascending: false }).limit(1).maybeSingle();
-    if (error) throw new Error(error.message);
-    return res.json({ request: data || null });
-  } catch (err) {
-    console.error('[verification mine]', err);
-    return res.status(500).json({ error: 'Could not load verification status.' });
-  }
-});
-
-// ─── Admin review ───────────────────────────────────────────────────────────
-
-// GET /api/admin/verification-requests   requireAdmin   ?status=pending|approved|rejected
-app.get('/api/admin/verification-requests', requireAdmin, async (req, res) => {
-  try {
-    const status = ['pending', 'approved', 'rejected'].includes(req.query.status) ? req.query.status : 'pending';
-    const { data, error } = await supabase.from('artist_verification_requests')
-      .select('*, artists(id, name, slug), photo:verification_files!artist_verification_requests_photo_file_id_fkey(ai_score, ai_check_skipped), video:verification_files!artist_verification_requests_video_file_id_fkey(ai_score, ai_check_skipped)')
-      .eq('status', status).order('created_at', { ascending: true });
-    if (error) throw new Error(error.message);
-    return res.json({ requests: data || [] });
-  } catch (err) {
-    console.error('[admin verification list]', err);
-    return res.status(500).json({ error: 'Could not load verification requests.' });
-  }
-});
-
-// GET /api/admin/verification-requests/:id   requireAdmin
-// Includes short-lived signed URLs for the photo/video — these are only
-// ever minted for an authenticated admin viewing this specific screen,
-// never cached or exposed anywhere else.
-app.get('/api/admin/verification-requests/:id', requireAdmin, async (req, res) => {
-  try {
-    const { data: reqRow, error } = await supabase.from('artist_verification_requests')
-      .select('*, artists(id, name, slug)').eq('id', req.params.id).maybeSingle();
-    if (error) throw new Error(error.message);
-    if (!reqRow) return res.status(404).json({ error: 'Request not found.' });
-
-    const [photo, video] = await Promise.all([
-      supabase.from('verification_files').select('*').eq('id', reqRow.photo_file_id).maybeSingle(),
-      supabase.from('verification_files').select('*').eq('id', reqRow.video_file_id).maybeSingle(),
-    ]);
-
-    let photoUrl = null, videoUrl = null;
-    if (photo.data) {
-      const { data: signed } = await supabase.storage.from(VERIFICATION_BUCKET)
-        .createSignedUrl(photo.data.storage_path, VERIFICATION_SIGNED_READ_TTL_SECONDS);
-      photoUrl = signed?.signedUrl || null;
-    }
-    if (video.data) {
-      const { data: signed } = await supabase.storage.from(VERIFICATION_BUCKET)
-        .createSignedUrl(video.data.storage_path, VERIFICATION_SIGNED_READ_TTL_SECONDS);
-      videoUrl = signed?.signedUrl || null;
-    }
-
-    return res.json({
-      id: reqRow.id, status: reqRow.status, promptShown: reqRow.prompt_shown,
-      createdAt: reqRow.created_at, artist: reqRow.artists,
-      photo: photo.data ? { url: photoUrl, aiScore: photo.data.ai_score, aiCheckSkipped: photo.data.ai_check_skipped } : null,
-      video: video.data ? { url: videoUrl, aiScore: video.data.ai_score, aiCheckSkipped: video.data.ai_check_skipped } : null,
-    });
-  } catch (err) {
-    console.error('[admin verification detail]', err);
-    return res.status(500).json({ error: 'Could not load verification request.' });
-  }
-});
-
-// POST /api/admin/verification-requests/:id/approve   requireAdmin
-// Approving both resolves the request AND flips artists.is_verified —
-// the same column the existing manual verify route uses, so a verified
-// badge looks identical regardless of which path produced it.
-app.post('/api/admin/verification-requests/:id/approve', requireAdmin, async (req, res) => {
-  try {
-    const { data: reqRow, error } = await supabase.from('artist_verification_requests')
-      .update({ status: 'approved', decided_at: new Date().toISOString(), decided_by: req._adminSession.username })
-      .eq('id', req.params.id).select().single();
-    if (error) throw new Error(error.message);
-    if (!reqRow) return res.status(404).json({ error: 'Request not found.' });
-
-    await supabase.from('artists').update({ is_verified: true }).eq('id', reqRow.artist_id);
-    return res.json({ id: reqRow.id, status: 'approved' });
-  } catch (err) {
-    console.error('[admin verification approve]', err);
-    return res.status(500).json({ error: 'Could not approve request.' });
-  }
-});
-
-// POST /api/admin/verification-requests/:id/reject   requireAdmin   { reason? }
-app.post('/api/admin/verification-requests/:id/reject', requireAdmin, async (req, res) => {
-  const { reason } = req.body || {};
-  try {
-    const { data: reqRow, error } = await supabase.from('artist_verification_requests')
-      .update({ status: 'rejected', reason: reason ? String(reason).slice(0, 500) : null, decided_at: new Date().toISOString(), decided_by: req._adminSession.username })
-      .eq('id', req.params.id).select().single();
-    if (error) throw new Error(error.message);
-    if (!reqRow) return res.status(404).json({ error: 'Request not found.' });
-    return res.json({ id: reqRow.id, status: 'rejected' });
-  } catch (err) {
-    console.error('[admin verification reject]', err);
-    return res.status(500).json({ error: 'Could not reject request.' });
-  }
-});
-
-// ═══════════════════════════════════════════════════════════════════════════════
 //  NAMED INDEXES  — server-curated playlists fetchable by slug
 //  GET /api/index/:name  → { name, tracks: [...], total, fetchedAt }
 //  GET /api/index        → { indexes: ['flex', ...] }
@@ -11442,6 +11085,676 @@ app.patch('/api/admin/reports/:id', requireAdmin, async (req, res) => {
     return res.status(500).json({ error: 'Could not update report.' });
   }
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  ARTIST IDENTITY VERIFICATION
+// ═══════════════════════════════════════════════════════════════════════════
+// Replaces the old one-shot boolean toggle (POST/DELETE /api/admin/artists/:id/verify
+// below, kept for backward-compat / quick founder overrides) with a full evidence
+// pipeline: claim -> email verification -> consent -> ID + selfie + liveness video
+// -> automated (mock) checks -> ownership evidence -> manual review -> decision.
+//
+// Every automated result (face match, liveness, manipulation) is advisory only —
+// see lib/verificationProvider.js's shouldForceManualReview(): until a real vendor
+// is configured, every request is routed to manual_review regardless of what the
+// mock returns. No route here can grant a badge from the frontend; only the
+// POST /manual-review/:requestId/decide route (requireAdmin) can approve.
+//
+// Multer instance for verification evidence: images (ID doc, selfie) and short
+// liveness video in one endpoint family. Higher size ceiling than imageUpload
+// (raw phone camera captures, not compressed avatars) but far below the 500MB
+// video bucket ceiling — liveness clips are seconds long.
+const verificationEvidenceUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 25 * 1048576 }, // 25MB — generous for a phone photo or a short liveness clip
+  fileFilter: (_req, file, cb) => {
+    const ok = /^image\/(png|jpeg|jpg|webp)$/.test(file.mimetype) || /^video\/(mp4|webm|quicktime)$/.test(file.mimetype);
+    cb(null, ok);
+  },
+});
+
+const CURRENT_CONSENT_VERSION = 'v1-2026-07';
+
+// GET /api/artists/:id/verification/status
+// Public-ish (any authenticated user) summary of the artist's current
+// verification state — used to render claim-flow entry points and the badge
+// tooltip. Does NOT expose evidence contents, only status metadata.
+app.get('/api/artists/:id/verification/status', rateLimit, async (req, res) => {
+  try {
+    const artist = await resolveArtistFromParam(req.params.id);
+    if (!artist) return res.status(404).json({ error: 'Artist not found.' });
+    let activeRequest = null;
+    if (artist.active_verification_request_id) {
+      const { data } = await supabase.from('artist_verification_requests')
+        .select('id, status, created_at, updated_at, decision, decision_reason')
+        .eq('id', artist.active_verification_request_id).maybeSingle();
+      activeRequest = data;
+    }
+    return res.json({
+      artistId: artist.id,
+      isVerified: !!artist.is_verified,
+      verificationStatus: artist.verification_status || 'not_started',
+      badgeRevokedAt: artist.verification_badge_revoked_at || null,
+      activeRequest,
+    });
+  } catch (err) {
+    console.error('[verification status]', err);
+    return res.status(500).json({ error: 'Could not load verification status.' });
+  }
+});
+
+// POST /api/artists/:id/verification/start
+// Step 1 (claim) + kicks off Step 2 (email verification). Body:
+//   { token, role, legalName, stageName, contactEmail, officialLinks: [] }
+app.post('/api/artists/:id/verification/start', rateLimit, async (req, res) => {
+  const token = req.body?.token || (req.headers.authorization || '').replace('Bearer ', '');
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Authentication required.' });
+
+  const { role, legalName, stageName, contactEmail, officialLinks } = req.body || {};
+  const VALID_ROLES = ['artist', 'manager', 'label_rep', 'authorized_team_member'];
+  if (!VALID_ROLES.includes(role)) return res.status(400).json({ error: 'Invalid role.' });
+  if (!legalName || !String(legalName).trim()) return res.status(400).json({ error: 'Legal name is required.' });
+  if (!contactEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail)) {
+    return res.status(400).json({ error: 'A valid contact email is required.' });
+  }
+  const links = Array.isArray(officialLinks) ? officialLinks.filter(l => typeof l === 'string' && l.trim()).slice(0, 10) : [];
+
+  try {
+    const artist = await resolveArtistFromParam(req.params.id);
+    if (!artist) return res.status(404).json({ error: 'Artist not found.' });
+
+    if (artist.verification_status && !verificationCore.TERMINAL_STATUSES.has(artist.verification_status) && artist.verification_status !== 'not_started') {
+      return res.status(409).json({ error: 'A verification request is already in progress for this artist.', status: artist.verification_status });
+    }
+    if (artist.is_verified) {
+      return res.status(409).json({ error: 'This artist page is already verified.' });
+    }
+
+    const rl = await verificationCore.checkAndBumpRateLimit(supabase, sess.username);
+    if (!rl.allowed) {
+      return res.status(429).json({ error: 'Too many verification attempts. Please try again later.', retryAfterMs: rl.retryAfterMs });
+    }
+
+    const duplicates = await verificationCore.detectDuplicates(supabase, {
+      applicantUsername: sess.username, legalName: legalName.trim(), contactEmail: contactEmail.toLowerCase().trim(),
+    });
+
+    let emailRisk = verificationCore.classifyEmailDomainRisk(contactEmail);
+    if (emailRisk === 'unknown' && verificationCore.emailDomainMatchesAnyLink(contactEmail, links)) {
+      emailRisk = 'official';
+    }
+
+    const { data: request, error } = await supabase.from('artist_verification_requests').insert({
+      artist_id: artist.id,
+      applicant_username: sess.username,
+      role, legal_name: legalName.trim(), stage_name: stageName ? String(stageName).trim() : null,
+      contact_email: contactEmail.toLowerCase().trim(),
+      contact_email_domain_risk: emailRisk,
+      official_links: links,
+      status: 'email_pending',
+      risk_score: emailRisk === 'free_provider' ? 20 : 0,
+    }).select().single();
+    if (error) throw new Error(error.message);
+
+    await verificationCore.syncArtistVerificationStatus(supabase, artist.id, request.id, 'email_pending');
+    await verificationCore.logAction(supabase, { requestId: request.id, actor: sess.username, action: 'submitted', detail: { role, emailRisk, duplicateCount: duplicates.length } });
+    if (duplicates.length) {
+      await verificationCore.logAction(supabase, { requestId: request.id, actor: 'system', action: 'duplicate_flagged', detail: { matches: duplicates.map(d => ({ requestId: d.id, artistId: d.artist_id })) } });
+    }
+
+    // Step 2: send the verification email (via lib/verificationEmail.js — logs
+    // to console until a real provider is configured).
+    const rawToken = verificationCore.generateVerificationToken();
+    await supabase.from('artist_verification_requests').update({
+      email_verification_token_hash: verificationCore.hashToken(rawToken),
+      email_verification_expires_at: new Date(Date.now() + verificationCore.EMAIL_TOKEN_TTL_HOURS * 3600 * 1000).toISOString(),
+    }).eq('id', request.id);
+
+    const verifyUrl = `${req.protocol}://${req.get('host')}/verify-email?requestId=${request.id}&token=${rawToken}`;
+    await verificationCore.sendVerificationEmail({ to: contactEmail, artistName: artist.name, verifyUrl, expiresInHours: verificationCore.EMAIL_TOKEN_TTL_HOURS });
+    await verificationCore.logAction(supabase, { requestId: request.id, actor: 'system', action: 'email_sent', detail: { to: contactEmail } });
+
+    return res.status(201).json({ requestId: request.id, status: 'email_pending', duplicatesFlagged: duplicates.length > 0 });
+  } catch (err) {
+    console.error('[verification start]', err);
+    return res.status(500).json({ error: 'Could not start verification.' });
+  }
+});
+
+// POST /api/verification/confirm-email   { requestId, token }
+// Step 2 completion. Public route (no session needed) since the link is
+// clicked from an email client, but still validates the hashed token + expiry.
+app.post('/api/verification/confirm-email', rateLimit, async (req, res) => {
+  const { requestId, token } = req.body || {};
+  if (!requestId || !token) return res.status(400).json({ error: 'requestId and token are required.' });
+  try {
+    const { data: request } = await supabase.from('artist_verification_requests').select('*').eq('id', requestId).maybeSingle();
+    if (!request) return res.status(404).json({ error: 'Verification request not found.' });
+    if (request.status !== 'email_pending') return res.status(409).json({ error: `This request is not awaiting email verification (status: ${request.status}).` });
+    if (!request.email_verification_expires_at || new Date(request.email_verification_expires_at).getTime() < Date.now()) {
+      return res.status(410).json({ error: 'This verification link has expired. Please restart the verification process.' });
+    }
+    if (verificationCore.hashToken(token) !== request.email_verification_token_hash) {
+      return res.status(403).json({ error: 'Invalid verification link.' });
+    }
+
+    await supabase.from('artist_verification_requests').update({ email_verified_at: new Date().toISOString() }).eq('id', requestId);
+    const updated = await verificationCore.transitionStatus(supabase, requestId, 'email_pending', 'evidence_required', { actor: 'system' });
+    await verificationCore.syncArtistVerificationStatus(supabase, request.artist_id, requestId, 'evidence_required');
+    await verificationCore.logAction(supabase, { requestId, actor: 'system', action: 'email_verified', detail: {} });
+
+    return res.json({ requestId, status: updated.status });
+  } catch (err) {
+    console.error('[verification confirm-email]', err);
+    return res.status(500).json({ error: 'Could not confirm email verification.' });
+  }
+});
+
+// POST /api/verification/:requestId/consent   { token, consentGiven: true }
+// Must be recorded before any of the evidence-upload routes below will accept
+// a government ID, selfie, or liveness video.
+app.post('/api/verification/:requestId/consent', rateLimit, async (req, res) => {
+  const token = req.body?.token || (req.headers.authorization || '').replace('Bearer ', '');
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Authentication required.' });
+  if (!req.body?.consentGiven) return res.status(400).json({ error: 'Consent must be explicitly given to continue.' });
+
+  try {
+    const request = await getOwnedRequest(req.params.requestId, sess.username);
+    if (!request) return res.status(404).json({ error: 'Verification request not found.' });
+    await supabase.from('artist_verification_requests').update({
+      consent_given_at: new Date().toISOString(), consent_version: CURRENT_CONSENT_VERSION,
+    }).eq('id', request.id);
+    return res.json({ requestId: request.id, consentGivenAt: new Date().toISOString(), consentVersion: CURRENT_CONSENT_VERSION });
+  } catch (err) {
+    console.error('[verification consent]', err);
+    return res.status(500).json({ error: 'Could not record consent.' });
+  }
+});
+
+// Shared helper: loads a request and confirms it belongs to the requesting user.
+async function getOwnedRequest(requestId, username) {
+  const { data, error } = await supabase.from('artist_verification_requests').select('*').eq('id', requestId).eq('applicant_username', username).maybeSingle();
+  if (error) { console.error('[verification] getOwnedRequest:', error.message); return null; }
+  return data;
+}
+
+// POST /api/verification/:requestId/documents/id
+// Step 3 — government-issued ID upload. multipart/form-data: file, token.
+// Requires consent to already be recorded. Encrypts before storage.
+app.post('/api/verification/:requestId/documents/id', rateLimit, verificationEvidenceUpload.single('file'), async (req, res) => {
+  const token = req.body?.token || (req.headers.authorization || '').replace('Bearer ', '');
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Authentication required.' });
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
+
+  try {
+    const request = await getOwnedRequest(req.params.requestId, sess.username);
+    if (!request) return res.status(404).json({ error: 'Verification request not found.' });
+    if (!request.consent_given_at) return res.status(403).json({ error: 'Consent is required before uploading identity documents.' });
+    if (!['evidence_required', 'more_information_required'].includes(request.status)) {
+      return res.status(409).json({ error: `Cannot upload evidence in status ${request.status}.` });
+    }
+
+    const doc = await verificationCore.storeEncryptedDocument(supabase, {
+      requestId: request.id, docType: 'government_id', buffer: req.file.buffer, mimeType: req.file.mimetype, ownerUsername: sess.username,
+    });
+    await supabase.from('artist_verification_requests').update({ id_document_file_id: doc.id }).eq('id', request.id);
+    await verificationCore.logAction(supabase, { requestId: request.id, actor: sess.username, action: 'evidence_uploaded', detail: { docType: 'government_id' } });
+
+    return res.status(201).json({ documentId: doc.id, docType: 'government_id' });
+  } catch (err) {
+    console.error('[verification id upload]', err);
+    return res.status(500).json({ error: 'Could not upload identity document.' });
+  }
+});
+
+// POST /api/verification/:requestId/documents/selfie
+// Step 4 — live selfie captured in-app. Frontend enforces camera-capture-only
+// (no gallery picker) — this route can't distinguish the two, so the honesty
+// of "live capture" depends on the client using getUserMedia + canvas capture
+// rather than <input type=file>, which the claim-wizard UI does.
+app.post('/api/verification/:requestId/documents/selfie', rateLimit, verificationEvidenceUpload.single('file'), async (req, res) => {
+  const token = req.body?.token || (req.headers.authorization || '').replace('Bearer ', '');
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Authentication required.' });
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
+
+  try {
+    const request = await getOwnedRequest(req.params.requestId, sess.username);
+    if (!request) return res.status(404).json({ error: 'Verification request not found.' });
+    if (!request.consent_given_at) return res.status(403).json({ error: 'Consent is required before submitting a selfie.' });
+    if (!['evidence_required', 'more_information_required'].includes(request.status)) {
+      return res.status(409).json({ error: `Cannot upload evidence in status ${request.status}.` });
+    }
+
+    const doc = await verificationCore.storeEncryptedDocument(supabase, {
+      requestId: request.id, docType: 'selfie', buffer: req.file.buffer, mimeType: req.file.mimetype, ownerUsername: sess.username,
+    });
+    await supabase.from('artist_verification_requests').update({ selfie_file_id: doc.id }).eq('id', request.id);
+    await verificationCore.logAction(supabase, { requestId: request.id, actor: sess.username, action: 'evidence_uploaded', detail: { docType: 'selfie' } });
+
+    return res.status(201).json({ documentId: doc.id, docType: 'selfie' });
+  } catch (err) {
+    console.error('[verification selfie upload]', err);
+    return res.status(500).json({ error: 'Could not upload selfie.' });
+  }
+});
+
+// GET /api/verification/:requestId/liveness/prompt
+// Step 5 — issues a fresh randomized liveness prompt. Must be called
+// immediately before recording (frontend requests this right as the camera
+// opens), since the prompt changing per-attempt is what makes a prerecorded
+// video insufficient.
+app.get('/api/verification/:requestId/liveness/prompt', rateLimit, async (req, res) => {
+  const token = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Authentication required.' });
+  try {
+    const request = await getOwnedRequest(req.params.requestId, sess.username);
+    if (!request) return res.status(404).json({ error: 'Verification request not found.' });
+    if (!request.consent_given_at) return res.status(403).json({ error: 'Consent is required before liveness capture.' });
+
+    const prompt = verificationCore.generateLivenessPrompt();
+    await supabase.from('artist_verification_requests').update({ liveness_prompt: prompt }).eq('id', request.id);
+    await verificationCore.logAction(supabase, { requestId: request.id, actor: 'system', action: 'liveness_prompt_issued', detail: { prompt } });
+    return res.json({ prompt });
+  } catch (err) {
+    console.error('[verification liveness prompt]', err);
+    return res.status(500).json({ error: 'Could not issue liveness prompt.' });
+  }
+});
+
+// POST /api/verification/:requestId/liveness/submit
+// Step 5 completion — uploads the recorded clip, then runs Step 6 (face
+// comparison), Step 8 (manipulation check), moves to automated_review, and
+// immediately to manual_review per shouldForceManualReview(). All automated
+// results are stored but treated as advisory only.
+app.post('/api/verification/:requestId/liveness/submit', rateLimit, verificationEvidenceUpload.single('file'), async (req, res) => {
+  const token = req.body?.token || (req.headers.authorization || '').replace('Bearer ', '');
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Authentication required.' });
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
+
+  try {
+    const request = await getOwnedRequest(req.params.requestId, sess.username);
+    if (!request) return res.status(404).json({ error: 'Verification request not found.' });
+    if (!request.consent_given_at) return res.status(403).json({ error: 'Consent is required before liveness capture.' });
+    if (!request.liveness_prompt) return res.status(409).json({ error: 'No liveness prompt has been issued yet.' });
+    if (!request.id_document_file_id || !request.selfie_file_id) {
+      return res.status(409).json({ error: 'Upload your ID document and selfie before submitting a liveness video.' });
+    }
+    if (!['evidence_required', 'more_information_required'].includes(request.status)) {
+      return res.status(409).json({ error: `Cannot submit liveness video in status ${request.status}.` });
+    }
+
+    const attemptCount = (request.liveness_attempt_count || 0) + 1;
+    const doc = await verificationCore.storeEncryptedDocument(supabase, {
+      requestId: request.id, docType: 'liveness_video', buffer: req.file.buffer, mimeType: req.file.mimetype, ownerUsername: sess.username,
+    });
+
+    const deviceMetadata = {
+      userAgent: req.headers['user-agent'] || null,
+      submittedAt: new Date().toISOString(),
+      attemptNumber: attemptCount,
+    };
+
+    await supabase.from('artist_verification_requests').update({
+      liveness_video_file_id: doc.id,
+      liveness_attempt_count: attemptCount,
+      device_session_metadata: deviceMetadata,
+    }).eq('id', request.id);
+    await verificationCore.logAction(supabase, { requestId: request.id, actor: sess.username, action: 'liveness_submitted', detail: { attemptCount } });
+
+    let updated = await verificationCore.transitionStatus(supabase, request.id, request.status, 'automated_review', { actor: 'system' });
+    await verificationCore.syncArtistVerificationStatus(supabase, request.artist_id, request.id, 'automated_review');
+
+    // Step 6: face comparison (advisory only)
+    const faceResult = await verificationCore.runFaceComparison({ selfieStoragePath: null, idDocumentStoragePath: null });
+    await verificationCore.logAction(supabase, { requestId: request.id, actor: 'system', action: 'automated_face_check', detail: faceResult });
+
+    // Step 5 result placeholder — liveness analysis (advisory only; mock always inconclusive)
+    const livenessResult = await verificationCore.runLivenessCheck({ videoStoragePath: null, issuedPrompt: request.liveness_prompt });
+
+    // Step 8: manipulation/deepfake signals (advisory only)
+    const manipulationResult = await verificationCore.runManipulationCheck({ selfieStoragePath: null, videoStoragePath: null });
+    await verificationCore.logAction(supabase, { requestId: request.id, actor: 'system', action: 'automated_manipulation_check', detail: manipulationResult });
+
+    await supabase.from('artist_verification_requests').update({
+      face_match_result: faceResult.result,
+      face_match_confidence: faceResult.confidence,
+      liveness_result: livenessResult.result,
+      manipulation_risk_result: manipulationResult.result,
+      manipulation_signals: manipulationResult.signals || [],
+    }).eq('id', request.id);
+
+    // Never auto-approve or auto-reject from automated signals alone — always
+    // land in manual_review. verificationCore.shouldForceManualReview() is
+    // true whenever no real provider is configured (i.e. always, right now),
+    // but the transition below is unconditional even once a provider exists —
+    // Step 9 requires human review for every celebrity/high-profile/high-risk
+    // claim, and this app has no reliable way to know in advance which
+    // claims those are, so ALL claims go to manual_review.
+    updated = await verificationCore.transitionStatus(supabase, request.id, 'automated_review', 'manual_review', {
+      actor: 'system', detail: { faceResult: faceResult.result, livenessResult: livenessResult.result, manipulationResult: manipulationResult.result },
+    });
+    await verificationCore.syncArtistVerificationStatus(supabase, request.artist_id, request.id, 'manual_review');
+
+    return res.json({
+      requestId: request.id, status: updated.status,
+      automatedResults: { faceMatch: faceResult.result, liveness: livenessResult.result, manipulationRisk: manipulationResult.result },
+      note: 'Automated results are advisory only. A human reviewer will make the final decision.',
+    });
+  } catch (err) {
+    console.error('[verification liveness submit]', err);
+    return res.status(500).json({ error: 'Could not submit liveness video.' });
+  }
+});
+
+// POST /api/verification/:requestId/ownership-evidence
+// Step 7 — the evidence that actually proves control of the artist page.
+// Body varies by evidenceType:
+//   website_code / social_code -> { evidenceType, url }  (server checks for the issued code)
+//   official_email_reply, distributor_link, authorization_doc, verified_collaborator_confirm
+//     -> { evidenceType, detail }  (reviewer-verified manually; detail is freeform context)
+app.post('/api/verification/:requestId/ownership-evidence', rateLimit, async (req, res) => {
+  const token = req.body?.token || (req.headers.authorization || '').replace('Bearer ', '');
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Authentication required.' });
+  const { evidenceType, url, detail } = req.body || {};
+  const VALID_TYPES = ['website_code', 'social_code', 'official_email_reply', 'distributor_link', 'authorization_doc', 'verified_collaborator_confirm'];
+  if (!VALID_TYPES.includes(evidenceType)) return res.status(400).json({ error: 'Invalid evidence type.' });
+
+  try {
+    const request = await getOwnedRequest(req.params.requestId, sess.username);
+    if (!request) return res.status(404).json({ error: 'Verification request not found.' });
+
+    let evidenceDetail = { ...(detail && typeof detail === 'object' ? detail : {}) };
+    let autoVerified = false;
+
+    if (evidenceType === 'website_code' || evidenceType === 'social_code') {
+      if (!url) return res.status(400).json({ error: 'A URL is required for this evidence type.' });
+      const code = verificationCore.generateOwnershipCode();
+      // If the applicant is submitting (not just requesting) a code, we need
+      // the code to have been issued first — issue-then-check in one call by
+      // reusing any previously issued code stored in ownership_evidence_detail.
+      const existingCode = request.ownership_evidence_detail?.issuedCode;
+      const codeToCheck = existingCode || code;
+      if (!existingCode) {
+        // First call: issue the code, don't check yet — applicant needs time to paste it in.
+        await supabase.from('artist_verification_requests').update({
+          ownership_evidence_type: evidenceType,
+          ownership_evidence_detail: { issuedCode: code, url, checkedAt: null, found: false },
+        }).eq('id', request.id);
+        return res.json({ requestId: request.id, issuedCode: code, instructions: `Add this code to ${url}, then call this endpoint again to verify.` });
+      }
+      const checkResult = await verificationCore.checkWebsiteForCode(url, codeToCheck);
+      evidenceDetail = { issuedCode: codeToCheck, url, checkedAt: new Date().toISOString(), found: checkResult.found, error: checkResult.error };
+      autoVerified = checkResult.found;
+    } else {
+      evidenceDetail.submittedAt = new Date().toISOString();
+    }
+
+    const patch = { ownership_evidence_type: evidenceType, ownership_evidence_detail: evidenceDetail };
+    if (autoVerified) patch.ownership_verified_at = new Date().toISOString();
+    await supabase.from('artist_verification_requests').update(patch).eq('id', request.id);
+    await verificationCore.logAction(supabase, {
+      requestId: request.id, actor: sess.username, action: 'ownership_evidence_submitted', detail: { evidenceType, autoVerified },
+    });
+    if (autoVerified) {
+      await verificationCore.logAction(supabase, { requestId: request.id, actor: 'system', action: 'ownership_evidence_verified', detail: { evidenceType } });
+    }
+
+    return res.json({ requestId: request.id, evidenceType, autoVerified, detail: evidenceDetail });
+  } catch (err) {
+    console.error('[verification ownership evidence]', err);
+    return res.status(500).json({ error: 'Could not record ownership evidence.' });
+  }
+});
+
+// GET /api/verification/:requestId  — applicant's own view of their request
+// (status + non-sensitive fields; never returns document bytes or raw evidence).
+app.get('/api/verification/:requestId', rateLimit, async (req, res) => {
+  const token = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Authentication required.' });
+  try {
+    const request = await getOwnedRequest(req.params.requestId, sess.username);
+    if (!request) return res.status(404).json({ error: 'Verification request not found.' });
+    return res.json({
+      id: request.id, artistId: request.artist_id, status: request.status,
+      role: request.role, legalName: request.legal_name, stageName: request.stage_name,
+      contactEmail: request.contact_email, emailVerifiedAt: request.email_verified_at,
+      consentGivenAt: request.consent_given_at,
+      hasIdDocument: !!request.id_document_file_id, hasSelfie: !!request.selfie_file_id, hasLivenessVideo: !!request.liveness_video_file_id,
+      livenessAttemptCount: request.liveness_attempt_count,
+      ownershipEvidenceType: request.ownership_evidence_type, ownershipVerifiedAt: request.ownership_verified_at,
+      decision: request.decision, decisionReason: request.decision_reason, decisionAt: request.decision_at,
+      createdAt: request.created_at, updatedAt: request.updated_at,
+    });
+  } catch (err) {
+    console.error('[verification get]', err);
+    return res.status(500).json({ error: 'Could not load verification request.' });
+  }
+});
+
+// POST /api/verification/:requestId/appeal
+// Lets an applicant whose request was rejected start a new linked request
+// rather than mutating the rejected one — preserves full history per-appeal.
+app.post('/api/verification/:requestId/appeal', rateLimit, async (req, res) => {
+  const token = req.body?.token || (req.headers.authorization || '').replace('Bearer ', '');
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Authentication required.' });
+  try {
+    const original = await getOwnedRequest(req.params.requestId, sess.username);
+    if (!original) return res.status(404).json({ error: 'Verification request not found.' });
+    if (original.status !== 'rejected') return res.status(409).json({ error: 'Only rejected requests can be appealed.' });
+
+    const rl = await verificationCore.checkAndBumpRateLimit(supabase, sess.username);
+    if (!rl.allowed) return res.status(429).json({ error: 'Too many verification attempts. Please try again later.', retryAfterMs: rl.retryAfterMs });
+
+    const { data: appeal, error } = await supabase.from('artist_verification_requests').insert({
+      artist_id: original.artist_id, applicant_username: sess.username,
+      role: original.role, legal_name: original.legal_name, stage_name: original.stage_name,
+      contact_email: original.contact_email, contact_email_domain_risk: original.contact_email_domain_risk,
+      official_links: original.official_links, status: 'email_pending',
+      appeal_of_request_id: original.id,
+    }).select().single();
+    if (error) throw new Error(error.message);
+
+    await verificationCore.syncArtistVerificationStatus(supabase, original.artist_id, appeal.id, 'email_pending');
+    await verificationCore.logAction(supabase, { requestId: appeal.id, actor: sess.username, action: 'appeal_submitted', detail: { originalRequestId: original.id } });
+
+    return res.status(201).json({ requestId: appeal.id, status: 'email_pending', appealOf: original.id });
+  } catch (err) {
+    console.error('[verification appeal]', err);
+    return res.status(500).json({ error: 'Could not submit appeal.' });
+  }
+});
+
+// ── Admin / reviewer routes ─────────────────────────────────────────────────
+
+// GET /api/admin/verification/queue?status=manual_review&limit=&offset=
+// Reviewer queue listing. Defaults to manual_review, the actionable state.
+app.get('/api/admin/verification/queue', requireAdmin, async (req, res) => {
+  const VALID_STATUSES = ['email_pending', 'evidence_required', 'liveness_pending', 'automated_review', 'manual_review', 'more_information_required', 'approved', 'rejected', 'revoked', 'expired'];
+  const status = VALID_STATUSES.includes(req.query.status) ? req.query.status : 'manual_review';
+  const limit = Math.min(Number(req.query.limit) || 25, 100);
+  const offset = Number(req.query.offset) || 0;
+  try {
+    const { data, error, count } = await supabase
+      .from('artist_verification_requests')
+      .select('id, artist_id, applicant_username, role, legal_name, stage_name, contact_email, contact_email_domain_risk, status, risk_score, face_match_result, liveness_result, manipulation_risk_result, ownership_evidence_type, ownership_verified_at, created_at, updated_at, artists(id, name, slug, is_verified)', { count: 'exact' })
+      .eq('status', status)
+      .order('created_at', { ascending: true }) // oldest first — FIFO queue
+      .range(offset, offset + limit - 1);
+    if (error) throw error;
+    return res.json({ requests: data, total: count, status, limit, offset });
+  } catch (err) {
+    console.error('[admin verification queue]', err);
+    return res.status(500).json({ error: 'Could not load verification queue.' });
+  }
+});
+
+// GET /api/admin/verification/:requestId
+// Full reviewer detail view — everything Step 9 says the reviewer should see,
+// EXCEPT raw document bytes (those come via the dedicated, logged document
+// endpoint below so every access is auditable).
+app.get('/api/admin/verification/:requestId', requireAdmin, async (req, res) => {
+  try {
+    const { data: request, error } = await supabase
+      .from('artist_verification_requests')
+      .select('*, artists(id, name, slug, is_verified, verification_status)')
+      .eq('id', req.params.requestId).maybeSingle();
+    if (error || !request) return res.status(404).json({ error: 'Verification request not found.' });
+
+    const { data: history } = await supabase.from('verification_review_log').select('*').eq('request_id', request.id).order('created_at', { ascending: true });
+    const { data: priorAttempts } = await supabase.from('artist_verification_requests')
+      .select('id, status, decision, created_at').eq('artist_id', request.artist_id).neq('id', request.id).order('created_at', { ascending: false });
+    const { data: documents } = await supabase.from('verification_documents')
+      .select('id, doc_type, mime_type, size, uploaded_at, retained_until, deleted_at, last_accessed_by, last_accessed_at').eq('request_id', request.id);
+
+    return res.json({ request, history: history || [], priorAttempts: priorAttempts || [], documents: documents || [] });
+  } catch (err) {
+    console.error('[admin verification detail]', err);
+    return res.status(500).json({ error: 'Could not load verification request.' });
+  }
+});
+
+// GET /api/admin/verification/documents/:documentId
+// Decrypted document access for reviewers. Every call is logged
+// (document_accessed) and stamps last_accessed_by/at — "prevent reviewers
+// from downloading biometric files unless strictly required" is enforced by
+// this being the ONLY path to plaintext bytes (no public/signed URL exists
+// for this bucket) and every access being attributable to a specific admin.
+// Streams the decrypted bytes directly rather than returning a reusable link.
+app.get('/api/admin/verification/documents/:documentId', requireAdmin, async (req, res) => {
+  try {
+    const { buffer, mimeType, docType } = await verificationCore.getDecryptedDocumentForReview(supabase, req.params.documentId, req._adminSession.username);
+    res.setHeader('Content-Type', mimeType || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `inline; filename="${docType}"`);
+    res.setHeader('Cache-Control', 'no-store');
+    return res.send(buffer);
+  } catch (err) {
+    console.error('[admin verification document access]', err);
+    return res.status(err.message?.includes('not found') ? 404 : 500).json({ error: err.message || 'Could not load document.' });
+  }
+});
+
+// POST /api/admin/verification/:requestId/note   { note }
+// Reviewer notes, visible only to other reviewers (not returned by the
+// applicant-facing GET /api/verification/:requestId route).
+app.post('/api/admin/verification/:requestId/note', requireAdmin, async (req, res) => {
+  const { note } = req.body || {};
+  if (!note || !String(note).trim()) return res.status(400).json({ error: 'Note text is required.' });
+  try {
+    await verificationCore.logAction(supabase, {
+      requestId: req.params.requestId, actor: req._adminSession.username, action: 'note_added', detail: { note: String(note).slice(0, 2000) },
+    });
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('[admin verification note]', err);
+    return res.status(500).json({ error: 'Could not add note.' });
+  }
+});
+
+// POST /api/admin/verification/:requestId/decide
+// Step 9 decision. Body: { decision: 'approve'|'reject'|'more_info'|'escalate'|'suspend', reason }
+// This is the ONLY route that can grant a verification badge — enforced by
+// requireAdmin + the explicit state-machine transition, never by anything
+// client-controlled.
+app.post('/api/admin/verification/:requestId/decide', requireAdmin, async (req, res) => {
+  const { decision, reason } = req.body || {};
+  const VALID_DECISIONS = ['approve', 'reject', 'more_info', 'escalate', 'suspend'];
+  if (!VALID_DECISIONS.includes(decision)) return res.status(400).json({ error: 'Invalid decision.' });
+
+  try {
+    const { data: request } = await supabase.from('artist_verification_requests').select('*').eq('id', req.params.requestId).maybeSingle();
+    if (!request) return res.status(404).json({ error: 'Verification request not found.' });
+
+    // Founder protection — same guard as the existing report-action route.
+    const { data: artist } = await supabase.from('artists').select('account_id, name').eq('id', request.artist_id).maybeSingle();
+    if ((decision === 'reject' || decision === 'suspend') && artist?.account_id?.toLowerCase() === 'slimey2017') {
+      return res.status(403).json({ error: 'Cannot apply automated moderation to the platform founder account.' });
+    }
+
+    const reviewer = req._adminSession.username;
+    let newStatus, decisionValue = null;
+
+    if (decision === 'approve') {
+      if (request.status !== 'manual_review') return res.status(409).json({ error: `Cannot approve from status ${request.status}.` });
+      newStatus = 'approved'; decisionValue = 'approved';
+    } else if (decision === 'reject') {
+      if (request.status !== 'manual_review') return res.status(409).json({ error: `Cannot reject from status ${request.status}.` });
+      newStatus = 'rejected'; decisionValue = 'rejected';
+    } else if (decision === 'more_info') {
+      if (request.status !== 'manual_review') return res.status(409).json({ error: `Cannot request more info from status ${request.status}.` });
+      newStatus = 'more_information_required';
+    } else if (decision === 'escalate') {
+      newStatus = 'manual_review'; // stays in queue, logged as escalated for visibility
+    } else if (decision === 'suspend') {
+      if (request.status !== 'approved') return res.status(409).json({ error: 'Only approved verifications can be suspended.' });
+      newStatus = 'revoked'; decisionValue = 'revoked';
+    }
+
+    const updated = await verificationCore.transitionStatus(supabase, request.id, request.status, newStatus, { actor: reviewer, detail: { decision, reason } });
+
+    if (decisionValue) {
+      await supabase.from('artist_verification_requests').update({
+        decision: decisionValue, decision_reason: reason || null, decision_by: reviewer, decision_at: new Date().toISOString(),
+      }).eq('id', request.id);
+    }
+    await verificationCore.syncArtistVerificationStatus(supabase, request.artist_id, request.id, newStatus);
+    await verificationCore.logAction(supabase, { requestId: request.id, actor: reviewer, action: decision === 'suspend' ? 'suspended' : (decision === 'escalate' ? 'escalated' : newStatus === 'more_information_required' ? 'more_info_requested' : newStatus), detail: { reason } });
+
+    // Notify the applicant (best-effort — failure here shouldn't undo the decision)
+    try {
+      await verificationCore.sendStatusUpdateEmail({ to: request.contact_email, artistName: artist?.name || 'your artist page', status: newStatus, reason });
+    } catch (emailErr) {
+      console.error('[verification decide] status email failed (non-fatal):', emailErr.message);
+    }
+
+    return res.json({ requestId: request.id, status: updated.status, decision: decisionValue });
+  } catch (err) {
+    console.error('[admin verification decide]', err);
+    return res.status(500).json({ error: err.message || 'Could not record decision.' });
+  }
+});
+
+// DELETE /api/verification/:requestId/documents
+// Applicant-initiated deletion request ("How the user can request deletion").
+// Purges any stored evidence immediately rather than waiting for the
+// retention window, and only allowed once the request has reached a terminal
+// state (can't delete evidence a reviewer is actively evaluating).
+app.delete('/api/verification/:requestId/documents', rateLimit, async (req, res) => {
+  const token = req.body?.token || (req.headers.authorization || '').replace('Bearer ', '');
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Authentication required.' });
+  try {
+    const request = await getOwnedRequest(req.params.requestId, sess.username);
+    if (!request) return res.status(404).json({ error: 'Verification request not found.' });
+    if (!verificationCore.TERMINAL_STATUSES.has(request.status)) {
+      return res.status(409).json({ error: 'Cannot delete evidence while a request is still being reviewed. Wait for a decision or contact support.' });
+    }
+    const ids = [request.id_document_file_id, request.selfie_file_id, request.liveness_video_file_id].filter(Boolean);
+    for (const docId of ids) {
+      await verificationCore.purgeDocument(supabase, docId, { reason: 'user_requested_deletion' });
+    }
+    return res.json({ ok: true, purgedCount: ids.length });
+  } catch (err) {
+    console.error('[verification delete documents]', err);
+    return res.status(500).json({ error: 'Could not delete documents.' });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LEGACY MANUAL OVERRIDE — kept for backward compatibility and as a founder/admin
+// quick-toggle escape hatch (e.g. correcting a mistake without spinning up a full
+// verification request). The full evidence-based pipeline above is the intended
+// path for real artist verification claims; these two routes bypass it entirely
+// and should be used sparingly and deliberately.
+// ─────────────────────────────────────────────────────────────────────────────
 
 // POST /api/admin/artists/:id/verify
 app.post('/api/admin/artists/:id/verify', requireAdmin, async (req, res) => {
