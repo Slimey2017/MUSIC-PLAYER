@@ -3920,7 +3920,10 @@ body.oled-mode {
     <div id="lyricsContent" class="lyrics-content lyrics-loading">
       ♪ Searching for lyrics…
     </div>
-    <button class="support-close-btn" onclick="closeLyricsModal()" style="margin-top:16px;">Close</button>
+    <div style="display:flex;gap:8px;margin-top:16px;">
+      <button class="lyrics-edit-action-btn" id="lyricsModalEditBtn" style="display:none;" onclick="openLyricsEditModalFromTopbar()">Edit</button>
+      <button class="support-close-btn" onclick="closeLyricsModal()">Close</button>
+    </div>
   </div>
 </div>
 
@@ -4488,6 +4491,7 @@ body.oled-mode {
       <button class="dash-nav-btn" data-dash-section="tracks" onclick="setDashSection('tracks')"><span class="dash-nav-icon">♪</span> Tracks</button>
       <button class="dash-nav-btn" data-dash-section="posts" onclick="setDashSection('posts')"><span class="dash-nav-icon">✎</span> Posts</button>
       <button class="dash-nav-btn" data-dash-section="analytics" onclick="setDashSection('analytics')"><span class="dash-nav-icon">▴</span> Analytics</button>
+      <button class="dash-nav-btn" data-dash-section="verification" onclick="setDashSection('verification')"><span class="dash-nav-icon">✓</span> Verification</button>
       <button class="dash-nav-btn" data-dash-section="settings" onclick="setDashSection('settings')"><span class="dash-nav-icon">⚙</span> Settings</button>
     </div>
     <div class="dash-main">
@@ -4702,6 +4706,16 @@ body.oled-mode {
               <div id="insightsTrackTable"></div>
             </div>
           </div>
+        </div>
+
+        <!-- Verification: artist identity verification claim wizard. All step
+             content is rendered by renderVerificationSection() into
+             #verificationSectionBody based on the current request's status —
+             keeps this markup to a single mount point rather than one static
+             block per step (most of which would be hidden most of the time). -->
+        <div id="dashSectionVerification" class="dash-section" style="display:none;">
+          <div class="dash-section-label">Artist Verification</div>
+          <div id="verificationSectionBody"><div class="empty-panel">Loading…</div></div>
         </div>
 
         <!-- Settings: genre + social links, backed by the same
@@ -10040,6 +10054,10 @@ async function loadArtistVideos(artistId) {
 // the single #trackLyricsSection.
 let _lyricsTrackId = null;
 let _lyricsTrackTitle = '';
+// Tracks which UI opened the shared edit modal so the save handler knows
+// whether to refresh the artist page's #trackLyricsBody or the Now
+// Playing topbar's #lyricsContent.
+let _lyricsSource = 'artist'; // 'artist' | 'topbar'
 
 async function toggleTrackLyricsSection(trackId) {
   const section = $('trackLyricsSection');
@@ -10094,6 +10112,7 @@ async function loadTrackLyrics(trackId) {
 
 function openLyricsEditModal() {
   if (!viewedArtist?.isOwner || !_lyricsTrackId) return;
+  _lyricsSource = 'artist';
   const body = $('trackLyricsBody');
   const textarea = $('lyricsEditTextarea');
   // Pull current text straight from the rendered panel rather than a second
@@ -10121,7 +10140,8 @@ function updateLyricsEditCounter() {
 $('lyricsEditTextarea')?.addEventListener('input', updateLyricsEditCounter);
 
 $('lyricsEditSaveBtn')?.addEventListener('click', async () => {
-  if (!viewedArtist?.isOwner || !_lyricsTrackId) return;
+  const isTopbar = _lyricsSource === 'topbar';
+  if ((!isTopbar && !viewedArtist?.isOwner) || !_lyricsTrackId) return;
   const lyrics = $('lyricsEditTextarea').value;
   if (lyrics.length > 20000) {
     $('lyricsEditStatus').textContent = 'Lyrics must be 20,000 characters or fewer.';
@@ -10142,7 +10162,17 @@ $('lyricsEditSaveBtn')?.addEventListener('click', async () => {
       throw new Error(data.error || 'Could not save lyrics.');
     }
     closeLyricsEditModal();
-    await loadTrackLyrics(_lyricsTrackId);
+    if (isTopbar) {
+      $('lyricsContent').className = 'lyrics-content';
+      $('lyricsContent').textContent = lyrics.trim() ? lyrics : 'No lyrics yet — click Edit to add some.';
+      // Keep the in-memory queue item's cached lyrics (if any) consistent
+      // so re-opening the modal on this track shows the saved text
+      // immediately rather than the stale pre-edit fetch result.
+      const item = state.queue[state.activeIndex];
+      if (item && item.id === _lyricsTrackId) item.lyrics = lyrics;
+    } else {
+      await loadTrackLyrics(_lyricsTrackId);
+    }
     showToast('Saved', 'Lyrics updated.', 'success');
   } catch (err) {
     $('lyricsEditStatus').textContent = err.message || 'Could not save lyrics.';
@@ -10516,10 +10546,10 @@ $('artistBannerFileInput')?.addEventListener('change', function() {
 // calls server-side; this click handler is just UI, not the real boundary.
 
 let dashReleasesCache = []; // [{id,title,...}] — populated by loadDashReleases, reused by the publish modal's release dropdown
-const DASH_SECTIONS = ['overview', 'publish', 'releases', 'tracks', 'posts', 'analytics', 'settings'];
+const DASH_SECTIONS = ['overview', 'publish', 'releases', 'tracks', 'posts', 'analytics', 'verification', 'settings'];
 const DASH_SECTION_TITLES = {
   overview: 'Overview', publish: 'Publish', releases: 'Releases', tracks: 'Tracks',
-  posts: 'Posts', analytics: 'Analytics', settings: 'Settings',
+  posts: 'Posts', analytics: 'Analytics', verification: 'Verification', settings: 'Settings',
 };
 
 $('artistDashboardToggleBtn')?.addEventListener('click', openArtistDashboardModal);
@@ -10560,6 +10590,7 @@ function setDashSection(section) {
   if (section === 'tracks')     loadDashTracks();
   if (section === 'posts')      loadDashPosts();
   if (section === 'analytics')  { loadDashStats(); loadInsights(); }
+  if (section === 'verification') loadVerificationSection();
   if (section === 'settings')   loadDashSettings();
 }
 
@@ -18856,11 +18887,13 @@ function sendTrackNotification(title, artist) {
 // Spotify, etc. have no matching row to look up.
 async function openLyricsModal() {
   const item = state.queue[state.activeIndex];
+  const editBtn = $('lyricsModalEditBtn');
   if (!item) {
     $('lyricsTrackTitle').textContent  = '';
     $('lyricsTrackArtist').textContent = '';
     $('lyricsContent').className = 'lyrics-content';
     $('lyricsContent').textContent = 'No track currently playing.';
+    if (editBtn) editBtn.style.display = 'none';
     $('lyricsOverlay').classList.add('open');
     playSfx('click');
     return;
@@ -18870,6 +18903,14 @@ async function openLyricsModal() {
   $('lyricsTrackArtist').textContent = item.artist || (item.platform ? `via ${PLATFORM_CONFIG[item.platform]?.label || item.platform}` : '');
   $('lyricsOverlay').classList.add('open');
   playSfx('click');
+
+  // Edit is only offered for the signed-in user's own published FREQ
+  // tracks — same ownership rule as the artist-page Lyrics section,
+  // just checked here via item.artistId vs. ownProfile.artistId instead
+  // of viewedArtist.isOwner, since there's no "viewed artist" context
+  // when opening lyrics from the Now Playing topbar.
+  const isOwnTrack = item.platform === 'freq' && item.id && item.artistId && ownProfile?.artistId && item.artistId === ownProfile.artistId;
+  if (editBtn) editBtn.style.display = isOwnTrack ? '' : 'none';
 
   if (item.platform !== 'freq' || !item.id) {
     $('lyricsContent').className = 'lyrics-content';
@@ -18887,7 +18928,7 @@ async function openLyricsModal() {
     // different track (or closed/reopened the modal) while this was in flight.
     if (state.queue[state.activeIndex] !== item) return;
     $('lyricsContent').className = 'lyrics-content';
-    $('lyricsContent').textContent = (data.lyrics && data.lyrics.trim()) ? data.lyrics : 'No lyrics available.';
+    $('lyricsContent').textContent = (data.lyrics && data.lyrics.trim()) ? data.lyrics : (isOwnTrack ? 'No lyrics yet — click Edit to add some.' : 'No lyrics available.');
   } catch (err) {
     if (state.queue[state.activeIndex] !== item) return;
     $('lyricsContent').className = 'lyrics-content';
@@ -18897,6 +18938,29 @@ async function openLyricsModal() {
 }
 function closeLyricsModal() { $('lyricsOverlay').classList.remove('open'); }
 if ($('lyricsBtn')) $('lyricsBtn').addEventListener('click', openLyricsModal);
+
+// Opens the same shared #lyricsEditOverlay used by the artist-page Lyrics
+// section, but from the Now Playing topbar. Ownership here was already
+// verified in openLyricsModal (isOwnTrack), so this only needs to guard
+// against being called with no track loaded. _lyricsSource (declared
+// earlier, near _lyricsTrackId) tracks which UI opened the editor so the
+// save handler below knows whether to refresh the topbar's #lyricsContent
+// or the artist page's #trackLyricsBody.
+function openLyricsEditModalFromTopbar() {
+  const item = state.queue[state.activeIndex];
+  if (!item || !item.id) return;
+  _lyricsTrackId = item.id;
+  _lyricsTrackTitle = item.customLabel || item.title || '';
+  _lyricsSource = 'topbar';
+  const textarea = $('lyricsEditTextarea');
+  const current = ($('lyricsContent')?.textContent || '').trim();
+  textarea.value = (current === 'No lyrics available.' || current === 'No lyrics yet — click Edit to add some.' || current === '♪ Loading lyrics…') ? '' : current;
+  updateLyricsEditCounter();
+  $('lyricsEditStatus').textContent = '';
+  $('lyricsEditOverlay')?.classList.add('open');
+  textarea.focus();
+}
+
 
 // ─── 7. Support button binding ────────────────────────────────────────────────
 if ($('supportBtn')) $('supportBtn').addEventListener('click', openSupportModal);
