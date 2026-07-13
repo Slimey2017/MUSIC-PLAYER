@@ -532,7 +532,7 @@ header {
 .repeat-label{font-size:0.45rem;letter-spacing:0.08em;color:var(--accent);margin-left:-4px;font-weight:700;}
 
 /* ─── Local Audio Player ──────────────────────────────────────────── */
-.local-player{display:none;flex-direction:column;align-items:center;justify-content:center;flex:1;padding:32px;gap:22px;background:var(--bg);position:relative;overflow:hidden;}
+.local-player{display:none;flex-direction:column;align-items:center;justify-content:center;flex:1;padding:32px;gap:22px;background:var(--bg);background:radial-gradient(ellipse 80% 70% at 50% 45%,color-mix(in srgb,var(--bg) 88%,var(--accent) 3%) 0%,var(--bg) 70%);position:relative;overflow:hidden;}
 .local-player.visible{display:flex;}
 
 /* Motion Canvas — an ambient background layer for the ENTIRE Now Playing
@@ -555,10 +555,16 @@ header {
   z-index:0;pointer-events:none;
   opacity:0;transition:opacity 1.1s ease;
   filter:blur(38px) brightness(0.5) saturate(1.15);
-  /* Radial fade: fully present in the center, dissolving to nothing well
-     before the container edge — this is what removes the "box" look. */
-  -webkit-mask-image:radial-gradient(ellipse 65% 60% at 50% 42%,#000 0%,#000 35%,transparent 78%);
-  mask-image:radial-gradient(ellipse 65% 60% at 50% 42%,#000 0%,#000 35%,transparent 78%);
+  /* Radial fade: soft glow at the center, thinning out gradually over a
+     long distance — this is a wide, slow falloff (not a hard-edged disc)
+     so there's no point where the eye can say "the wash stops here."
+     The old curve (solid to 35%, gone by 78%) held full strength across
+     too much of the box before cutting off in a short span — combined
+     with the flat, unlit background around it, that read as a banner/
+     rectangle rather than atmosphere. Spreading the falloff across nearly
+     the whole radius removes any perceivable boundary. */
+  -webkit-mask-image:radial-gradient(ellipse 90% 85% at 50% 45%,#000 0%,#000 12%,rgba(0,0,0,0.55) 45%,transparent 92%);
+  mask-image:radial-gradient(ellipse 90% 85% at 50% 45%,#000 0%,#000 12%,rgba(0,0,0,0.55) 45%,transparent 92%);
   will-change:transform;
 }
 .canvas-ambient-layer.visible{opacity:var(--motion-canvas-opacity,0.5);}
