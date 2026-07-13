@@ -18,6 +18,18 @@
       emailjs.init({ publicKey: 'Gb2KEX0jVCP5CYuvR' });
     })();
   </script>
+  <!-- EmailJS — FREQ Artist Verification (separate account/key from Support,
+       so its send volume/templates never compete with support-ticket traffic).
+       Public key only — safe to ship client-side by EmailJS's own design.
+       Passed explicitly per-send via emailjs.send(...,{publicKey}) so it
+       does NOT touch the global emailjs.init() above (that stays Support's). -->
+  <script>
+    const FREQ_VERIFICATION_EMAILJS = {
+      SERVICE_ID:  'service_gfpf5hf',
+      TEMPLATE_ID: 'template_hy427sb',
+      PUBLIC_KEY:  'pYuzWgI7zierUF20O',
+    };
+  </script>
   <!-- Gumroad — FREQ Premium checkout overlay. Binds to any
        a.gumroad-button in the page (see #pcoGumroadLink) and opens
        Gumroad's hosted checkout in an in-page overlay instead of
