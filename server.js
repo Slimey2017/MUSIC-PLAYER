@@ -11411,7 +11411,7 @@ app.post('/api/artists/:id/verification/start', rateLimit, async (req, res) => {
 
     const verifyUrl = `${req.protocol}://${req.get('host')}/verify-email?requestId=${request.id}&token=${rawToken}`;
     console.log(`[verification link generated] ${artist.name} <${contactEmail}> (${verificationCore.EMAIL_TOKEN_TTL_HOURS}h): ${verifyUrl}`);
-    await verificationCore.logAction(supabase, { requestId: request.id, actor: 'system', action: 'link_generated', detail: { to: contactEmail } });
+    await verificationCore.logAction(supabase, { requestId: request.id, actor: 'system', action: 'email_sent', detail: { to: contactEmail, kind: 'initial' } });
 
     return res.status(201).json({
       requestId: request.id,
@@ -11448,7 +11448,7 @@ app.post('/api/verification/:requestId/resend-email', rateLimit, async (req, res
   const { requestId } = req.params;
   const authToken = req.body?.token || (req.headers.authorization || '').replace('Bearer ', '');
   try {
-    const sess = await dbGetSessionByToken(authToken);
+    const sess = await dbGetSession(authToken);
     if (!sess) return res.status(401).json({ error: 'Not authenticated.' });
 
     const { data: request } = await supabase.from('artist_verification_requests').select('*').eq('id', requestId).maybeSingle();
@@ -11466,7 +11466,7 @@ app.post('/api/verification/:requestId/resend-email', rateLimit, async (req, res
 
     const verifyUrl = `${req.protocol}://${req.get('host')}/verify-email?requestId=${requestId}&token=${rawToken}`;
     console.log(`[verification link regenerated] ${artist?.name || 'artist'} <${request.contact_email}>: ${verifyUrl}`);
-    await verificationCore.logAction(supabase, { requestId, actor: sess.username, action: 'link_resent', detail: {} });
+    await verificationCore.logAction(supabase, { requestId, actor: sess.username, action: 'email_sent', detail: { to: request.contact_email, kind: 'resend' } });
 
     return res.json({
       requestId,
