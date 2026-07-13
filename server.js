@@ -11396,8 +11396,13 @@ app.post('/api/artists/:id/verification/start', rateLimit, async (req, res) => {
       await verificationCore.logAction(supabase, { requestId: request.id, actor: 'system', action: 'duplicate_flagged', detail: { matches: duplicates.map(d => ({ requestId: d.id, artistId: d.artist_id })) } });
     }
 
-    // Step 2: send the verification email (via lib/verificationEmail.js — logs
-    // to console until a real provider is configured).
+    // Step 2: build the verification link. Sending is now done CLIENT-SIDE
+    // (see submitVerificationClaim() in verification_frontend.js) via
+    // emailjs.send() with the FREQ_VERIFICATION_EMAILJS keys in index.html —
+    // that's a real browser context, which EmailJS's API requires unless
+    // "allow non-browser applications" is enabled on the account. We still
+    // generate + hash + store the token here so the raw token is never
+    // persisted, only ever placed in the URL handed back in this response.
     const rawToken = verificationCore.generateVerificationToken();
     await supabase.from('artist_verification_requests').update({
       email_verification_token_hash: verificationCore.hashToken(rawToken),
@@ -11405,10 +11410,21 @@ app.post('/api/artists/:id/verification/start', rateLimit, async (req, res) => {
     }).eq('id', request.id);
 
     const verifyUrl = `${req.protocol}://${req.get('host')}/verify-email?requestId=${request.id}&token=${rawToken}`;
-    await verificationCore.sendVerificationEmail({ to: contactEmail, artistName: artist.name, verifyUrl, expiresInHours: verificationCore.EMAIL_TOKEN_TTL_HOURS });
-    await verificationCore.logAction(supabase, { requestId: request.id, actor: 'system', action: 'email_sent', detail: { to: contactEmail } });
+    console.log(`[verification link generated] ${artist.name} <${contactEmail}> (${verificationCore.EMAIL_TOKEN_TTL_HOURS}h): ${verifyUrl}`);
+    await verificationCore.logAction(supabase, { requestId: request.id, actor: 'system', action: 'link_generated', detail: { to: contactEmail } });
 
-    return res.status(201).json({ requestId: request.id, status: 'email_pending', duplicatesFlagged: duplicates.length > 0 });
+    return res.status(201).json({
+      requestId: request.id,
+      status: 'email_pending',
+      duplicatesFlagged: duplicates.length > 0,
+      // Handed to the frontend so it can trigger emailjs.send() itself —
+      // see submitVerificationClaim(). Not persisted anywhere but this
+      // response; the hash in the DB is what actually gets checked on click.
+      verifyUrl,
+      artistName: artist.name,
+      contactEmail,
+      expiresInHours: verificationCore.EMAIL_TOKEN_TTL_HOURS,
+    });
   } catch (err) {
     console.error('[verification start]', err);
     return res.status(500).json({
