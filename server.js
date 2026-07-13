@@ -177,7 +177,45 @@ const fallbackVerificationCore = {
       }
     });
   },
-  async checkAndBumpRateLimit() {
+  // 3 attempts per rolling 24h window per user. Guards POST /verification/start
+  // and POST /verification/:id/appeal — both create a new request row + send
+  // an email, so this exists to stop accidental double-submits or deliberate
+  // spam, not to throttle normal use (most users only ever call this 1-2x).
+  // verification_rate_limits.username is the PK (one row per user, no
+  // per-attempt history), so a fixed window is tracked directly on that row:
+  // once window_started_at is more than WINDOW_MS in the past, the window
+  // resets rather than accumulating forever.
+  async checkAndBumpRateLimit(supabase, username) {
+    const WINDOW_MS = 24 * 3600 * 1000;
+    const MAX_ATTEMPTS = 3;
+    const now = Date.now();
+
+    const { data: existing, error: readErr } = await supabase
+      .from('verification_rate_limits').select('*').eq('username', username).maybeSingle();
+    if (readErr) { console.error('[verification rate limit] read:', readErr.message); return { allowed: true, retryAfterMs: 0 }; }
+
+    const windowStartedAt = existing ? new Date(existing.window_started_at).getTime() : now;
+    const windowExpired = (now - windowStartedAt) >= WINDOW_MS;
+
+    if (!existing || windowExpired) {
+      // No row yet, or the previous window has fully elapsed — start fresh.
+      const { error: upsertErr } = await supabase.from('verification_rate_limits').upsert({
+        username, attempt_count: 1, window_started_at: new Date(now).toISOString(), last_attempt_at: new Date(now).toISOString(),
+      }, { onConflict: 'username' });
+      if (upsertErr) { console.error('[verification rate limit] upsert:', upsertErr.message); return { allowed: true, retryAfterMs: 0 }; }
+      return { allowed: true, retryAfterMs: 0 };
+    }
+
+    if (existing.attempt_count >= MAX_ATTEMPTS) {
+      const retryAfterMs = Math.max(0, WINDOW_MS - (now - windowStartedAt));
+      return { allowed: false, retryAfterMs };
+    }
+
+    const { error: bumpErr } = await supabase.from('verification_rate_limits')
+      .update({ attempt_count: existing.attempt_count + 1, last_attempt_at: new Date(now).toISOString() })
+      .eq('username', username);
+    if (bumpErr) { console.error('[verification rate limit] bump:', bumpErr.message); return { allowed: true, retryAfterMs: 0 }; }
+
     return { allowed: true, retryAfterMs: 0 };
   },
   async detectDuplicates(supabase, { applicantUsername, legalName, contactEmail }) {
@@ -252,22 +290,60 @@ const fallbackVerificationCore = {
     await fallbackVerificationCore.logAction(supabase, { requestId, actor, action: 'status_changed', detail: { fromStatus, toStatus, ...detail } });
     return data;
   },
-  async storeEncryptedDocument(supabase, { requestId, docType, originalName, mimeType, sizeBytes, buffer }) {
-    const storagePath = `verification/${requestId}/${docType}-${Date.now()}-${crypto.randomBytes(6).toString('hex')}`;
+  async storeEncryptedDocument(supabase, { requestId, docType, mimeType, buffer, ownerUsername }) {
+    // AES-256-GCM: the key never touches the DB or storage bucket, only the
+    // per-document iv/authTag do (both required, no default, on
+    // verification_documents — see schema). Ciphertext goes to a PRIVATE
+    // bucket, never MEDIA_BUCKET/CLOUD_BUCKET (those are public/user-facing).
+    const key = getVerificationDocKey();
+    const iv = crypto.randomBytes(12); // 96-bit nonce, standard for GCM
+    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+    const ciphertext = Buffer.concat([cipher.update(buffer), cipher.final()]);
+    const authTag = cipher.getAuthTag();
+
+    const storagePath = `${requestId}/${docType}-${Date.now()}-${crypto.randomBytes(6).toString('hex')}.enc`;
+    const { error: uploadErr } = await supabase.storage.from(VERIFICATION_DOC_BUCKET).upload(storagePath, ciphertext, {
+      contentType: 'application/octet-stream', // ciphertext is opaque; real mimeType is stored separately for decrypt-time use
+      upsert: false,
+    });
+    if (uploadErr) throw new Error(uploadErr.message);
+
+    const RETENTION_DAYS = 90; // matches typical KYC/AML minimum-retention practice; adjust if you have a specific policy
     const { data, error } = await supabase.from('verification_documents').insert({
-      request_id: requestId, doc_type: docType, original_name: originalName, mime_type: mimeType,
-      size_bytes: sizeBytes, storage_path: storagePath, encrypted_blob: buffer?.toString('base64') || null,
+      request_id: requestId,
+      doc_type: docType,
+      storage_path: storagePath,
+      encryption_iv: iv.toString('base64'),
+      encryption_tag: authTag.toString('base64'),
+      mime_type: mimeType || null,
+      size: buffer?.length || 0,
+      retained_until: new Date(Date.now() + RETENTION_DAYS * 24 * 3600 * 1000).toISOString(),
+      // last_accessed_by/at track REVIEW access (see getDecryptedDocumentForReview),
+      // not upload — left null here on purpose. ownerUsername (the applicant)
+      // isn't a "reviewer access" event.
     }).select().single();
-    if (error) throw new Error(error.message);
+    if (error) {
+      // Storage upload already happened — clean up the orphaned object rather
+      // than leaving ciphertext with no DB row (and no way to ever decrypt it,
+      // since the row is what would carry the iv/tag needed to read it back).
+      await supabase.storage.from(VERIFICATION_DOC_BUCKET).remove([storagePath]).catch(() => {});
+      throw new Error(error.message);
+    }
     return data;
   },
   generateLivenessPrompt() {
     const prompts = ['Turn your head left, then smile', 'Blink twice, then say your artist name', 'Look up, then back at the camera'];
     return prompts[Math.floor(Math.random() * prompts.length)];
   },
-  async runFaceComparison() { return { status: 'manual_review_required', confidence: null }; },
-  async runLivenessCheck() { return { status: 'manual_review_required', confidence: null }; },
-  async runManipulationCheck() { return { status: 'manual_review_required', confidence: null }; },
+  // Mock adapters — no real face-comparison/liveness/manipulation-detection
+  // provider is wired up yet. Each returns { result, confidence, signals }
+  // shaped to match its OWN column's CHECK constraint exactly (they differ
+  // per column — see artist_verification_requests schema). shouldForceManualReview()
+  // being permanently true means these are advisory-only regardless of value;
+  // swap the body for a real provider call later without touching the caller.
+  async runFaceComparison() { return { result: 'needs_manual_review', confidence: null }; },
+  async runLivenessCheck() { return { result: 'inconclusive', confidence: null }; },
+  async runManipulationCheck() { return { result: 'manual_review_required', confidence: null, signals: [] }; },
   shouldForceManualReview() { return true; },
   generateOwnershipCode() {
     return `FREQ-VERIFY-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
@@ -277,15 +353,57 @@ const fallbackVerificationCore = {
     const text = await res.text();
     return { found: text.includes(code) };
   },
-  async getDecryptedDocumentForReview(supabase, documentId) {
+  async getDecryptedDocumentForReview(supabase, documentId, accessorUsername) {
     const { data, error } = await supabase.from('verification_documents').select('*').eq('id', documentId).maybeSingle();
     if (error) throw new Error(error.message);
     if (!data) throw new Error('Document not found.');
-    return { buffer: Buffer.from(data.encrypted_blob || '', 'base64'), mimeType: data.mime_type || 'application/octet-stream', docType: data.doc_type };
+    if (data.deleted_at) throw new Error('Document has been purged.');
+
+    const { data: fileBlob, error: dlErr } = await supabase.storage.from(VERIFICATION_DOC_BUCKET).download(data.storage_path);
+    if (dlErr) throw new Error(dlErr.message);
+    const ciphertext = Buffer.from(await fileBlob.arrayBuffer());
+
+    const key = getVerificationDocKey();
+    const iv = Buffer.from(data.encryption_iv, 'base64');
+    const authTag = Buffer.from(data.encryption_tag, 'base64');
+    const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+    decipher.setAuthTag(authTag);
+    const buffer = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+
+    // Every review access gets recorded — this is exactly what
+    // last_accessed_by/last_accessed_at exist for, and why this document
+    // route is deliberately separate from the general request-detail route
+    // (per the comment above app.get('/api/admin/verification/:requestId')).
+    await supabase.from('verification_documents')
+      .update({ last_accessed_by: accessorUsername || null, last_accessed_at: new Date().toISOString() })
+      .eq('id', documentId);
+    if (accessorUsername) {
+      await fallbackVerificationCore.logAction(supabase, {
+        requestId: data.request_id, actor: accessorUsername, action: 'document_accessed', detail: { documentId, docType: data.doc_type },
+      });
+    }
+
+    return { buffer, mimeType: data.mime_type || 'application/octet-stream', docType: data.doc_type };
   },
-  async purgeDocument(supabase, documentId) {
-    const { error } = await supabase.from('verification_documents').delete().eq('id', documentId);
+  async purgeDocument(supabase, documentId, meta = {}) {
+    const { data: doc } = await supabase.from('verification_documents').select('storage_path, request_id, doc_type').eq('id', documentId).maybeSingle();
+    if (doc?.storage_path) {
+      await supabase.storage.from(VERIFICATION_DOC_BUCKET).remove([doc.storage_path]).catch(() => {});
+    }
+    // Soft-delete (deleted_at) rather than hard DELETE — verification_review_log
+    // and artist_verification_requests.id_document_file_id/selfie_file_id/
+    // liveness_video_file_id may still reference this row by id via FK.
+    const { error } = await supabase.from('verification_documents')
+      .update({ deleted_at: new Date().toISOString() })
+      .eq('id', documentId);
     if (error) throw new Error(error.message);
+
+    if (doc?.request_id) {
+      await fallbackVerificationCore.logAction(supabase, {
+        requestId: doc.request_id, actor: meta.actor || 'system',
+        action: 'document_purged', detail: { documentId, docType: doc.doc_type, reason: meta.reason || 'unspecified' },
+      });
+    }
   },
 };
 verificationCore = { ...fallbackVerificationCore, ...verificationCore };
@@ -295,6 +413,32 @@ if (!(verificationCore.TERMINAL_STATUSES instanceof Set)) {
 
 // ─── Supabase client (server-side only — uses service role key) ───────────────
 const supabase = createSupabaseClientFromEnv(process.env) || createFallbackSupabaseClient();
+
+// Private bucket for artist-verification evidence (government ID, selfie,
+// liveness clip). NEVER reuse MEDIA_BUCKET/CLOUD_BUCKET/VIDEO_BUCKET here —
+// those serve public/user content; this bucket must stay private with no
+// public URL generation anywhere in the codebase. Create it once via the
+// Supabase dashboard/CLI (private, no public access) before this code path
+// runs — storeEncryptedDocument will fail with a clear storage error if the
+// bucket doesn't exist yet, rather than silently writing somewhere public.
+const VERIFICATION_DOC_BUCKET = 'verification-documents';
+
+// AES-256-GCM key for verification_documents.encryption_iv/encryption_tag.
+// Set VERIFICATION_DOC_ENCRYPTION_KEY in Render's env vars — any secret
+// string works, it's hashed to exactly 32 bytes below. Rotating this key
+// makes every previously-stored document undecryptable, so treat it like
+// any other production secret: set once, back up securely, don't rotate
+// casually. Throws loudly at call time (not at boot) if unset, since this
+// only matters for the verification feature and shouldn't block server
+// startup for everything else.
+let _verificationDocKey = null;
+function getVerificationDocKey() {
+  if (_verificationDocKey) return _verificationDocKey;
+  const secret = process.env.VERIFICATION_DOC_ENCRYPTION_KEY;
+  if (!secret) throw new Error('VERIFICATION_DOC_ENCRYPTION_KEY is not set — cannot encrypt/decrypt verification documents.');
+  _verificationDocKey = crypto.createHash('sha256').update(secret).digest(); // -> 32 bytes, exactly what aes-256-gcm needs
+  return _verificationDocKey;
+}
 
 // ─── Google Gemini client (server-side only — powers DJ BOOM) ──────────────────
 // GEMINI_API_KEY lives in Render's env vars, same as SUPABASE_SERVICE_KEY.
@@ -11306,8 +11450,6 @@ const verificationEvidenceUpload = multer({
   },
 });
 
-const CURRENT_CONSENT_VERSION = 'v1-2026-07';
-
 // GET /api/artists/:id/verification/status
 // Public-ish (any authenticated user) summary of the artist's current
 // verification state — used to render claim-flow entry points and the badge
@@ -11558,9 +11700,9 @@ app.post('/api/verification/:requestId/consent', rateLimit, async (req, res) => 
     const request = await getOwnedRequest(req.params.requestId, sess.username);
     if (!request) return res.status(404).json({ error: 'Verification request not found.' });
     await supabase.from('artist_verification_requests').update({
-      consent_given_at: new Date().toISOString(), consent_version: CURRENT_CONSENT_VERSION,
+      consent_given_at: new Date().toISOString(), consent_version: verificationCore.CURRENT_CONSENT_VERSION,
     }).eq('id', request.id);
-    return res.json({ requestId: request.id, consentGivenAt: new Date().toISOString(), consentVersion: CURRENT_CONSENT_VERSION });
+    return res.json({ requestId: request.id, consentGivenAt: new Date().toISOString(), consentVersion: verificationCore.CURRENT_CONSENT_VERSION });
   } catch (err) {
     console.error('[verification consent]', err);
     return res.status(500).json({ error: 'Could not record consent.' });
@@ -11860,7 +12002,26 @@ app.post('/api/verification/:requestId/appeal', rateLimit, async (req, res) => {
     await verificationCore.syncArtistVerificationStatus(supabase, original.artist_id, appeal.id, 'email_pending');
     await verificationCore.logAction(supabase, { requestId: appeal.id, actor: sess.username, action: 'appeal_submitted', detail: { originalRequestId: original.id } });
 
-    return res.status(201).json({ requestId: appeal.id, status: 'email_pending', appealOf: original.id });
+    // Even though the original request's email was already confirmed once,
+    // this is a NEW request row with its own email_pending status — generate
+    // a fresh token same as /verification/start, so the frontend can send a
+    // real confirmation email via emailjs.send() rather than leaving the
+    // appeal stuck at email_pending with no way to progress.
+    const rawToken = verificationCore.generateVerificationToken();
+    await supabase.from('artist_verification_requests').update({
+      email_verification_token_hash: verificationCore.hashToken(rawToken),
+      email_verification_expires_at: new Date(Date.now() + verificationCore.EMAIL_TOKEN_TTL_HOURS * 3600 * 1000).toISOString(),
+    }).eq('id', appeal.id);
+
+    const { data: appealArtist } = await supabase.from('artists').select('name').eq('id', original.artist_id).maybeSingle();
+    const verifyUrl = `${req.protocol}://${req.get('host')}/verify-email?requestId=${appeal.id}&token=${rawToken}`;
+    await verificationCore.logAction(supabase, { requestId: appeal.id, actor: 'system', action: 'email_sent', detail: { to: original.contact_email, kind: 'appeal' } });
+
+    return res.status(201).json({
+      requestId: appeal.id, status: 'email_pending', appealOf: original.id,
+      verifyUrl, artistName: appealArtist?.name || 'there', contactEmail: original.contact_email,
+      expiresInHours: verificationCore.EMAIL_TOKEN_TTL_HOURS,
+    });
   } catch (err) {
     console.error('[verification appeal]', err);
     return res.status(500).json({ error: 'Could not submit appeal.' });
@@ -12033,7 +12194,7 @@ app.delete('/api/verification/:requestId/documents', rateLimit, async (req, res)
     }
     const ids = [request.id_document_file_id, request.selfie_file_id, request.liveness_video_file_id].filter(Boolean);
     for (const docId of ids) {
-      await verificationCore.purgeDocument(supabase, docId, { reason: 'user_requested_deletion' });
+      await verificationCore.purgeDocument(supabase, docId, { reason: 'user_requested_deletion', actor: sess.username });
     }
     return res.json({ ok: true, purgedCount: ids.length });
   } catch (err) {
