@@ -11437,6 +11437,50 @@ app.post('/api/artists/:id/verification/start', rateLimit, async (req, res) => {
 // POST /api/verification/confirm-email   { requestId, token }
 // Step 2 completion. Public route (no session needed) since the link is
 // clicked from an email client, but still validates the hashed token + expiry.
+// POST /api/verification/:requestId/resend-email   { token: AUTH.token }
+// For requests stuck on email_pending (e.g. the original emailjs.send() call
+// failed client-side, or the link expired). Regenerates a fresh token +
+// expiry — the OLD token/link stops working the moment this runs, since the
+// stored hash is overwritten. Returns the same verifyUrl/artistName/
+// expiresInHours shape as /verification/start so the frontend can reuse the
+// exact same emailjs.send() call.
+app.post('/api/verification/:requestId/resend-email', rateLimit, async (req, res) => {
+  const { requestId } = req.params;
+  const authToken = req.body?.token || (req.headers.authorization || '').replace('Bearer ', '');
+  try {
+    const sess = await dbGetSessionByToken(authToken);
+    if (!sess) return res.status(401).json({ error: 'Not authenticated.' });
+
+    const { data: request } = await supabase.from('artist_verification_requests').select('*').eq('id', requestId).maybeSingle();
+    if (!request) return res.status(404).json({ error: 'Verification request not found.' });
+    if (request.applicant_username !== sess.username) return res.status(403).json({ error: 'Not your verification request.' });
+    if (request.status !== 'email_pending') return res.status(409).json({ error: `This request is not awaiting email verification (status: ${request.status}).` });
+
+    const { data: artist } = await supabase.from('artists').select('name').eq('id', request.artist_id).maybeSingle();
+
+    const rawToken = verificationCore.generateVerificationToken();
+    await supabase.from('artist_verification_requests').update({
+      email_verification_token_hash: verificationCore.hashToken(rawToken),
+      email_verification_expires_at: new Date(Date.now() + verificationCore.EMAIL_TOKEN_TTL_HOURS * 3600 * 1000).toISOString(),
+    }).eq('id', requestId);
+
+    const verifyUrl = `${req.protocol}://${req.get('host')}/verify-email?requestId=${requestId}&token=${rawToken}`;
+    console.log(`[verification link regenerated] ${artist?.name || 'artist'} <${request.contact_email}>: ${verifyUrl}`);
+    await verificationCore.logAction(supabase, { requestId, actor: sess.username, action: 'link_resent', detail: {} });
+
+    return res.json({
+      requestId,
+      verifyUrl,
+      artistName: artist?.name || 'there',
+      contactEmail: request.contact_email,
+      expiresInHours: verificationCore.EMAIL_TOKEN_TTL_HOURS,
+    });
+  } catch (err) {
+    console.error('[verification resend-email]', err);
+    return res.status(500).json({ error: 'Could not resend verification email.' });
+  }
+});
+
 app.post('/api/verification/confirm-email', rateLimit, async (req, res) => {
   const { requestId, token } = req.body || {};
   if (!requestId || !token) return res.status(400).json({ error: 'requestId and token are required.' });
