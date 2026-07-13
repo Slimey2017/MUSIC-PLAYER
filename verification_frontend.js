@@ -158,8 +158,56 @@ function verificationEmailPendingHtml() {
         We sent a confirmation link to <strong style="color:var(--text-main);">${escapeHtml(verificationRequest?.contactEmail || 'your email')}</strong>.
         Click the link to continue. This page will update automatically once you confirm.
       </div>
-      <button onclick="loadVerificationSection()" style="background:none;border:1px solid var(--border);color:var(--text-dim);font-family:'Space Mono',monospace;font-size:0.42rem;padding:7px 14px;border-radius:var(--radius);cursor:pointer;">↻ Check Again</button>
+      <div id="vResendStatus" style="font-size:0.42rem;color:var(--accent);min-height:14px;margin-bottom:8px;"></div>
+      <div style="display:flex;gap:8px;justify-content:center;">
+        <button onclick="loadVerificationSection()" style="background:none;border:1px solid var(--border);color:var(--text-dim);font-family:'Space Mono',monospace;font-size:0.42rem;padding:7px 14px;border-radius:var(--radius);cursor:pointer;">↻ Check Again</button>
+        <button id="vResendBtn" onclick="resendVerificationEmail()" style="background:none;border:1px solid var(--accent);color:var(--accent);font-family:'Space Mono',monospace;font-size:0.42rem;padding:7px 14px;border-radius:var(--radius);cursor:pointer;">✉ Resend Email</button>
+      </div>
     </div>`;
+}
+
+// Regenerates the token/link server-side (old link is invalidated) then
+// sends it the same way submitVerificationClaim() does — client-side via
+// emailjs.send(), since that's the path that actually works (EmailJS blocks
+// server-side/non-browser API calls by default).
+async function resendVerificationEmail() {
+  const btn = $('vResendBtn');
+  const statusEl = $('vResendStatus');
+  if (!verificationRequest?.id) return;
+  btn.disabled = true; btn.textContent = 'Sending…';
+  statusEl.textContent = '';
+  try {
+    const res = await fetch(`/api/verification/${encodeURIComponent(verificationRequest.id)}/resend-email`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: AUTH.token }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      if (res.status === 401) { handleTokenExpiry(); return; }
+      throw new Error(data.error || 'Could not resend email.');
+    }
+
+    await emailjs.send(
+      FREQ_VERIFICATION_EMAILJS.SERVICE_ID,
+      FREQ_VERIFICATION_EMAILJS.TEMPLATE_ID,
+      {
+        email: data.contactEmail,
+        artistName: data.artistName || 'there',
+        verifyUrl: data.verifyUrl,
+        expiresInHours: String(data.expiresInHours || 24),
+      },
+      { publicKey: FREQ_VERIFICATION_EMAILJS.PUBLIC_KEY }
+    );
+
+    statusEl.textContent = '✓ Sent! Check your inbox (and spam folder).';
+    statusEl.style.color = 'var(--accent)';
+  } catch (err) {
+    console.error('[verification resend]', err);
+    statusEl.textContent = err.message || 'Could not resend — try again in a moment.';
+    statusEl.style.color = 'var(--accent2)';
+  } finally {
+    btn.disabled = false; btn.textContent = '✉ Resend Email';
+  }
 }
 
 function verificationProcessingHtml(label) {
