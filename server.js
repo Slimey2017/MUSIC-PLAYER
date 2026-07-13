@@ -11481,29 +11481,67 @@ app.post('/api/verification/:requestId/resend-email', rateLimit, async (req, res
   }
 });
 
+// Shared by POST /api/verification/confirm-email (programmatic use) and
+// GET /verify-email (the actual magic-link click target). Returns
+// { ok: true, requestId, status } or { ok: false, httpStatus, error }
+// rather than writing to res directly, so both routes can format the
+// response their own way (JSON vs redirect).
+async function confirmVerificationEmail(requestId, token) {
+  if (!requestId || !token) return { ok: false, httpStatus: 400, error: 'requestId and token are required.' };
+  const { data: request } = await supabase.from('artist_verification_requests').select('*').eq('id', requestId).maybeSingle();
+  if (!request) return { ok: false, httpStatus: 404, error: 'Verification request not found.' };
+  if (request.status !== 'email_pending') return { ok: false, httpStatus: 409, error: `This request is not awaiting email verification (status: ${request.status}).` };
+  if (!request.email_verification_expires_at || new Date(request.email_verification_expires_at).getTime() < Date.now()) {
+    return { ok: false, httpStatus: 410, error: 'This verification link has expired. Please restart the verification process.' };
+  }
+  if (verificationCore.hashToken(token) !== request.email_verification_token_hash) {
+    return { ok: false, httpStatus: 403, error: 'Invalid verification link.' };
+  }
+
+  await supabase.from('artist_verification_requests').update({ email_verified_at: new Date().toISOString() }).eq('id', requestId);
+  const updated = await verificationCore.transitionStatus(supabase, requestId, 'email_pending', 'evidence_required', { actor: 'system' });
+  await verificationCore.syncArtistVerificationStatus(supabase, request.artist_id, requestId, 'evidence_required');
+  await verificationCore.logAction(supabase, { requestId, actor: 'system', action: 'email_verified', detail: {} });
+
+  return { ok: true, requestId, status: updated.status };
+}
+
 app.post('/api/verification/confirm-email', rateLimit, async (req, res) => {
   const { requestId, token } = req.body || {};
-  if (!requestId || !token) return res.status(400).json({ error: 'requestId and token are required.' });
   try {
-    const { data: request } = await supabase.from('artist_verification_requests').select('*').eq('id', requestId).maybeSingle();
-    if (!request) return res.status(404).json({ error: 'Verification request not found.' });
-    if (request.status !== 'email_pending') return res.status(409).json({ error: `This request is not awaiting email verification (status: ${request.status}).` });
-    if (!request.email_verification_expires_at || new Date(request.email_verification_expires_at).getTime() < Date.now()) {
-      return res.status(410).json({ error: 'This verification link has expired. Please restart the verification process.' });
-    }
-    if (verificationCore.hashToken(token) !== request.email_verification_token_hash) {
-      return res.status(403).json({ error: 'Invalid verification link.' });
-    }
-
-    await supabase.from('artist_verification_requests').update({ email_verified_at: new Date().toISOString() }).eq('id', requestId);
-    const updated = await verificationCore.transitionStatus(supabase, requestId, 'email_pending', 'evidence_required', { actor: 'system' });
-    await verificationCore.syncArtistVerificationStatus(supabase, request.artist_id, requestId, 'evidence_required');
-    await verificationCore.logAction(supabase, { requestId, actor: 'system', action: 'email_verified', detail: {} });
-
-    return res.json({ requestId, status: updated.status });
+    const result = await confirmVerificationEmail(requestId, token);
+    if (!result.ok) return res.status(result.httpStatus).json({ error: result.error });
+    return res.json({ requestId: result.requestId, status: result.status });
   } catch (err) {
     console.error('[verification confirm-email]', err);
     return res.status(500).json({ error: 'Could not confirm email verification.' });
+  }
+});
+
+// GET /verify-email?requestId=...&token=...
+// The ACTUAL link target clicked from the confirmation email (see verifyUrl
+// in /verification/start and /verification/:id/resend-email above). Browsers
+// hit this with a plain GET when the link is clicked — there is no frontend
+// JS anywhere that reads requestId/token from the URL, so without this route
+// the request silently falls through to the SPA catch-all and index.html
+// just loads with no indication anything happened.
+//
+// Does the confirm server-side, then redirects into the SPA with a query
+// flag (?verified=1 or ?verifyError=...) so the artist dashboard can show a
+// toast/status once it boots. rateLimit intentionally omitted here — the
+// token itself is the auth (single-use, hashed, expires), and this is a
+// GET a human clicks from their inbox, not an API a script would hammer.
+app.get('/verify-email', async (req, res) => {
+  const { requestId, token } = req.query || {};
+  try {
+    const result = await confirmVerificationEmail(requestId, token);
+    if (!result.ok) {
+      return res.redirect(`/?verifyError=${encodeURIComponent(result.error)}`);
+    }
+    return res.redirect(`/?verified=1&requestId=${encodeURIComponent(result.requestId)}`);
+  } catch (err) {
+    console.error('[verify-email link]', err);
+    return res.redirect(`/?verifyError=${encodeURIComponent('Could not confirm email verification.')}`);
   }
 });
 
