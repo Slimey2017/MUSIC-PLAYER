@@ -555,16 +555,22 @@ header {
   z-index:0;pointer-events:none;
   opacity:0;transition:opacity 1.1s ease;
   filter:blur(38px) brightness(0.5) saturate(1.15);
-  /* Radial fade: soft glow at the center, thinning out gradually over a
-     long distance — this is a wide, slow falloff (not a hard-edged disc)
-     so there's no point where the eye can say "the wash stops here."
-     The old curve (solid to 35%, gone by 78%) held full strength across
-     too much of the box before cutting off in a short span — combined
-     with the flat, unlit background around it, that read as a banner/
-     rectangle rather than atmosphere. Spreading the falloff across nearly
-     the whole radius removes any perceivable boundary. */
-  -webkit-mask-image:radial-gradient(ellipse 90% 85% at 50% 45%,#000 0%,#000 12%,rgba(0,0,0,0.55) 45%,transparent 92%);
-  mask-image:radial-gradient(ellipse 90% 85% at 50% 45%,#000 0%,#000 12%,rgba(0,0,0,0.55) 45%,transparent 92%);
+  /* Radial fade: soft glow at the center, thinning out gradually all the
+     way to the container's actual corners — this is a wide, slow falloff
+     (not a hard-edged disc) so there's no point where the eye can say
+     "the wash stops here."
+     IMPORTANT: sized with `farthest-corner`, not a percentage like
+     "85%". A percentage-sized ellipse is measured against the box's own
+     width/height, so in a tall, narrow container (like the Now Playing
+     column, which is much taller than it is wide) a percentage radius
+     falls well short of the real top/bottom edges — that's what was
+     leaving a flat, unlit band above and below the wash. farthest-corner
+     always reaches the actual corner of the box no matter its aspect
+     ratio, so the glow genuinely fills the whole scene edge-to-edge
+     before fading out, instead of only covering a fixed band around the
+     artwork. */
+  -webkit-mask-image:radial-gradient(ellipse farthest-corner at 50% 42%,#000 0%,#000 22%,rgba(0,0,0,0.5) 55%,transparent 100%);
+  mask-image:radial-gradient(ellipse farthest-corner at 50% 42%,#000 0%,#000 22%,rgba(0,0,0,0.5) 55%,transparent 100%);
   will-change:transform;
 }
 .canvas-ambient-layer.visible{opacity:var(--motion-canvas-opacity,0.5);}
