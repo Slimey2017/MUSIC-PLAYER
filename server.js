@@ -119,7 +119,10 @@ if (!EMAILJS_ENABLED) {
 // Low-level EmailJS REST call. template_params keys must match the {{vars}}
 // used inside the EmailJS template editor exactly.
 async function sendEmailJs({ templateId, templateParams }) {
-  if (!EMAILJS_ENABLED) return { skipped: true };
+  if (!EMAILJS_ENABLED) {
+    console.warn('[EmailJS] Skipped send — EMAILJS_ENABLED is false (missing service/template/public key).');
+    return { skipped: true };
+  }
   const body = {
     service_id: EMAILJS_SERVICE_ID,
     template_id: templateId,
@@ -128,15 +131,19 @@ async function sendEmailJs({ templateId, templateParams }) {
   };
   if (EMAILJS_PRIVATE_KEY) body.accessToken = EMAILJS_PRIVATE_KEY;
 
+  console.log(`[EmailJS] Sending via service=${EMAILJS_SERVICE_ID} template=${templateId} to=${templateParams?.email || 'unknown'} privateKeySet=${Boolean(EMAILJS_PRIVATE_KEY)}`);
+
   const res = await fetch('https://api.emailjs.com/api/v1.0/email/send', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
+  const text = await res.text().catch(() => '');
   if (!res.ok) {
-    const text = await res.text().catch(() => '');
+    console.error(`[EmailJS] FAILED — status=${res.status} body=${text}`);
     throw new Error(`EmailJS send failed (${res.status}): ${text}`);
   }
+  console.log(`[EmailJS] Sent OK — status=${res.status} body=${text}`);
   return { skipped: false };
 }
 
