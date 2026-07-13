@@ -672,6 +672,24 @@ header {
 
 /* ─── Embed ───────────────────────────────────────────────────────── */
 .embed-container{flex:1;position:relative;background:var(--bg);overflow:hidden;}
+/* #embedContainer and #localPlayer represent mutually exclusive playback
+   modes (streaming embed vs. local file) and share the same flex column
+   in .player-area, but nothing in JS ever toggled #embedContainer's own
+   visibility — only #localPlayer gets a .visible class added/removed.
+   Without this rule, #embedContainer stays permanently in the layout at
+   flex:1 with its own flat, unlit background sitting directly above
+   #localPlayer — which is exactly the large dead black region that no
+   amount of tuning the ambient-layer mask/gradient inside #localPlayer
+   could ever fix, since that dead space belonged to a completely
+   different, un-hidden sibling element.
+   #embedContainer comes BEFORE #localPlayer in the DOM, so :has(~ ...)
+   (checks for a following sibling) is the correct direction here — a
+   plain ~ combinator on #embedContainer itself could never match since
+   that only looks at PRECEDING siblings' state, not following ones.
+   .local-player-active on <body> (toggled in JS as a fallback below) is
+   for browsers without :has() support. */
+#embedContainer:has(~ .local-player.visible),
+body.local-player-active #embedContainer{display:none;}
 .embed-frame{position:absolute;inset:0;width:100%;height:100%;border:none;display:none;}
 .embed-frame.visible{display:block;}
 
@@ -14849,6 +14867,18 @@ const embedFrame      = $('embedFrame');
 const embedLoading    = $('embedLoading');
 const welcomeScreen   = $('welcomeScreen');
 const localPlayer     = $('localPlayer');
+// Fallback for browsers without :has() support (see #embedContainer CSS):
+// mirror #localPlayer's .visible class onto <body> so #embedContainer can
+// be hidden via a plain descendant selector instead. Watching the class
+// attribute directly means this works no matter which of the several
+// existing call sites toggles .visible — nothing else needs to change.
+if (localPlayer) {
+  const _syncLocalPlayerActive = () => {
+    document.body.classList.toggle('local-player-active', localPlayer.classList.contains('visible'));
+  };
+  new MutationObserver(_syncLocalPlayerActive).observe(localPlayer, {attributes:true, attributeFilter:['class']});
+  _syncLocalPlayerActive();
+}
 const localAudio      = $('localAudio');
 const localTitle      = $('localTitle');
 const localMeta       = $('localMeta');
