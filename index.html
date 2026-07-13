@@ -532,55 +532,74 @@ header {
 .repeat-label{font-size:0.45rem;letter-spacing:0.08em;color:var(--accent);margin-left:-4px;font-weight:700;}
 
 /* ─── Local Audio Player ──────────────────────────────────────────── */
-.local-player{display:none;flex-direction:column;align-items:center;justify-content:center;flex:1;padding:32px;gap:22px;background:var(--bg);}
+.local-player{display:none;flex-direction:column;align-items:center;justify-content:center;flex:1;padding:32px;gap:22px;background:var(--bg);position:relative;overflow:hidden;}
 .local-player.visible{display:flex;}
 
-/* Motion Canvas stage — a separate 16:9 backdrop layer that sits BEHIND the
-   square album artwork. It never replaces or resizes the artwork; it's a
-   wide, rounded, blurred/darkened panel the artwork is centered on top of.
-   Two things can live in this stage:
-     1. The Motion Canvas video itself (published tracks that have one), or
-     2. A fallback background (see .local-canvas-fallback below) for every
-        other track, so the layout/visual weight never jumps between
-        "has canvas" and "doesn't" — per spec, no UI jumping or resizing.
-   Width scales with the viewport; height follows from aspect-ratio. */
-.local-canvas-stage{
-  width:clamp(260px,64vw,760px);aspect-ratio:16/9;
-  border-radius:14px;background:var(--surface2);border:1px solid var(--border);
-  position:relative;overflow:hidden;
-  display:flex;align-items:center;justify-content:center;
-  /* .local-player has gap:22px between flex children — this negative
-     margin overcomes that gap plus adds real overlap, so the artwork
-     visibly sits on top of the backdrop rather than just touching it. */
-  margin-bottom:-90px;
+/* Motion Canvas — an ambient background layer for the ENTIRE Now Playing
+   scene, not a boxed panel. It's absolutely positioned behind everything
+   in .local-player (artwork, title, controls all float on top of it via
+   normal stacking order + z-index), fills nearly the whole area, and has
+   no visible edges: opacity fades to 0 at the container's border via a
+   radial mask, so there's no rectangle, no border, no corner to notice —
+   just a soft wash of color/motion behind the scene.
+   Two things can occupy this layer (only one visible at a time):
+     1. #motionCanvasVideo — the published track's Motion Canvas video.
+     2. #localCanvasFallback — a blurred, slowly animated copy of the
+        album artwork, for every other track, so the ambient effect is
+        always present and the scene never looks flat/inconsistent.
+   Both share .canvas-ambient-layer for sizing/masking/animation so they
+   behave identically regardless of which one is active. */
+.canvas-ambient-layer{
+  position:absolute;inset:-6%; /* oversized so the Ken Burns drift never reveals an edge */
+  width:112%;height:112%;object-fit:cover;
+  z-index:0;pointer-events:none;
+  opacity:0;transition:opacity 1.1s ease;
+  filter:blur(38px) brightness(0.5) saturate(1.15);
+  /* Radial fade: fully present in the center, dissolving to nothing well
+     before the container edge — this is what removes the "box" look. */
+  -webkit-mask-image:radial-gradient(ellipse 65% 60% at 50% 42%,#000 0%,#000 35%,transparent 78%);
+  mask-image:radial-gradient(ellipse 65% 60% at 50% 42%,#000 0%,#000 35%,transparent 78%);
+  will-change:transform;
 }
-/* Both backdrop layers (video + fallback) share this sizing/behavior:
-   fill the stage, sit at the back, blurred + darkened + low-opacity so the
-   artwork on top always reads clearly, and cross-fade with playback. */
-.motion-canvas-video,.local-canvas-fallback{
-  width:100%;height:100%;object-fit:cover;display:block;position:absolute;inset:0;
-  opacity:0;transition:opacity 0.5s ease;
-  filter:blur(18px) brightness(0.55) saturate(1.1);
-  transform:scale(1.15); /* hides blur edge falloff */
+.canvas-ambient-layer.visible{opacity:var(--motion-canvas-opacity,0.5);}
+/* Slow, near-imperceptible Ken Burns drift: gentle pan + gentle zoom, never
+   a hard cut, always easing — the kind of motion you feel more than see.
+   Previously this was one keyframe animating scale+translate together in
+   lockstep, with translate deltas of only 1-2%. At 38px of blur that pan
+   distance gets smeared into invisibility — the animation was genuinely
+   running, it just never read as motion to the eye. Fix:
+     1. Two SEPARATE animations (comma-separated on the same element) with
+        different durations — 46s zoom, 63s pan — so they drift in and out
+        of phase instead of looping in perfect sync every cycle. That
+        phase-drift is what makes it feel organic (YouTube ambient-mode
+        style) instead of a mechanical bounce.
+     2. Pan range widened to ±3% so it actually survives the blur radius;
+        zoom (scale) reads clearly through blur regardless since it moves
+        the whole silhouette, so it can stay the subtler of the two. */
+@keyframes ambientZoom{
+  0%   {transform:scale(1.14);}
+  50%  {transform:scale(1.24);}
+  100% {transform:scale(1.14);}
 }
-.motion-canvas-video.visible,.local-canvas-fallback.visible{
-  opacity:var(--motion-canvas-opacity,0.5);
+@keyframes ambientPan{
+  0%   {translate:-2.5% -1.5%;}
+  30%  {translate:2.8% -2.8%;}
+  55%  {translate:1.5% 3%;}
+  80%  {translate:-3% 1.2%;}
+  100% {translate:-2.5% -1.5%;}
 }
-/* Fallback background image (blurred, enlarged copy of the album art) —
-   only ever shown when the current track has no Motion Canvas attached,
-   so the 16:9 stage is never left empty/blank behind the artwork. */
-.local-canvas-fallback{z-index:1;}
-.motion-canvas-video{z-index:2;}
-/* Subtle vignette across the bottom of the stage so nothing behind the
-   artwork/title ever looks like it's competing for attention. */
-.local-canvas-stage::after{
-  content:'';position:absolute;inset:0;pointer-events:none;z-index:3;
-  background:linear-gradient(180deg,rgba(0,0,0,0) 55%,rgba(0,0,0,0.4) 100%);
+.canvas-ambient-layer{
+  animation:ambientZoom 46s ease-in-out infinite, ambientPan 63s ease-in-out infinite;
 }
+@media (prefers-reduced-motion: reduce){
+  .canvas-ambient-layer{animation:none;transform:scale(1.1);translate:0 0;}
+}
+.local-canvas-fallback{z-index:0;}
+.motion-canvas-video{z-index:0;}
 
-/* Square album artwork — always centered, always this shape, regardless of
-   whether a Motion Canvas or fallback backdrop is present behind it. This
-   is "today's" artwork box, unchanged in size/shape/behavior. */
+/* Square album artwork — always centered, always this shape, unaffected by
+   whatever's happening in the ambient layer behind it. This is "today's"
+   artwork box: same size, same shape, same behavior as before. */
 .local-artwork{
   width:clamp(160px,34vw,320px);aspect-ratio:1/1;
   border-radius:10px;background:var(--surface2);border:1px solid var(--border);
@@ -591,6 +610,11 @@ header {
 .local-artwork-img{width:100%;height:100%;object-fit:cover;display:none;position:absolute;inset:0;}
 .local-artwork-img.visible{display:block;}
 .local-artwork-placeholder{position:absolute;font-size:3.5rem;opacity:0.2;}
+
+/* Everything else in the scene (title/meta/controls) sits above the
+   ambient layer too, so it visually "floats" over the background rather
+   than competing with a bounded image element for stacking. */
+.local-title,.local-meta,.local-audio,.local-audio-info,.freq-player-bar{position:relative;z-index:4;}
 
 .local-title{font-family:'Unbounded',sans-serif;font-size:0.95rem;font-weight:700;text-align:center;color:var(--text);letter-spacing:-0.01em;max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .local-meta{font-size:0.6rem;color:var(--text-dim);text-align:center;}
@@ -3265,28 +3289,27 @@ body.oled-mode {
 
     <!-- Local Audio Player -->
     <div class="local-player" id="localPlayer">
-      <!-- Motion Canvas stage — a 16:9 cinematic backdrop that sits BEHIND
-           the square album artwork below. It is background only: it never
-           resizes, stretches, or replaces the artwork. Exactly one of the
-           two layers inside is visible at a time (toggled via setMotionCanvas
-           in JS):
+      <!-- Motion Canvas — an ambient background wash for the whole scene
+           (see .canvas-ambient-layer in CSS: absolutely positioned, radial-
+           masked edges, slow Ken Burns drift). NOT a boxed panel — it sits
+           directly behind the artwork/title/controls below via z-index,
+           with no visible rectangle or border. Exactly one layer is visible
+           at a time (toggled via setMotionCanvas in JS):
              - #motionCanvasVideo: the published track's Motion Canvas video,
                when it has one.
-             - #localCanvasFallback: a blurred/darkened copy of the current
-               album artwork, when it doesn't — so the stage is never blank
-               and the layout never jumps between tracks. -->
-      <div class="local-canvas-stage" id="localCanvasStage">
-        <img class="local-canvas-fallback" id="localCanvasFallback" alt="" aria-hidden="true" />
-        <!-- muted+playsinline are required for autoplay to be allowed at
-             all; loop handles the seamless repeat; disablePictureInPicture/
-             disableRemotePlayback match the same casual-download-deterrent
-             posture as the main <audio> element — not real protection, just
-             no obvious right-click affordances on a background loop. -->
-        <video class="motion-canvas-video" id="motionCanvasVideo"
-          muted loop playsinline preload="none"
-          disablePictureInPicture disableRemotePlayback
-          oncontextmenu="return false;"></video>
-      </div>
+             - #localCanvasFallback: a blurred, slowly-animated copy of the
+               current album artwork, when it doesn't — so the ambient
+               effect is always present and consistent between tracks. -->
+      <img class="canvas-ambient-layer local-canvas-fallback" id="localCanvasFallback" alt="" aria-hidden="true" />
+      <!-- muted+playsinline are required for autoplay to be allowed at
+           all; loop handles the seamless repeat; disablePictureInPicture/
+           disableRemotePlayback match the same casual-download-deterrent
+           posture as the main <audio> element — not real protection, just
+           no obvious right-click affordances on a background loop. -->
+      <video class="canvas-ambient-layer motion-canvas-video" id="motionCanvasVideo"
+        muted loop playsinline preload="none"
+        disablePictureInPicture disableRemotePlayback
+        oncontextmenu="return false;"></video>
       <div class="local-artwork" id="localArtwork">
         <img class="local-artwork-img" id="localArtworkImg" alt="Album art" />
         <span class="local-artwork-placeholder">♪</span>
@@ -14821,7 +14844,6 @@ const localFormat     = $('localFormat');
 const localSize       = $('localSize');
 const localArtworkImg = $('localArtworkImg');
 const localArtwork    = $('localArtwork');
-const localCanvasStage    = $('localCanvasStage');
 const localCanvasFallback = $('localCanvasFallback');
 const motionCanvasVideo = $('motionCanvasVideo');
 const nowPlatform     = $('nowPlatform');
@@ -19422,16 +19444,20 @@ async function deleteCloudFile(index) {
 // A short, muted, looping video attached to a published FREQ track (see
 // server.js's Motion Canvas system + resolvePublishedTrack above, which is
 // where item.motionCanvasUrl/motionCanvasMimeType come from). This is NOT
-// the Music Video "Watch Video" feature — it plays silently as a backdrop
-// BEHIND the square album artwork, never its own audio/controls, and never
-// resizes/replaces the artwork itself (see .local-canvas-stage in CSS).
+// the Music Video "Watch Video" feature — it plays silently as a full-bleed
+// AMBIENT background wash for the whole Now Playing scene (see
+// .canvas-ambient-layer in CSS: absolutely positioned, radial-masked edges
+// so there's no visible rectangle, slow Ken Burns drift). It never has its
+// own audio/controls, and never resizes/replaces the square artwork, which
+// sits on top of it via z-index.
 //
 // setMotionCanvas(item) is the single entry point, called from playItem()
 // right after the static artwork is set. It owns:
 //   - swapping the <video> src and toggling .visible on #motionCanvasVideo
-//   - falling back to a blurred copy of the album art (#localCanvasFallback,
-//     via showCanvasFallback()) when this track has no canvas, so the 16:9
-//     backdrop is never blank and the layout never jumps between tracks
+//   - falling back to a blurred, ambient copy of the album art
+//     (#localCanvasFallback, via showCanvasFallback()) when this track has
+//     no canvas, so the background is never blank and the scene never
+//     jumps between tracks
 //   - NOT autoplaying until localAudio actually starts (the 'playing'
 //     listener below drives that), so the canvas never runs ahead of audio
 //   - fully clearing state for tracks/platforms with no canvas — local
@@ -19454,7 +19480,7 @@ function setMotionCanvas(item) {
   if (!url || !motionCanvasEnabled()) {
     clearMotionCanvas();
     // No Motion Canvas for this track (or it's disabled) — fall back to the
-    // blurred-artwork backdrop so the 16:9 stage is never left empty and
+    // blurred, ambient artwork backdrop so the scene is never left flat and
     // the layout stays identical between "has canvas" and "doesn't".
     showCanvasFallback();
     return;
