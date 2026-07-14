@@ -12040,7 +12040,7 @@ app.get('/api/admin/verification/queue', requireAdmin, async (req, res) => {
   try {
     const { data, error, count } = await supabase
       .from('artist_verification_requests')
-      .select('id, artist_id, applicant_username, role, legal_name, stage_name, contact_email, contact_email_domain_risk, status, risk_score, face_match_result, liveness_result, manipulation_risk_result, ownership_evidence_type, ownership_verified_at, created_at, updated_at, artists(id, name, slug, is_verified)', { count: 'exact' })
+      .select('id, artist_id, applicant_username, role, legal_name, stage_name, contact_email, contact_email_domain_risk, status, risk_score, face_match_result, liveness_result, manipulation_risk_result, ownership_evidence_type, ownership_verified_at, created_at, updated_at, artists!artist_verification_requests_artist_id_fkey(id, name, slug, is_verified)', { count: 'exact' })
       .eq('status', status)
       .order('created_at', { ascending: true }) // oldest first — FIFO queue
       .range(offset, offset + limit - 1);
@@ -12060,7 +12060,7 @@ app.get('/api/admin/verification/:requestId', requireAdmin, async (req, res) => 
   try {
     const { data: request, error } = await supabase
       .from('artist_verification_requests')
-      .select('*, artists(id, name, slug, is_verified, verification_status)')
+      .select('*, artists!artist_verification_requests_artist_id_fkey(id, name, slug, is_verified, verification_status)')
       .eq('id', req.params.requestId).maybeSingle();
     if (error || !request) return res.status(404).json({ error: 'Verification request not found.' });
 
