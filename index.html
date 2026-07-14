@@ -2858,6 +2858,45 @@ body.oled-mode {
 }
 .admin-stat-pill span { font-weight:700;color:var(--text);margin-right:4px; }
 
+/* Verification review tab — shares admin-report-row/admin-report-chip/
+   admin-action-btn from the reports UI above; these add the pieces that
+   don't exist there (result-outcome coloring, doc thumbnail grid). */
+.admin-verif-back {
+  background:none;border:1px solid var(--border);color:var(--text-muted);
+  font-family:'Space Mono',monospace;font-size:0.42rem;padding:6px 12px;
+  border-radius:var(--radius);cursor:pointer;margin-bottom:14px;
+}
+.admin-verif-back:hover { border-color:var(--text);color:var(--text); }
+.admin-report-chip.result-pass { border-color:#8fd9a8;color:#8fd9a8; }
+.admin-report-chip.result-fail { border-color:var(--accent2);color:var(--accent2); }
+.admin-report-chip.result-review,
+.admin-report-chip.result-inconclusive { border-color:rgba(255,180,0,0.6);color:rgba(255,200,0,0.9); }
+.verif-field-grid {
+  display:grid;grid-template-columns:1fr 1fr;gap:10px 20px;font-size:0.44rem;margin-bottom:16px;
+}
+.verif-field-grid .verif-field-label { color:var(--text-muted);font-size:0.38rem;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:2px; }
+.verif-field-grid .verif-field-value { color:var(--text-main); }
+.verif-doc-grid {
+  display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;margin-bottom:16px;
+}
+.verif-doc-thumb {
+  border:1px solid var(--border);border-radius:6px;padding:10px 8px;text-align:center;
+  cursor:pointer;transition:all 0.12s;background:rgba(255,255,255,0.02);
+}
+.verif-doc-thumb:hover { border-color:var(--accent3);background:rgba(0,212,255,0.06); }
+.verif-doc-thumb .verif-doc-icon { font-size:1.1rem;margin-bottom:6px; }
+.verif-doc-thumb .verif-doc-type { font-size:0.4rem;color:var(--text-main);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:2px; }
+.verif-doc-thumb .verif-doc-meta { font-size:0.34rem;color:var(--text-dim); }
+.verif-doc-thumb.purged { opacity:0.5;cursor:not-allowed; }
+.verif-history-row { font-size:0.4rem;color:var(--text-dim);padding:5px 0;border-bottom:1px solid rgba(255,255,255,0.04); }
+.verif-history-row:last-child { border-bottom:none; }
+.verif-history-row .verif-history-actor { color:var(--text-main);font-weight:700; }
+.verif-note-box {
+  width:100%;background:rgba(255,255,255,0.03);border:1px solid var(--border);
+  border-radius:var(--radius);color:var(--text-main);font-family:'Space Mono',monospace;
+  font-size:0.46rem;padding:9px 11px;box-sizing:border-box;margin-bottom:8px;resize:vertical;min-height:56px;
+}
+
 /* Release expanded track panel */
 .release-tracks-panel {
   background:var(--surface);border:1px solid var(--border);
@@ -4352,6 +4391,7 @@ body.oled-mode {
       <button class="admin-dash-tab"         id="adminTabActioned" onclick="setAdminTab('action_taken')">Actioned</button>
       <button class="admin-dash-tab"         id="adminTabDismissed" onclick="setAdminTab('dismissed')">Dismissed</button>
       <button class="admin-dash-tab"         id="adminTabPresence" onclick="setAdminTab('presence')">Presence</button>
+      <button class="admin-dash-tab"         id="adminTabVerification" onclick="setAdminTab('verification')">Verification</button>
     </div>
     <div id="adminReportsList"><div class="empty-panel">Loading…</div></div>
     <div id="adminReportsLoadMore" style="display:none;margin-top:10px;">
@@ -4374,6 +4414,42 @@ body.oled-mode {
       </div>
       <div id="adminPresenceContent"><div class="empty-panel">Loading…</div></div>
     </div>
+    <!-- Verification review tab — own container per the same reasoning as
+         adminPresencePanel: switching tabs shouldn't clobber the queue's
+         scroll position or the currently-open request detail. Two sub-views
+         live inside it: the queue list (adminVerificationQueue) and a
+         detail view for one request (adminVerificationDetail); only one is
+         visible at a time via showVerificationQueue()/showVerificationDetail(). -->
+    <div id="adminVerificationPanel" style="display:none;">
+      <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap;">
+        <button class="admin-dash-tab active" id="adminVerifStatusManual" onclick="setAdminVerificationStatus('manual_review')" style="flex:1;">Needs Review</button>
+        <button class="admin-dash-tab" id="adminVerifStatusMoreInfo" onclick="setAdminVerificationStatus('more_information_required')" style="flex:1;">More Info</button>
+        <button class="admin-dash-tab" id="adminVerifStatusApproved" onclick="setAdminVerificationStatus('approved')" style="flex:1;">Approved</button>
+        <button class="admin-dash-tab" id="adminVerifStatusRejected" onclick="setAdminVerificationStatus('rejected')" style="flex:1;">Rejected</button>
+      </div>
+      <div id="adminVerificationQueue"><div class="empty-panel">Loading…</div></div>
+      <div id="adminVerificationDetail" style="display:none;"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Verification document viewer — full-bleed overlay for a single decrypted
+     document (ID / selfie / liveness clip). Deliberately separate from the
+     admin dash panel (above.above z-index) so it can sit on top of the
+     request detail view without the reviewer losing their place. Media src
+     is set to the authenticated, logged, decrypt-on-read endpoint — never a
+     bucket URL, since the bucket has no public access and the file is
+     ciphertext at rest anyway (see storeEncryptedDocument). -->
+<div class="lyrics-overlay above-dash" id="verifDocViewerOverlay">
+  <div class="lyrics-panel" style="max-width:640px;">
+    <div class="lyrics-title" id="verifDocViewerTitle" style="font-size:0.6rem;">Document</div>
+    <div id="verifDocViewerBody" style="background:rgba(0,0,0,0.4);border:1px solid var(--border);border-radius:var(--radius);min-height:200px;display:flex;align-items:center;justify-content:center;margin-bottom:12px;overflow:hidden;">
+      <div class="empty-panel">Decrypting…</div>
+    </div>
+    <div style="font-size:0.4rem;color:var(--text-muted);margin-bottom:10px;">
+      Every view of this file is logged with your admin username and the time.
+    </div>
+    <button class="support-close-btn" onclick="closeVerifDocViewer()">Close</button>
   </div>
 </div>
 
@@ -12233,20 +12309,30 @@ function setAdminTab(status) {
   adminCurrentTab = status;
   adminCurrentOffset = 0;
   document.querySelectorAll('.admin-dash-tab').forEach(t => t.classList.remove('active'));
-  const tabIds = { pending: 'adminTabPending', reviewed: 'adminTabReviewed', action_taken: 'adminTabActioned', dismissed: 'adminTabDismissed', presence: 'adminTabPresence' };
+  const tabIds = { pending: 'adminTabPending', reviewed: 'adminTabReviewed', action_taken: 'adminTabActioned', dismissed: 'adminTabDismissed', presence: 'adminTabPresence', verification: 'adminTabVerification' };
   $(tabIds[status])?.classList.add('active');
 
   const reportsList = $('adminReportsList');
   const reportsLoadMore = $('adminReportsLoadMore');
   const presencePanel = $('adminPresencePanel');
+  const verificationPanel = $('adminVerificationPanel');
   if (status === 'presence') {
     if (reportsList) reportsList.style.display = 'none';
     if (reportsLoadMore) reportsLoadMore.style.display = 'none';
     if (presencePanel) presencePanel.style.display = '';
+    if (verificationPanel) verificationPanel.style.display = 'none';
     loadAdminPresenceOnline();
+  } else if (status === 'verification') {
+    if (reportsList) reportsList.style.display = 'none';
+    if (reportsLoadMore) reportsLoadMore.style.display = 'none';
+    if (presencePanel) presencePanel.style.display = 'none';
+    if (verificationPanel) verificationPanel.style.display = '';
+    showVerificationQueue();
+    loadAdminVerificationQueue();
   } else {
     if (reportsList) reportsList.style.display = '';
     if (presencePanel) presencePanel.style.display = 'none';
+    if (verificationPanel) verificationPanel.style.display = 'none';
     loadAdminReports(false);
   }
 }
@@ -12370,6 +12456,299 @@ async function loadAdminActivity() {
   } catch (err) {
     if (content) content.innerHTML = `<div class="empty-panel">${String(err.message || err)}</div>`;
   }
+}
+
+// ── Admin Verification Review ───────────────────────────────────────────────
+// Reviewer side of artist identity verification (Step 9 of the pipeline —
+// see server.js comments above /api/admin/verification/*). Two sub-views
+// share adminVerificationPanel: a status-filtered queue, and a detail view
+// for one request with its documents, automated-check results, history, and
+// the approve/reject/more-info/escalate/suspend decision actions.
+let adminVerifStatus = 'manual_review';
+let adminVerifOffset = 0;
+const ADMIN_VERIF_PAGE_SIZE = 25;
+let adminVerifCurrentRequestId = null; // set while the detail view is open
+
+const VERIF_STATUS_LABELS = {
+  email_pending: 'Email Pending', evidence_required: 'Evidence Required',
+  liveness_pending: 'Liveness Pending', automated_review: 'Automated Review',
+  manual_review: 'Manual Review', more_information_required: 'More Info Requested',
+  approved: 'Approved', rejected: 'Rejected', revoked: 'Revoked', expired: 'Expired',
+};
+// Coloring for face_match_result / liveness_result / manipulation_risk_result —
+// each column has its own CHECK-constrained vocabulary (see verificationCore.js
+// mock adapters in server.js), normalized here just for chip color.
+function verifResultClass(value) {
+  if (!value) return '';
+  const v = String(value).toLowerCase();
+  if (v.includes('match') || v === 'pass' || v === 'live' || v === 'low') return 'result-pass';
+  if (v.includes('no_match') || v === 'fail' || v === 'spoof' || v === 'high') return 'result-fail';
+  return 'result-review'; // needs_manual_review, inconclusive, manual_review_required, medium, etc.
+}
+const VERIF_DOC_ICONS = { id: '🪪', selfie: '🙂', liveness: '🎥' };
+
+function setAdminVerificationStatus(status) {
+  adminVerifStatus = status;
+  adminVerifOffset = 0;
+  document.querySelectorAll('#adminVerificationPanel .admin-dash-tab').forEach(t => t.classList.remove('active'));
+  const ids = { manual_review: 'adminVerifStatusManual', more_information_required: 'adminVerifStatusMoreInfo', approved: 'adminVerifStatusApproved', rejected: 'adminVerifStatusRejected' };
+  $(ids[status])?.classList.add('active');
+  showVerificationQueue();
+  loadAdminVerificationQueue();
+}
+
+function showVerificationQueue() {
+  adminVerifCurrentRequestId = null;
+  const queue = $('adminVerificationQueue'), detail = $('adminVerificationDetail');
+  if (queue) queue.style.display = '';
+  if (detail) { detail.style.display = 'none'; detail.innerHTML = ''; }
+}
+
+function showVerificationDetailView() {
+  const queue = $('adminVerificationQueue'), detail = $('adminVerificationDetail');
+  if (queue) queue.style.display = 'none';
+  if (detail) detail.style.display = '';
+}
+
+async function loadAdminVerificationQueue(loadMore) {
+  const list = $('adminVerificationQueue');
+  const offset = loadMore ? adminVerifOffset : 0;
+  if (!list) return;
+  if (!loadMore) list.innerHTML = '<div class="empty-panel">Loading…</div>';
+  try {
+    const res = await fetch(`/api/admin/verification/queue?status=${encodeURIComponent(adminVerifStatus)}&limit=${ADMIN_VERIF_PAGE_SIZE}&offset=${offset}`, {
+      headers: authHeaders(),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      if (res.status === 401) { handleTokenExpiry(); return; }
+      throw new Error(data.error || 'Could not load verification queue.');
+    }
+    const rows = data.requests || [];
+    const rowsHtml = rows.map(r => `
+      <div class="admin-report-row" style="cursor:pointer;" onclick="openAdminVerificationDetail('${escapeHtml(r.id)}')">
+        <div class="admin-report-meta">
+          <span class="admin-report-chip">${escapeHtml(r.role || 'artist')}</span>
+          ${r.face_match_result ? `<span class="admin-report-chip ${verifResultClass(r.face_match_result)}">face: ${escapeHtml(r.face_match_result)}</span>` : ''}
+          ${r.liveness_result ? `<span class="admin-report-chip ${verifResultClass(r.liveness_result)}">liveness: ${escapeHtml(r.liveness_result)}</span>` : ''}
+          ${r.manipulation_risk_result ? `<span class="admin-report-chip ${verifResultClass(r.manipulation_risk_result)}">risk: ${escapeHtml(r.manipulation_risk_result)}</span>` : ''}
+          <span style="font-size:0.4rem;color:var(--text-muted);margin-left:auto;">${new Date(r.created_at).toLocaleString()}</span>
+        </div>
+        <div style="font-size:0.46rem;color:var(--text-main);margin-bottom:2px;">
+          ${escapeHtml(r.stage_name || r.legal_name || r.applicant_username)}
+          ${r.artists?.name ? ` <span style="color:var(--text-dim);">→ ${escapeHtml(r.artists.name)}</span>` : ''}
+        </div>
+        <div style="font-size:0.4rem;color:var(--text-dim);">
+          @${escapeHtml(r.applicant_username)} · ${escapeHtml(r.contact_email || 'no email on file')}
+          ${r.contact_email_domain_risk ? ` · <span style="color:var(--accent2);">email risk: ${escapeHtml(r.contact_email_domain_risk)}</span>` : ''}
+        </div>
+      </div>
+    `).join('');
+    if (loadMore) list.insertAdjacentHTML('beforeend', rowsHtml);
+    else list.innerHTML = rowsHtml || '<div class="empty-panel">Nothing in this queue.</div>';
+    adminVerifOffset = offset + rows.length;
+    const loadMoreNeeded = data.total > adminVerifOffset;
+    let moreBtn = $('adminVerifLoadMore');
+    if (loadMoreNeeded) {
+      if (!moreBtn) {
+        list.insertAdjacentHTML('afterend', '<button id="adminVerifLoadMore" onclick="loadAdminVerificationQueue(true)" style="width:100%;background:none;border:1px solid var(--border);color:var(--text-muted);font-family:\'Space Mono\',monospace;font-size:0.44rem;padding:8px;border-radius:var(--radius);cursor:pointer;margin-top:10px;">Load More</button>');
+      }
+    } else if (moreBtn) {
+      moreBtn.remove();
+    }
+  } catch (err) {
+    if (!loadMore) list.innerHTML = `<div class="empty-panel">${escapeHtml(err.message || 'Could not load verification queue.')}</div>`;
+    else showToast('Error', err.message || 'Could not load more requests.', 'error');
+  }
+}
+
+async function openAdminVerificationDetail(requestId) {
+  adminVerifCurrentRequestId = requestId;
+  const detail = $('adminVerificationDetail');
+  showVerificationDetailView();
+  if (detail) detail.innerHTML = '<div class="empty-panel">Loading…</div>';
+  try {
+    const res = await fetch(`/api/admin/verification/${encodeURIComponent(requestId)}`, { headers: authHeaders() });
+    const data = await res.json();
+    if (!res.ok) {
+      if (res.status === 401) { handleTokenExpiry(); return; }
+      throw new Error(data.error || 'Could not load verification request.');
+    }
+    renderAdminVerificationDetail(data);
+  } catch (err) {
+    if (detail) detail.innerHTML = `<div class="empty-panel">${escapeHtml(err.message || 'Could not load verification request.')}</div>`;
+  }
+}
+
+function renderAdminVerificationDetail(data) {
+  const detail = $('adminVerificationDetail');
+  if (!detail) return;
+  const r = data.request;
+  const docs = data.documents || [];
+  const history = data.history || [];
+  const priorAttempts = data.priorAttempts || [];
+
+  const docsHtml = docs.map(d => {
+    const purged = !!d.deleted_at;
+    const icon = VERIF_DOC_ICONS[d.doc_type] || '📄';
+    return `
+      <div class="verif-doc-thumb ${purged ? 'purged' : ''}" ${purged ? '' : `onclick="openVerifDocViewer('${escapeHtml(d.id)}','${escapeHtml(d.doc_type)}')"`}>
+        <div class="verif-doc-icon">${icon}</div>
+        <div class="verif-doc-type">${escapeHtml(d.doc_type)}</div>
+        <div class="verif-doc-meta">${purged ? 'purged' : (d.size ? `${Math.round(d.size / 1024)} KB` : '')}</div>
+        ${d.last_accessed_by ? `<div class="verif-doc-meta">seen: ${escapeHtml(d.last_accessed_by)}</div>` : ''}
+      </div>`;
+  }).join('');
+
+  const historyHtml = history.map(h => `
+    <div class="verif-history-row">
+      <span class="verif-history-actor">${escapeHtml(h.actor)}</span> — ${escapeHtml(String(h.action || '').replace(/_/g, ' '))}
+      <span style="float:right;">${new Date(h.created_at).toLocaleString()}</span>
+    </div>`).join('');
+
+  const priorHtml = priorAttempts.length ? `
+    <div class="verif-field-label" style="margin-top:14px;">Prior Attempts</div>
+    ${priorAttempts.map(p => `<div class="verif-history-row">${escapeHtml(p.status)}${p.decision ? ' · ' + escapeHtml(p.decision) : ''} <span style="float:right;">${new Date(p.created_at).toLocaleString()}</span></div>`).join('')}
+  ` : '';
+
+  const canDecide = r.status === 'manual_review';
+  const canSuspend = r.status === 'approved';
+
+  detail.innerHTML = `
+    <button class="admin-verif-back" onclick="showVerificationQueue()">← Back to Queue</button>
+    <div class="admin-report-meta" style="margin-bottom:10px;">
+      <span class="admin-report-chip">${escapeHtml(VERIF_STATUS_LABELS[r.status] || r.status)}</span>
+      ${r.decision ? `<span class="admin-report-chip ${verifResultClass(r.decision === 'approved' ? 'pass' : r.decision === 'rejected' ? 'fail' : '')}">${escapeHtml(r.decision)}</span>` : ''}
+      ${r.risk_score != null ? `<span class="admin-report-chip">risk score: ${escapeHtml(String(r.risk_score))}</span>` : ''}
+    </div>
+    <div class="verif-field-grid">
+      <div><div class="verif-field-label">Legal Name</div><div class="verif-field-value">${escapeHtml(r.legal_name || '—')}</div></div>
+      <div><div class="verif-field-label">Stage Name</div><div class="verif-field-value">${escapeHtml(r.stage_name || '—')}</div></div>
+      <div><div class="verif-field-label">Applicant</div><div class="verif-field-value">@${escapeHtml(r.applicant_username)}</div></div>
+      <div><div class="verif-field-label">Role</div><div class="verif-field-value">${escapeHtml(r.role || '—')}</div></div>
+      <div><div class="verif-field-label">Contact Email</div><div class="verif-field-value">${escapeHtml(r.contact_email || '—')}</div></div>
+      <div><div class="verif-field-label">Email Domain Risk</div><div class="verif-field-value">${escapeHtml(r.contact_email_domain_risk || 'none flagged')}</div></div>
+      <div><div class="verif-field-label">Artist Page</div><div class="verif-field-value">${r.artists?.name ? escapeHtml(r.artists.name) : '—'}</div></div>
+      <div><div class="verif-field-label">Ownership Evidence</div><div class="verif-field-value">${escapeHtml(r.ownership_evidence_type || '—')}${r.ownership_verified_at ? ' ✓' : ''}</div></div>
+      <div><div class="verif-field-label">Face Match</div><div class="verif-field-value">${escapeHtml(r.face_match_result || 'pending')}</div></div>
+      <div><div class="verif-field-label">Liveness</div><div class="verif-field-value">${escapeHtml(r.liveness_result || 'pending')}</div></div>
+      <div><div class="verif-field-label">Manipulation Risk</div><div class="verif-field-value">${escapeHtml(r.manipulation_risk_result || 'pending')}</div></div>
+      <div><div class="verif-field-label">Submitted</div><div class="verif-field-value">${new Date(r.created_at).toLocaleString()}</div></div>
+    </div>
+
+    <div class="verif-field-label">Documents</div>
+    <div class="verif-doc-grid">${docsHtml || '<div class="empty-panel">No documents uploaded.</div>'}</div>
+
+    ${canDecide || canSuspend ? `
+      <div class="verif-field-label">Decision</div>
+      <textarea class="verif-note-box" id="verifDecisionReason" placeholder="Reason (shown to applicant for reject / more info)…"></textarea>
+      <div class="admin-report-actions" style="margin-bottom:16px;">
+        ${canDecide ? `
+          <button class="admin-action-btn verify" onclick="decideAdminVerification('approve')">Approve</button>
+          <button class="admin-action-btn danger" onclick="decideAdminVerification('reject')">Reject</button>
+          <button class="admin-action-btn" onclick="decideAdminVerification('more_info')">Request More Info</button>
+          <button class="admin-action-btn" onclick="decideAdminVerification('escalate')">Escalate</button>
+        ` : ''}
+        ${canSuspend ? `<button class="admin-action-btn danger" onclick="decideAdminVerification('suspend')">Suspend Verification</button>` : ''}
+      </div>
+    ` : ''}
+
+    <div class="verif-field-label">Reviewer Note</div>
+    <textarea class="verif-note-box" id="verifNoteBox" placeholder="Internal note (not visible to applicant)…"></textarea>
+    <button class="admin-action-btn" onclick="submitAdminVerificationNote()" style="margin-bottom:16px;">Add Note</button>
+
+    <div class="verif-field-label">History</div>
+    <div style="margin-bottom:6px;">${historyHtml || '<div class="empty-panel">No history yet.</div>'}</div>
+    ${priorHtml}
+  `;
+}
+
+async function decideAdminVerification(decision) {
+  if (!adminVerifCurrentRequestId) return;
+  const reason = $('verifDecisionReason')?.value?.trim() || '';
+  if ((decision === 'reject' || decision === 'suspend') && !confirm(`Are you sure you want to ${decision === 'suspend' ? 'suspend this verification' : 'reject this request'}?`)) return;
+  try {
+    const res = await fetch(`/api/admin/verification/${encodeURIComponent(adminVerifCurrentRequestId)}/decide`, {
+      method: 'POST', headers: authHeaders(),
+      body: JSON.stringify({ decision, reason: reason || undefined }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      if (res.status === 401) { handleTokenExpiry(); return; }
+      throw new Error(data.error || 'Action failed.');
+    }
+    showToast('Verification Updated', decision.replace(/_/g, ' '), 'success');
+    loadAdminVerificationQueue();
+    showVerificationQueue();
+  } catch (err) {
+    showToast('Error', err.message || 'Could not record decision.', 'error');
+  }
+}
+
+async function submitAdminVerificationNote() {
+  if (!adminVerifCurrentRequestId) return;
+  const note = $('verifNoteBox')?.value?.trim();
+  if (!note) { showToast('Empty Note', 'Write something first.', 'error'); return; }
+  try {
+    const res = await fetch(`/api/admin/verification/${encodeURIComponent(adminVerifCurrentRequestId)}/note`, {
+      method: 'POST', headers: authHeaders(),
+      body: JSON.stringify({ note }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      if (res.status === 401) { handleTokenExpiry(); return; }
+      throw new Error(data.error || 'Could not add note.');
+    }
+    showToast('Note Added', '', 'success');
+    openAdminVerificationDetail(adminVerifCurrentRequestId); // refresh history
+  } catch (err) {
+    showToast('Error', err.message || 'Could not add note.', 'error');
+  }
+}
+
+// ── Verification document viewer ────────────────────────────────────────────
+// Streams decrypted bytes from the ONLY route that can produce plaintext
+// (GET /api/admin/verification/documents/:id — see server.js). Fetched with
+// auth headers as a blob rather than set directly as an <img src>, since the
+// endpoint requires a Bearer token that a bare <img>/<video> tag can't send.
+// The object URL is revoked on close so decrypted bytes don't linger in memory
+// longer than the reviewer is actually looking at them.
+let verifDocObjectUrl = null;
+
+async function openVerifDocViewer(documentId, docType) {
+  const overlay = $('verifDocViewerOverlay');
+  const body = $('verifDocViewerBody');
+  const title = $('verifDocViewerTitle');
+  if (title) title.textContent = (VERIF_DOC_ICONS[docType] || '') + ' ' + (docType.charAt(0).toUpperCase() + docType.slice(1));
+  if (body) body.innerHTML = '<div class="empty-panel">Decrypting…</div>';
+  overlay?.classList.add('open');
+  try {
+    const res = await fetch(`/api/admin/verification/documents/${encodeURIComponent(documentId)}`, { headers: authHeaders() });
+    if (!res.ok) {
+      if (res.status === 401) { handleTokenExpiry(); return; }
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.error || 'Could not load document.');
+    }
+    const contentType = res.headers.get('Content-Type') || '';
+    const blob = await res.blob();
+    if (verifDocObjectUrl) URL.revokeObjectURL(verifDocObjectUrl);
+    verifDocObjectUrl = URL.createObjectURL(blob);
+    if (!body) return;
+    if (contentType.startsWith('image/')) {
+      body.innerHTML = `<img src="${verifDocObjectUrl}" style="max-width:100%;max-height:70vh;display:block;" />`;
+    } else if (contentType.startsWith('video/')) {
+      body.innerHTML = `<video src="${verifDocObjectUrl}" controls autoplay style="max-width:100%;max-height:70vh;display:block;"></video>`;
+    } else {
+      body.innerHTML = `<div class="empty-panel">Unsupported preview type (${escapeHtml(contentType || 'unknown')}). <a href="${verifDocObjectUrl}" download="${escapeHtml(docType)}" style="color:var(--accent3);">Download instead</a></div>`;
+    }
+  } catch (err) {
+    if (body) body.innerHTML = `<div class="empty-panel">${escapeHtml(err.message || 'Could not load document.')}</div>`;
+  }
+}
+
+function closeVerifDocViewer() {
+  $('verifDocViewerOverlay')?.classList.remove('open');
+  if (verifDocObjectUrl) { URL.revokeObjectURL(verifDocObjectUrl); verifDocObjectUrl = null; }
 }
 
 async function loadAdminReports(loadMore) {
