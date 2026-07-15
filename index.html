@@ -3894,6 +3894,43 @@ body.oled-mode {
     </div>
 
     <div class="settings-section">
+      <div class="settings-section-title">Content</div>
+      <div id="contentFilterLockedNotice" style="display:none;font-size:0.44rem;color:var(--text-dim);line-height:1.6;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:var(--radius);padding:9px 11px;margin-bottom:12px;">
+        These settings are managed by a parent or guardian and can't be changed from this account.
+      </div>
+      <div class="settings-row">
+        <div>
+          <div class="settings-row-label">🟢 Allow Clean</div>
+          <div class="settings-row-desc">Content suitable for everyone</div>
+        </div>
+        <label class="settings-switch">
+          <input type="checkbox" id="settingAllowClean" checked onchange="applyContentFilter('allowClean',this.checked)" />
+          <div class="settings-track"></div>
+        </label>
+      </div>
+      <div class="settings-row">
+        <div>
+          <div class="settings-row-label">🟡 Allow Parental Guidance</div>
+          <div class="settings-row-desc">May contain mature themes</div>
+        </div>
+        <label class="settings-switch">
+          <input type="checkbox" id="settingAllowPG" checked onchange="applyContentFilter('allowParentalGuidance',this.checked)" />
+          <div class="settings-track"></div>
+        </label>
+      </div>
+      <div class="settings-row">
+        <div>
+          <div class="settings-row-label">🔴 Allow 18+</div>
+          <div class="settings-row-desc">Adults only</div>
+        </div>
+        <label class="settings-switch">
+          <input type="checkbox" id="settingAllowAdult" checked onchange="applyContentFilter('allowAdult',this.checked)" />
+          <div class="settings-track"></div>
+        </label>
+      </div>
+    </div>
+
+    <div class="settings-section">
       <div class="settings-section-title">Notifications &amp; Privacy</div>
       <div class="settings-row">
         <div>
@@ -19420,6 +19457,96 @@ function openSettingsModal() {
   $('settingMotionCanvasOpacity').value = SETTINGS.motionCanvasOpacity;
   $('settingsOverlay').classList.add('open');
   playSfx('click');
+  loadContentFilterSettings();
+}
+
+// Part 3 (Settings UI) — server-backed, unlike the rest of SETTINGS which
+// is purely local (see SETTINGS/saveSetting above). These three toggles
+// mirror playback_filter_settings via GET/PATCH /api/playback-filters,
+// since content restrictions need to travel with the account (and, once
+// Family Accounts/Phase 4 lands, be lockable by a parent), not just the
+// browser they were set in.
+let contentFilterIsParentEnforced = false;
+async function loadContentFilterSettings() {
+  if (!AUTH.token) {
+    // Signed-out visitor: nothing to load or save — leave the all-true
+    // defaults already checked in markup (matches the server's own
+    // signed-out default in dbGetPlaybackFilterSettings), but disable the
+    // toggles so they don't look interactive when applyContentFilter
+    // would just no-op without a session.
+    $('contentFilterLockedNotice').style.display = 'none';
+    ['settingAllowClean', 'settingAllowPG', 'settingAllowAdult'].forEach(id => { $(id).disabled = true; });
+    return;
+  }
+  ['settingAllowClean', 'settingAllowPG', 'settingAllowAdult'].forEach(id => { $(id).disabled = false; });
+  try {
+    const res = await fetch('/api/playback-filters', { headers: authHeaders() });
+    const data = await res.json();
+    if (!res.ok) {
+      if (res.status === 401) { handleTokenExpiry(); return; }
+      throw new Error(data.error || 'Could not load content settings.');
+    }
+    $('settingAllowClean').checked = data.allowClean !== false;
+    $('settingAllowPG').checked    = !!data.allowParentalGuidance;
+    $('settingAllowAdult').checked = !!data.allowAdult;
+    contentFilterIsParentEnforced  = !!data.isParentEnforced;
+    setContentFilterLockUi(contentFilterIsParentEnforced);
+  } catch (err) {
+    console.error('[content filters load]', err);
+    // Non-fatal — the toggles just keep whatever they were showing
+    // (markup defaults or a previous successful load) rather than
+    // blocking the rest of Settings from opening.
+  }
+}
+
+function setContentFilterLockUi(locked) {
+  $('contentFilterLockedNotice').style.display = locked ? 'block' : 'none';
+  ['settingAllowClean', 'settingAllowPG', 'settingAllowAdult'].forEach(id => {
+    $(id).disabled = locked;
+  });
+}
+
+async function applyContentFilter(key, value) {
+  if (!AUTH.token) return; // toggles are disabled visually too, but guard the network call regardless
+  const body = {
+    token: AUTH.token,
+    allowClean: $('settingAllowClean').checked,
+    allowParentalGuidance: $('settingAllowPG').checked,
+    allowAdult: $('settingAllowAdult').checked,
+  };
+  // Mirrors the server's own floor (allowedRatingsFromSettings always keeps
+  // at least Clean through) so the UI doesn't let someone turn all three
+  // off and be quietly overridden server-side with no visible feedback.
+  if (!body.allowClean && !body.allowParentalGuidance && !body.allowAdult) {
+    body.allowClean = true;
+    $('settingAllowClean').checked = true;
+    showToast('Content', 'At least one rating must stay allowed — Clean was kept on.', 'info');
+  }
+  try {
+    const res = await fetch('/api/playback-filters', {
+      method: 'PATCH', headers: authHeaders(), body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      if (res.status === 401) { handleTokenExpiry(); return; }
+      if (res.status === 403) {
+        // Parent-enforced (Phase 4) — revert the toggle the user just
+        // flipped and lock the section rather than pretending it saved.
+        contentFilterIsParentEnforced = true;
+        setContentFilterLockUi(true);
+        showToast('Content', data.error || "These settings are managed by a parent or guardian.", 'error');
+        loadContentFilterSettings();
+        return;
+      }
+      throw new Error(data.error || 'Could not save content settings.');
+    }
+    $('settingAllowClean').checked = data.allowClean !== false;
+    $('settingAllowPG').checked    = !!data.allowParentalGuidance;
+    $('settingAllowAdult').checked = !!data.allowAdult;
+  } catch (err) {
+    console.error('[content filters save]', err);
+    showToast('Content', err.message || 'Could not save content settings.', 'error');
+  }
 }
 function closeSettingsModal() { $('settingsOverlay').classList.remove('open'); playSfx('click'); }
 function applyReducedMotion(v) {
