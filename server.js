@@ -1503,6 +1503,52 @@ async function dbCreateRelease(artistId, { title, releaseType, coverUrl, release
   return data;
 }
 
+// ── Content ratings (Part 1/2 — track + album ratings) ─────────────────────
+// Single source of truth for the rating vocabulary + severity ordering, used
+// by publish/edit routes, the release recompute below, and the admin lock/
+// override endpoints. 'adult' is intentionally the worst/highest severity —
+// see recomputeReleaseContentRating's "worst track wins" rule.
+const CONTENT_RATINGS = ['clean', 'parental_guidance', 'adult'];
+const CONTENT_RATING_SEVERITY = { clean: 0, parental_guidance: 1, adult: 2 };
+const CONTENT_RATING_TAGS = [
+  'explicit_language', 'sexual_content', 'drug_reference', 'violence',
+  'graphic_violence', 'horror', 'self_harm_reference', 'strong_themes',
+];
+
+function isValidContentRating(r) {
+  return CONTENT_RATINGS.includes(r);
+}
+
+function sanitizeContentRatingTags(tags) {
+  if (!Array.isArray(tags)) return [];
+  const set = new Set(tags.filter(t => CONTENT_RATING_TAGS.includes(t)));
+  return Array.from(set);
+}
+
+// Recomputes an album/release's content_rating from its member tracks per
+// the Part 2 rule: worst-of-tracks wins (any 18+ -> album is 18+; else any
+// PG -> album is PG; else clean). This is the recompute_release_content_rating()
+// referenced in the artist_releases.content_rating column comment — implemented
+// here in app code rather than a DB trigger, matching the track_count pattern
+// directly below (dbAddTrackToRelease/dbRemoveTrackFromRelease). Called after
+// any operation that changes release membership or a member track's rating.
+// A release with zero tracks defaults to 'clean' (nothing to warn about yet).
+async function recomputeReleaseContentRating(releaseId) {
+  const { data: rows, error } = await supabase
+    .from('artist_release_tracks')
+    .select('tracks(content_rating)')
+    .eq('release_id', releaseId);
+  if (error) { console.error('[recompute release rating]', error.message); return; }
+  let worst = 'clean';
+  for (const row of rows || []) {
+    const r = row.tracks?.content_rating;
+    if (r && CONTENT_RATING_SEVERITY[r] > CONTENT_RATING_SEVERITY[worst]) worst = r;
+  }
+  await supabase.from('artist_releases')
+    .update({ content_rating: worst, updated_at: new Date().toISOString() })
+    .eq('id', releaseId);
+}
+
 // Adds a track to a release at the next position, then refreshes the
 // release's track_count — same maintained-in-app-code pattern as
 // dbAddTrackToPlaylist's track_count, for the same reason (no trigger
@@ -1516,6 +1562,7 @@ async function dbAddTrackToRelease(releaseId, trackId) {
   });
   if (error) throw new Error(error.message);
   await supabase.from('artist_releases').update({ track_count: position + 1, updated_at: new Date().toISOString() }).eq('id', releaseId);
+  await recomputeReleaseContentRating(releaseId);
 }
 
 // Deletes the release row itself. artist_release_tracks rows pointing at it
@@ -1566,6 +1613,7 @@ async function dbRemoveTrackFromRelease(releaseId, trackId) {
   await supabase.from('artist_releases')
     .update({ track_count: count || 0, updated_at: new Date().toISOString() })
     .eq('id', releaseId);
+  await recomputeReleaseContentRating(releaseId);
 }
 
 async function dbGetReleaseTracks(releaseId) {
@@ -2550,13 +2598,15 @@ async function dbTasteRecentlySkipped(username, { limit = 10, days = 30 } = {}) 
   return out;
 }
 
-async function dbGetTopTracks({ window = 'all', limit = 50 } = {}) {
+async function dbGetTopTracks({ window = 'all', limit = 50, allowedRatings = null } = {}) {
   const col = window === '7d' ? 'play_count_7d' : 'play_count';
-  const { data, error } = await supabase
+  let query = supabase
     .from('tracks')
-    .select('id, original_url, platform, title, play_count, play_count_7d, last_played_at, cover_url, artist_id, artist_name, is_explicit')
+    .select('id, original_url, platform, title, play_count, play_count_7d, last_played_at, cover_url, artist_id, artist_name, is_explicit, content_rating')
     .eq('is_published', true)
-    .gt(col, 0)
+    .gt(col, 0);
+  if (allowedRatings) query = query.in('content_rating', allowedRatings);
+  const { data, error } = await query
     .order(col, { ascending: false })
     .order('last_played_at', { ascending: false }) // tiebreak: more recently played ranks higher
     .limit(limit);
@@ -2933,6 +2983,75 @@ async function dbGetSession(token) {
     isAdmin:    !!(acct?.is_admin),
     isPremium:  !!(acct?.is_premium),
   };
+}
+
+// ── Playback Filters (Part 3) ───────────────────────────────────────────────
+// One row per account in playback_filter_settings (allow_clean/allow_pg/
+// allow_adult, all true by default — see the table's own column defaults),
+// which every content-serving surface (Charts, Discovery Track Finder,
+// playlists, the stream route itself, and anything downstream of it like
+// DJ BOOM's frontend-executed actions) is meant to respect per Part 3's
+// "Everything should respect these settings." is_parent_enforced exists for
+// Phase 4 (Family Accounts) to flip on for a child account, at which point
+// only the parent — not the child — can change these; that enforcement isn't
+// implemented yet since Family Accounts doesn't exist until Phase 4, but the
+// column is already here so this phase doesn't need a follow-up migration.
+
+// Returns { allowClean, allowParentalGuidance, allowAdult } for a username,
+// creating nothing — a user who's never touched their settings simply gets
+// the same all-true defaults the column defaults would give a fresh row.
+async function dbGetPlaybackFilterSettings(username) {
+  if (!username) return { allowClean: true, allowParentalGuidance: true, allowAdult: true };
+  const { data, error } = await supabase
+    .from('playback_filter_settings').select('*').eq('username', username).maybeSingle();
+  if (error) { console.error('[db] getPlaybackFilterSettings:', error.message); return { allowClean: true, allowParentalGuidance: true, allowAdult: true }; }
+  if (!data) return { allowClean: true, allowParentalGuidance: true, allowAdult: true };
+  return {
+    allowClean: data.allow_clean !== false,
+    allowParentalGuidance: data.allow_parental_guidance !== false,
+    allowAdult: data.allow_adult !== false,
+    isParentEnforced: !!data.is_parent_enforced,
+  };
+}
+
+async function dbSetPlaybackFilterSettings(username, { allowClean, allowParentalGuidance, allowAdult }) {
+  const { data, error } = await supabase.from('playback_filter_settings').upsert({
+    username,
+    allow_clean: allowClean !== false,
+    allow_parental_guidance: allowParentalGuidance !== false,
+    allow_adult: allowAdult !== false,
+    updated_at: new Date().toISOString(),
+  }, { onConflict: 'username' }).select().single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+// Converts a settings object into the actual content_rating value list a
+// Supabase .in('content_rating', [...]) filter needs. At least 'clean' is
+// always included even if somehow all three were turned off client-side —
+// an empty .in() array behaves inconsistently across the JS client (some
+// versions treat it as "match nothing", others error), and silently showing
+// zero results app-wide from a settings edge case is worse than the narrow
+// inconsistency of always allowing Clean through.
+function allowedRatingsFromSettings(settings) {
+  const allowed = [];
+  if (settings.allowClean !== false) allowed.push('clean');
+  if (settings.allowParentalGuidance) allowed.push('parental_guidance');
+  if (settings.allowAdult) allowed.push('adult');
+  return allowed.length ? allowed : ['clean'];
+}
+
+// Single entry point every content-serving route uses to find out which
+// ratings the CURRENT requester may see. Resolves the optional session from
+// the request the same way requirePremium/requireAdmin do (works for
+// logged-out visitors too — Charts/Discovery are intentionally
+// unauthenticated-friendly, per their own route comments, so a visitor with
+// no account just gets the all-true defaults rather than an error).
+async function getAllowedRatingsForRequest(req) {
+  const token = (req.headers.authorization || '').replace('Bearer ', '') || req.body?.token || req.query.token;
+  const sess = token ? await dbGetSession(token) : null;
+  const settings = await dbGetPlaybackFilterSettings(sess?.username || null);
+  return allowedRatingsFromSettings(settings);
 }
 
 // Middleware: require an authenticated Premium session (used by DJ BOOM and
@@ -6317,13 +6436,63 @@ app.post('/api/plays', rateLimit, async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════════════════════
+//  PLAYBACK FILTERS (Part 3)
+//  GET   /api/playback-filters        → current user's settings
+//  PATCH /api/playback-filters        { token, allowClean?, allowParentalGuidance?, allowAdult? }
+//
+//  Every content-serving route below (Charts, Discovery Track Finder, the
+//  stream route, playlist track resolution) reads these via
+//  getAllowedRatingsForRequest() — this pair of routes is just the settings
+//  UI's read/write surface, not itself part of the enforcement.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+app.get('/api/playback-filters', async (req, res) => {
+  const token = (req.headers.authorization || '').replace('Bearer ', '') || req.query.token;
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  try {
+    const settings = await dbGetPlaybackFilterSettings(sess.username);
+    return res.json(settings);
+  } catch (err) {
+    console.error('[playback filters get]', err);
+    return res.status(500).json({ error: 'Could not load playback filter settings.' });
+  }
+});
+
+app.patch('/api/playback-filters', async (req, res) => {
+  const { token, allowClean, allowParentalGuidance, allowAdult } = req.body || {};
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  try {
+    // Part 5/6: a locked-down child account cannot change its own content
+    // restrictions — "Only parent can." is_parent_enforced is set by the
+    // parent dashboard (Phase 4), not by this route, so checking it here
+    // (rather than trusting the frontend to just not show the toggle) is
+    // what actually makes that rule server-enforced instead of cosmetic.
+    const current = await dbGetPlaybackFilterSettings(sess.username);
+    if (current.isParentEnforced) {
+      return res.status(403).json({ error: 'These settings are managed by a parent or guardian and can\'t be changed from this account.' });
+    }
+    const updated = await dbSetPlaybackFilterSettings(sess.username, { allowClean, allowParentalGuidance, allowAdult });
+    return res.json({
+      allowClean: updated.allow_clean, allowParentalGuidance: updated.allow_parental_guidance,
+      allowAdult: updated.allow_adult, isParentEnforced: !!updated.is_parent_enforced,
+    });
+  } catch (err) {
+    console.error('[playback filters patch]', err);
+    return res.status(500).json({ error: 'Could not update playback filter settings.' });
+  }
+});
+
 const CHARTS_MAX_LIMIT = 100;
 
 app.get('/api/charts/tracks', async (req, res) => {
   const window = req.query.window === '7d' ? '7d' : 'all';
   const limit  = Math.min(Math.max(Number(req.query.limit) || 50, 1), CHARTS_MAX_LIMIT);
   try {
-    const rows = await dbGetTopTracks({ window, limit });
+    const allowedRatings = await getAllowedRatingsForRequest(req);
+    const rows = await dbGetTopTracks({ window, limit, allowedRatings });
     const collabsByTrack = await dbGetCollaboratorsForTracks(rows.map(t => t.id));
     return res.json({
       window,
@@ -6340,6 +6509,7 @@ app.get('/api/charts/tracks', async (req, res) => {
         artistId: t.artist_id || null,
         artistName: t.artist_name || null,
         isExplicit: !!t.is_explicit,
+        contentRating: t.content_rating || 'clean',
         collaborators: (collabsByTrack.get(t.id) || []).map(shapeCollaborator),
       })),
     });
@@ -9554,6 +9724,9 @@ app.get('/api/artists/:id/tracks', async (req, res) => {
         publishedAt: t.published_at || null,
         isUpload: !!t.cloud_file_id,
         isExplicit: !!t.is_explicit,
+        contentRating: t.content_rating || 'clean',
+        contentRatingTags: t.content_rating_tags || [],
+        contentRatingLocked: !!t.content_rating_locked,
         collaborators: (collabsByTrack.get(t.id) || []).map(shapeCollaborator),
         hasVideo: videoTrackIds.has(t.id),
         hasMotionCanvas: canvasTrackIds.has(t.id),
@@ -9651,23 +9824,19 @@ app.get('/api/artists/:id/releases', async (req, res) => {
       r, collaborators: (await dbGetReleaseCollaborators(r.id)).map(shapeCollaborator),
     })));
     return res.json({
-      releases: await Promise.all(releasesWithCollabs.map(async ({ r, collaborators }) => {
-        // Live explicit check: any track in this release explicit?
-        const { data: explicitCheck } = await supabase
-          .from('artist_release_tracks')
-          .select('tracks!inner(is_explicit)')
-          .eq('release_id', r.id)
-          .eq('tracks.is_explicit', true)
-          .limit(1);
-        return {
-          id: r.id, title: r.title, releaseType: r.release_type, coverUrl: r.cover_url,
-          releaseDate: r.release_date, trackCount: r.track_count, totalPlays: r.total_plays,
-          totalLikes: r.total_likes, description: r.description, externalUrl: r.external_url,
-          visibility: r.visibility || 'public',
-          isExplicit: !!(explicitCheck && explicitCheck.length > 0),
-          collaborators,
-        };
-      })),
+      releases: await Promise.all(releasesWithCollabs.map(async ({ r, collaborators }) => ({
+        id: r.id, title: r.title, releaseType: r.release_type, coverUrl: r.cover_url,
+        releaseDate: r.release_date, trackCount: r.track_count, totalPlays: r.total_plays,
+        totalLikes: r.total_likes, description: r.description, externalUrl: r.external_url,
+        visibility: r.visibility || 'public',
+        // content_rating is maintained by recomputeReleaseContentRating()
+        // (worst-of-tracks — Part 2), not computed live per-request the way
+        // the old isExplicit check used to be. isExplicit is kept as a
+        // derived legacy flag for existing "E" badge call sites.
+        contentRating: r.content_rating || 'clean',
+        isExplicit: (r.content_rating || 'clean') !== 'clean',
+        collaborators,
+      }))),
     });
   } catch (err) {
     console.error('[artist releases]', err);
@@ -10277,8 +10446,20 @@ async function dbGetPublishableCloudFiles(username) {
 // scheme. platform is the literal string 'cloud' so the frontend/queue can
 // tell a published upload apart from a YouTube-resolved track without
 // needing to check cloud_file_id specifically.
-async function dbPublishTrack({ cloudFile, artist, title, coverUrl, isExplicit = false }) {
+// contentRating is REQUIRED (Part 1 — "artists cannot publish without
+// selecting one"), validated by the caller (POST /api/artists/:id/publish)
+// before this ever runs. is_explicit is kept in sync as a derived legacy
+// flag (true for parental_guidance/adult) purely so the existing "E" badge
+// call sites scattered through the frontend keep working unmodified —
+// content_rating is the real source of truth going forward, per the column
+// comment on tracks.content_rating.
+async function dbPublishTrack({ cloudFile, artist, title, coverUrl, contentRating, contentRatingTags = [] }) {
+  if (!isValidContentRating(contentRating)) {
+    throw Object.assign(new Error('A content rating (clean, parental_guidance, or adult) is required to publish.'), { code: 'RATING_REQUIRED' });
+  }
   const finalTitle = (title && title.trim()) ? title.trim().slice(0, 255) : (cloudFile.title || cloudFile.filename);
+  const safeTags = sanitizeContentRatingTags(contentRatingTags);
+  const nowIso = new Date().toISOString();
   const { data, error } = await supabase
     .from('tracks')
     .insert({
@@ -10290,8 +10471,11 @@ async function dbPublishTrack({ cloudFile, artist, title, coverUrl, isExplicit =
       cloud_file_id: cloudFile.id,
       cover_url: coverUrl || null,
       is_published: true,
-      is_explicit: !!isExplicit,
-      published_at: new Date().toISOString(),
+      is_explicit: contentRating !== 'clean',
+      content_rating: contentRating,
+      content_rating_tags: safeTags,
+      content_rating_set_at: nowIso,
+      published_at: nowIso,
     })
     .select()
     .single();
@@ -10299,6 +10483,10 @@ async function dbPublishTrack({ cloudFile, artist, title, coverUrl, isExplicit =
     if (error.code === '23505') throw Object.assign(new Error('This file has already been published.'), { code: 'ALREADY_PUBLISHED' });
     throw new Error(error.message);
   }
+  await supabase.from('content_rating_history').insert({
+    track_id: data.id, actor: artist.account_id, action: 'set_by_artist',
+    previous_rating: null, new_rating: contentRating, reason: null,
+  });
   return data;
 }
 
@@ -10386,10 +10574,16 @@ app.post('/api/artists/:id/track-cover', rateLimit, imageUpload.single('file'), 
 });
 
 app.post('/api/artists/:id/publish', rateLimit, async (req, res) => {
-  const { token, cloudFileId, title, coverUrl, releaseId, isExplicit } = req.body || {};
+  const { token, cloudFileId, title, coverUrl, releaseId, contentRating, contentRatingTags } = req.body || {};
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
   if (!cloudFileId) return res.status(400).json({ error: '"cloudFileId" is required.' });
+  // Part 1: "Artists cannot publish without selecting one." Validated here
+  // (in addition to dbPublishTrack's own check) so a bad request 400s before
+  // any file lookups happen, rather than after.
+  if (!isValidContentRating(contentRating)) {
+    return res.status(400).json({ error: 'A content rating is required: choose Clean, Parental Guidance, or 18+ before publishing.' });
+  }
   try {
     const artist = await resolveArtistFromParam(req.params.id);
     if (!artist) return res.status(404).json({ error: 'Artist not found.' });
@@ -10409,7 +10603,7 @@ app.post('/api/artists/:id/publish', rateLimit, async (req, res) => {
     const track = await dbPublishTrack({
       cloudFile, artist, title,
       coverUrl: coverUrl || release?.cover_url || null,
-      isExplicit: !!isExplicit,
+      contentRating, contentRatingTags,
     });
 
     if (release) {
@@ -10429,16 +10623,18 @@ app.post('/api/artists/:id/publish', rateLimit, async (req, res) => {
     return res.status(201).json({
       id: track.id, title: track.title, coverUrl: track.cover_url,
       publishedAt: track.published_at, releaseId: release ? release.id : null,
+      contentRating: track.content_rating, contentRatingTags: track.content_rating_tags || [],
     });
   } catch (err) {
     if (err.code === 'ALREADY_PUBLISHED') return res.status(409).json({ error: err.message });
+    if (err.code === 'RATING_REQUIRED') return res.status(400).json({ error: err.message });
     console.error('[artist publish]', err);
     return res.status(500).json({ error: 'Could not publish track.' });
   }
 });
 
 app.patch('/api/tracks/:trackId', rateLimit, async (req, res) => {
-  const { token, title, coverUrl, description, releaseId } = req.body || {};
+  const { token, title, coverUrl, description, releaseId, contentRating, contentRatingTags } = req.body || {};
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
   try {
@@ -10458,6 +10654,30 @@ app.patch('/api/tracks/:trackId', rateLimit, async (req, res) => {
     }
     if (description !== undefined) {
       patch.description = (typeof description === 'string') ? description.trim().slice(0, 2000) || null : null;
+    }
+
+    // Content rating change (Part 1/10) — an artist can revise the rating
+    // on an already-published track, UNLESS an admin has locked it (Part 15:
+    // "Lock ratings"), in which case only the admin override endpoint can
+    // change it. Every change is logged to content_rating_history for the
+    // admin "view rating history" surface.
+    let ratingChanged = false;
+    if (contentRating !== undefined) {
+      if (track.content_rating_locked) {
+        return res.status(403).json({ error: 'This track\'s rating has been locked by a moderator and can no longer be changed by the artist.' });
+      }
+      if (!isValidContentRating(contentRating)) {
+        return res.status(400).json({ error: '"contentRating" must be one of: clean, parental_guidance, adult.' });
+      }
+      if (contentRating !== track.content_rating) {
+        patch.content_rating = contentRating;
+        patch.is_explicit = contentRating !== 'clean';
+        patch.content_rating_set_at = new Date().toISOString();
+        ratingChanged = true;
+      }
+    }
+    if (contentRatingTags !== undefined) {
+      patch.content_rating_tags = sanitizeContentRatingTags(contentRatingTags);
     }
 
     // Release reassignment: remove from old release(s), add to new one if provided.
@@ -10488,9 +10708,27 @@ app.patch('/api/tracks/:trackId', rateLimit, async (req, res) => {
     if (Object.keys(patch).length) {
       updated = await dbUpdatePublishedTrack(track.id, patch);
     }
+
+    if (ratingChanged) {
+      await supabase.from('content_rating_history').insert({
+        track_id: track.id, actor: sess.username, action: 'changed_by_artist',
+        previous_rating: track.content_rating, new_rating: contentRating, reason: null,
+      });
+      // If this track belongs to a release (and wasn't just reassigned above,
+      // which already recomputes on its own), the album's derived rating may
+      // now be stale — refresh every release this track currently belongs to.
+      const { data: links } = await supabase
+        .from('artist_release_tracks').select('release_id').eq('track_id', track.id);
+      for (const link of links || []) {
+        await recomputeReleaseContentRating(link.release_id);
+      }
+    }
+
     return res.json({
       id: updated.id, title: updated.title, coverUrl: updated.cover_url,
       description: updated.description || null,
+      contentRating: updated.content_rating, contentRatingTags: updated.content_rating_tags || [],
+      contentRatingLocked: !!updated.content_rating_locked,
     });
   } catch (err) {
     console.error('[track update]', err);
@@ -12040,7 +12278,7 @@ app.get('/api/admin/verification/queue', requireAdmin, async (req, res) => {
   try {
     const { data, error, count } = await supabase
       .from('artist_verification_requests')
-      .select('id, artist_id, applicant_username, role, legal_name, stage_name, contact_email, contact_email_domain_risk, status, risk_score, face_match_result, liveness_result, manipulation_risk_result, ownership_evidence_type, ownership_verified_at, created_at, updated_at, artists!artist_verification_requests_artist_id_fkey(id, name, slug, is_verified)', { count: 'exact' })
+      .select('id, artist_id, applicant_username, role, legal_name, stage_name, contact_email, contact_email_domain_risk, status, risk_score, face_match_result, liveness_result, manipulation_risk_result, ownership_evidence_type, ownership_verified_at, created_at, updated_at, artists(id, name, slug, is_verified)', { count: 'exact' })
       .eq('status', status)
       .order('created_at', { ascending: true }) // oldest first — FIFO queue
       .range(offset, offset + limit - 1);
@@ -12060,7 +12298,7 @@ app.get('/api/admin/verification/:requestId', requireAdmin, async (req, res) => 
   try {
     const { data: request, error } = await supabase
       .from('artist_verification_requests')
-      .select('*, artists!artist_verification_requests_artist_id_fkey(id, name, slug, is_verified, verification_status)')
+      .select('*, artists(id, name, slug, is_verified, verification_status)')
       .eq('id', req.params.requestId).maybeSingle();
     if (error || !request) return res.status(404).json({ error: 'Verification request not found.' });
 
@@ -12237,17 +12475,108 @@ app.delete('/api/admin/artists/:id/verify', requireAdmin, async (req, res) => {
   }
 });
 
-// PATCH /api/admin/tracks/:trackId/explicit
-app.patch('/api/admin/tracks/:trackId/explicit', requireAdmin, async (req, res) => {
-  const { isExplicit } = req.body || {};
+// ── Part 15: admin content-rating override/lock/history ────────────────────
+// Replaces the old PATCH /api/admin/tracks/:trackId/explicit bridge (no
+// frontend ever called it — grep confirms zero call sites — so it's retired
+// outright rather than kept as a compat alias). These three routes are the
+// real "Override ratings / Lock ratings / View rating history" surface.
+
+// PATCH /api/admin/tracks/:trackId/rating — admin sets content_rating
+// directly, bypassing the artist-facing content_rating_locked check in
+// PATCH /api/tracks/:trackId (that check only blocks the ARTIST; an admin
+// with this route is exactly how a locked rating gets corrected). Every
+// call logs to content_rating_history with action 'overridden_by_admin' so
+// Part 15's "View rating history" has a full trail. If the track sits in a
+// release, that release's derived rating is recomputed afterward.
+app.patch('/api/admin/tracks/:trackId/rating', requireAdmin, async (req, res) => {
+  const { contentRating, reason } = req.body || {};
+  if (!isValidContentRating(contentRating)) {
+    return res.status(400).json({ error: '"contentRating" must be one of: clean, parental_guidance, adult.' });
+  }
   try {
+    const { data: existing } = await supabase.from('tracks').select('id, content_rating').eq('id', req.params.trackId).maybeSingle();
+    if (!existing) return res.status(404).json({ error: 'Track not found.' });
+
     const { data, error } = await supabase.from('tracks')
-      .update({ is_explicit: !!isExplicit }).eq('id', req.params.trackId).select().single();
+      .update({
+        content_rating: contentRating,
+        is_explicit: contentRating !== 'clean',
+        content_rating_set_at: new Date().toISOString(),
+      })
+      .eq('id', req.params.trackId).select().single();
     if (error || !data) return res.status(404).json({ error: 'Track not found.' });
-    return res.json({ id: data.id, isExplicit: data.is_explicit });
+
+    await supabase.from('content_rating_history').insert({
+      track_id: data.id, actor: req._adminSession.username, action: 'overridden_by_admin',
+      previous_rating: existing.content_rating, new_rating: contentRating,
+      reason: (typeof reason === 'string' && reason.trim()) ? reason.trim().slice(0, 500) : null,
+    });
+
+    const { data: links } = await supabase.from('artist_release_tracks').select('release_id').eq('track_id', data.id);
+    for (const link of links || []) {
+      await recomputeReleaseContentRating(link.release_id);
+    }
+
+    return res.json({
+      id: data.id, contentRating: data.content_rating, isExplicit: data.is_explicit,
+      contentRatingLocked: !!data.content_rating_locked,
+    });
   } catch (err) {
-    console.error('[admin explicit flag]', err);
-    return res.status(500).json({ error: 'Could not update track.' });
+    console.error('[admin rating override]', err);
+    return res.status(500).json({ error: 'Could not update track rating.' });
+  }
+});
+
+// PATCH /api/admin/tracks/:trackId/rating-lock — Part 15 "Lock ratings":
+// locked:true freezes content_rating against further artist edits (PATCH
+// /api/tracks/:trackId 403s on the artist side while locked); locked:false
+// releases it back to the artist. Locking never changes the rating itself —
+// pair with the override route above if a correction is also needed.
+app.patch('/api/admin/tracks/:trackId/rating-lock', requireAdmin, async (req, res) => {
+  const { locked } = req.body || {};
+  try {
+    const patch = locked
+      ? { content_rating_locked: true, content_rating_locked_by: req._adminSession.username, content_rating_locked_at: new Date().toISOString() }
+      : { content_rating_locked: false, content_rating_locked_by: null, content_rating_locked_at: null };
+    const { data, error } = await supabase.from('tracks')
+      .update(patch).eq('id', req.params.trackId).select().single();
+    if (error || !data) return res.status(404).json({ error: 'Track not found.' });
+
+    await supabase.from('content_rating_history').insert({
+      track_id: data.id, actor: req._adminSession.username,
+      action: locked ? 'locked_by_admin' : 'unlocked_by_admin',
+      previous_rating: data.content_rating, new_rating: data.content_rating, reason: null,
+    });
+
+    return res.json({
+      id: data.id, contentRatingLocked: !!data.content_rating_locked,
+      lockedBy: data.content_rating_locked_by, lockedAt: data.content_rating_locked_at,
+    });
+  } catch (err) {
+    console.error('[admin rating lock]', err);
+    return res.status(500).json({ error: 'Could not update rating lock.' });
+  }
+});
+
+// GET /api/admin/tracks/:trackId/rating-history — full audit trail for
+// Part 15's "View rating history": every set_by_artist (publish),
+// changed_by_artist (artist edit), overridden_by_admin, locked_by_admin,
+// and unlocked_by_admin row, newest first.
+app.get('/api/admin/tracks/:trackId/rating-history', requireAdmin, async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('content_rating_history')
+      .select('*').eq('track_id', req.params.trackId).order('created_at', { ascending: false });
+    if (error) throw new Error(error.message);
+    return res.json({
+      history: (data || []).map(h => ({
+        id: h.id, actor: h.actor, action: h.action,
+        previousRating: h.previous_rating, newRating: h.new_rating,
+        reason: h.reason, createdAt: h.created_at,
+      })),
+    });
+  } catch (err) {
+    console.error('[admin rating history]', err);
+    return res.status(500).json({ error: 'Could not load rating history.' });
   }
 });
 
