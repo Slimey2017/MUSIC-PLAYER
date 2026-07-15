@@ -2217,7 +2217,7 @@ function tasteTopArtistsFromPlays(plays, { limit = 10 } = {}) {
 // surface tracks THEY played by DIFFERENT artists the requesting user
 // hasn't played much. This is plain co-occurrence — "people who listened
 // to X also listened to Y" — computed from real rows, not a trained model.
-async function dbTasteBecauseYouListened(username, { seedLimit = 3, tracksPerSeed = 6 } = {}) {
+async function dbTasteBecauseYouListened(username, { seedLimit = 3, tracksPerSeed = 6, allowedRatings = null } = {}) {
   const myPlays = await dbTasteGetUserPlays(username, { days: 90 });
   if (myPlays.length < TASTE_MIN_HISTORY_ROWS) return [];
   const myArtistIds = new Set(myPlays.map(r => r.tracks.artist_id).filter(Boolean));
@@ -2247,15 +2247,20 @@ async function dbTasteBecauseYouListened(username, { seedLimit = 3, tracksPerSee
     // top artist back at them.
     const { data: theirOtherPlays, error: err2 } = await supabase
       .from('track_plays')
-      .select('track_id, tracks!inner(id, title, artist_id, artist_name, cover_url, platform, original_url, is_explicit)')
+      .select('track_id, tracks!inner(id, title, artist_id, artist_name, cover_url, platform, original_url, is_explicit, content_rating)')
       .in('username', otherUsernames)
       .neq('tracks.artist_id', seed.artistId)
       .order('played_at', { ascending: false })
       .limit(150);
     if (err2 || !theirOtherPlays?.length) continue;
 
+    // Part 3: drop candidates outside the requester's allowed ratings
+    // before they're even counted, so a filtered-out track can't win a
+    // count-based ranking slot and then get silently swapped for runner-up.
+    const eligiblePlays = tasteFilterByAllowedRatings(theirOtherPlays, allowedRatings);
+
     const trackCounts = new Map(); // track_id -> { track, count }
-    for (const row of theirOtherPlays) {
+    for (const row of eligiblePlays) {
       const t = row.tracks;
       if (!t || myArtistIds.has(t.artist_id)) continue; // skip artists the user already knows well
       const cur = trackCounts.get(t.id) || { track: t, count: 0 };
@@ -2424,7 +2429,7 @@ async function dbTasteSimilarPlaylists(username, { limit = 8 } = {}) {
 // already has history with, OR sharing a genre with their top artists.
 // This is the intersection of "popular right now" and "matches your
 // taste", not just a copy of the global trending chart.
-async function dbTasteTrendingInTaste(username, { limit = 12 } = {}) {
+async function dbTasteTrendingInTaste(username, { limit = 12, allowedRatings = null } = {}) {
   const myPlays = await dbTasteGetUserPlays(username, { days: 90 });
   if (myPlays.length < TASTE_MIN_HISTORY_ROWS) return [];
   const myArtistIds = new Set(myPlays.map(r => r.tracks.artist_id).filter(Boolean));
@@ -2433,11 +2438,13 @@ async function dbTasteTrendingInTaste(username, { limit = 12 } = {}) {
     .from('artists').select('genre').in('id', [...myArtistIds]).limit(20);
   const myGenres = new Set((seedArtists || []).map(a => a.genre).filter(Boolean));
 
-  const { data: trending, error } = await supabase
+  let trendingQuery = supabase
     .from('tracks')
-    .select('id, title, artist_id, artist_name, cover_url, platform, original_url, play_count_7d, is_explicit, artists(genre)')
+    .select('id, title, artist_id, artist_name, cover_url, platform, original_url, play_count_7d, is_explicit, content_rating, artists(genre)')
     .eq('is_published', true)
-    .gt('play_count_7d', 0)
+    .gt('play_count_7d', 0);
+  if (allowedRatings) trendingQuery = trendingQuery.in('content_rating', allowedRatings);
+  const { data: trending, error } = await trendingQuery
     .order('play_count_7d', { ascending: false })
     .limit(80); // bounded candidate pool from the trending edge, then filtered down to taste-matches
   if (error) { console.error('[db] tasteTrendingInTaste:', error.message); return []; }
@@ -2449,6 +2456,7 @@ async function dbTasteTrendingInTaste(username, { limit = 12 } = {}) {
       id: t.id, title: t.title, artistId: t.artist_id, artistName: t.artist_name,
       coverUrl: t.cover_url, platform: t.platform, originalUrl: t.original_url,
       playCount7d: t.play_count_7d, isExplicit: !!t.is_explicit,
+      contentRating: t.content_rating || 'clean',
     }));
 }
 
@@ -2458,21 +2466,25 @@ async function dbTasteTrendingInTaste(username, { limit = 12 } = {}) {
 // of the same two buckets (played-then-quiet-then-played-again vs
 // played-a-lot-then-gone-quiet). Centralizing the two-window fetch avoids
 // four near-identical Supabase calls across the two functions below.
-async function dbTasteGetPlayBuckets(username, { recentDays = 14, olderDays = 120 } = {}) {
+async function dbTasteGetPlayBuckets(username, { recentDays = 14, olderDays = 120, allowedRatings = null } = {}) {
   const recentSince = new Date(Date.now() - recentDays * 24 * 60 * 60 * 1000).toISOString();
   const olderSince  = new Date(Date.now() - olderDays  * 24 * 60 * 60 * 1000).toISOString();
   const [{ data: recent, error: e1 }, { data: older, error: e2 }] = await Promise.all([
     supabase.from('track_plays')
-      .select('track_id, played_at, tracks(id, title, artist_id, artist_name, cover_url, platform, original_url, is_explicit)')
+      .select('track_id, played_at, tracks(id, title, artist_id, artist_name, cover_url, platform, original_url, is_explicit, content_rating)')
       .eq('username', username).gte('played_at', recentSince).order('played_at', { ascending: false }).limit(300),
     supabase.from('track_plays')
-      .select('track_id, played_at, tracks(id, title, artist_id, artist_name, cover_url, platform, original_url, is_explicit)')
+      .select('track_id, played_at, tracks(id, title, artist_id, artist_name, cover_url, platform, original_url, is_explicit, content_rating)')
       .eq('username', username).gte('played_at', olderSince).lt('played_at', recentSince).order('played_at', { ascending: false }).limit(300),
   ]);
   if (e1 || e2) { console.error('[db] tasteGetPlayBuckets:', e1?.message || e2?.message); return { recent: [], older: [] }; }
+  // Part 3: these buckets feed "recently rediscovered/forgotten", which are
+  // presented as recommendation-style nudges, not a plain history view — so
+  // (unlike dbTasteGetUserPlays) they ARE filtered against the requester's
+  // current allowed ratings before being handed to either module below.
   return {
-    recent: (recent || []).filter(r => r.tracks),
-    older:  (older  || []).filter(r => r.tracks),
+    recent: tasteFilterByAllowedRatings((recent || []).filter(r => r.tracks), allowedRatings),
+    older:  tasteFilterByAllowedRatings((older  || []).filter(r => r.tracks), allowedRatings),
   };
 }
 
@@ -2480,8 +2492,8 @@ async function dbTasteGetPlayBuckets(username, { recentDays = 14, olderDays = 12
 // (no plays at all in the gap between older and recent), then got played
 // again in the RECENT window. A real "oh, this again!" pattern rather than
 // just "played twice recently".
-async function dbTasteRecentlyRediscovered(username, { limit = 10 } = {}) {
-  const { recent, older } = await dbTasteGetPlayBuckets(username, { recentDays: 14, olderDays: 150 });
+async function dbTasteRecentlyRediscovered(username, { limit = 10, allowedRatings = null } = {}) {
+  const { recent, older } = await dbTasteGetPlayBuckets(username, { recentDays: 14, olderDays: 150, allowedRatings });
   if (recent.length < 2 || older.length < 2) return [];
   // "Went quiet in between" is approximated by requiring the older play to
   // be from ≥30 days before the recent one — a true gap-detection would
@@ -2510,8 +2522,8 @@ async function dbTasteRecentlyRediscovered(username, { limit = 10 } = {}) {
 // explicitly via track_likes, or implicitly via heavy play volume in the
 // older window) that have had ZERO plays in the recent window. The
 // opposite question from rediscovered: "you used to love this, where'd it go?"
-async function dbTasteRecentlyForgotten(username, { limit = 10 } = {}) {
-  const { recent, older } = await dbTasteGetPlayBuckets(username, { recentDays: 21, olderDays: 180 });
+async function dbTasteRecentlyForgotten(username, { limit = 10, allowedRatings = null } = {}) {
+  const { recent, older } = await dbTasteGetPlayBuckets(username, { recentDays: 21, olderDays: 180, allowedRatings });
   const recentTrackIds = new Set(recent.map(r => r.track_id));
 
   // Older-window play counts per track — "heavy" is relative to this
@@ -2536,11 +2548,12 @@ async function dbTasteRecentlyForgotten(username, { limit = 10 } = {}) {
   // historical play count never crossed the heavy threshold above (someone
   // can like a track after just one or two plays).
   const { data: likedRows, error } = await supabase
-    .from('track_likes').select('track_id, tracks(id, title, artist_id, artist_name, cover_url, platform, original_url, is_explicit)')
+    .from('track_likes').select('track_id, tracks(id, title, artist_id, artist_name, cover_url, platform, original_url, is_explicit, content_rating)')
     .eq('username', username).limit(200);
   if (error) console.error('[db] tasteRecentlyForgotten likes:', error.message);
-  const forgottenFromLikes = (likedRows || [])
-    .filter(row => row.tracks && !recentTrackIds.has(row.tracks.id))
+  const eligibleLikedRows = tasteFilterByAllowedRatings((likedRows || []).filter(row => row.tracks), allowedRatings);
+  const forgottenFromLikes = eligibleLikedRows
+    .filter(row => !recentTrackIds.has(row.tracks.id))
     .map(row => ({ track: row.tracks, count: null }));
 
   const seen = new Set();
@@ -2561,8 +2574,27 @@ function tasteShapeTrack(t) {
   return {
     id: t.id, title: t.title, artistId: t.artist_id, artistName: t.artist_name,
     coverUrl: t.cover_url, platform: t.platform, originalUrl: t.original_url,
-    isExplicit: !!t.is_explicit,
+    isExplicit: !!t.is_explicit, contentRating: t.content_rating || 'clean',
   };
+}
+
+// Part 3 enforcement for Taste Graph: every recommendation module below
+// surfaces OTHER users' tracks (co-occurrence, trending-in-taste, etc.),
+// which is exactly the "Recommendations" surface Part 3 calls out by name
+// — unlike dbTasteGetUserPlays (the requester's OWN play history, which
+// this deliberately does NOT filter; hiding someone's own past plays just
+// because they flipped a filter afterward isn't what Part 3 asks for).
+// Filtered at the row level (not via .in() inside the nested tracks(...)
+// embed above) since Supabase JS can't reliably push a filter onto an
+// embedded/joined table's column across client versions — filtering the
+// flat array after fetch is the safe, version-independent approach.
+function tasteFilterByAllowedRatings(rows, allowedRatings, trackAccessor = r => r.tracks) {
+  if (!allowedRatings) return rows;
+  const allowed = new Set(allowedRatings);
+  return rows.filter(row => {
+    const t = trackAccessor(row);
+    return t && allowed.has(t.content_rating || 'clean');
+  });
 }
 
 async function dbGetFollowedArtistIds(username) {
@@ -2579,18 +2611,19 @@ async function dbGetFollowedArtistIds(username) {
 // track they like because they weren't in the mood, not because they
 // dislike it) and treating it as strong negative signal would be a
 // confident claim the data doesn't support.
-async function dbTasteRecentlySkipped(username, { limit = 10, days = 30 } = {}) {
+async function dbTasteRecentlySkipped(username, { limit = 10, days = 30, allowedRatings = null } = {}) {
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
   const { data, error } = await supabase
     .from('track_plays')
-    .select('track_id, played_at, tracks(id, title, artist_id, artist_name, cover_url, platform, original_url, is_explicit)')
+    .select('track_id, played_at, tracks(id, title, artist_id, artist_name, cover_url, platform, original_url, is_explicit, content_rating)')
     .eq('username', username).eq('completed', false)
     .gte('played_at', since).order('played_at', { ascending: false }).limit(limit * 3);
   if (error) { console.error('[db] tasteRecentlySkipped:', error.message); return []; }
+  const eligible = tasteFilterByAllowedRatings((data || []).filter(r => r.tracks), allowedRatings);
   const seen = new Set();
   const out = [];
-  for (const row of (data || [])) {
-    if (!row.tracks || seen.has(row.tracks.id)) continue;
+  for (const row of eligible) {
+    if (seen.has(row.tracks.id)) continue;
     seen.add(row.tracks.id);
     out.push(tasteShapeTrack(row.tracks));
     if (out.length >= limit) break;
@@ -6167,6 +6200,11 @@ app.get('/api/taste', async (req, res) => {
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Sign in to see your Taste Graph.' });
   try {
+    // Part 3: resolved once per request and threaded through every
+    // recommendation module below (similarArtists excluded — it returns
+    // artists, not tracks, and has no content_rating of its own to check).
+    const allowedRatings = await getAllowedRatingsForRequest(req);
+
     const recentPlays = await dbTasteGetUserPlays(sess.username, { days: 90, limit: 20 });
     const hasEnoughHistory = recentPlays.length >= TASTE_MIN_HISTORY_ROWS;
     if (!hasEnoughHistory) {
@@ -6184,13 +6222,13 @@ app.get('/api/taste', async (req, res) => {
       becauseYouListened, similarArtists, similarPlaylists,
       trendingInTaste, recentlyRediscovered, recentlyForgotten, recentlySkipped,
     ] = await Promise.all([
-      dbTasteBecauseYouListened(sess.username),
+      dbTasteBecauseYouListened(sess.username, { allowedRatings }),
       dbTasteSimilarArtists(sess.username),
       dbTasteSimilarPlaylists(sess.username),
-      dbTasteTrendingInTaste(sess.username),
-      dbTasteRecentlyRediscovered(sess.username),
-      dbTasteRecentlyForgotten(sess.username),
-      dbTasteRecentlySkipped(sess.username),
+      dbTasteTrendingInTaste(sess.username, { allowedRatings }),
+      dbTasteRecentlyRediscovered(sess.username, { allowedRatings }),
+      dbTasteRecentlyForgotten(sess.username, { allowedRatings }),
+      dbTasteRecentlySkipped(sess.username, { allowedRatings }),
     ]);
 
     return res.json({
@@ -6583,10 +6621,16 @@ app.get('/api/discover/tracks', async (req, res) => {
   const sess     = token ? await dbGetSession(token) : null;
 
   try {
+    // Part 3 enforcement: search/discover must respect the requester's
+    // playback filter settings (or the all-true defaults for a signed-out
+    // visitor) the same way Charts does via getAllowedRatingsForRequest.
+    const allowedRatings = await getAllowedRatingsForRequest(req);
+
     let query = supabase
       .from('tracks')
-      .select('id, title, artist_id, artist_name, play_count, play_count_7d, like_count, is_explicit, published_at, cover_url')
-      .eq('is_published', true);
+      .select('id, title, artist_id, artist_name, play_count, play_count_7d, like_count, is_explicit, published_at, cover_url, content_rating')
+      .eq('is_published', true)
+      .in('content_rating', allowedRatings);
 
     if (q) {
       // Title OR artist name match — Supabase's .or() with ilike
@@ -6626,6 +6670,7 @@ app.get('/api/discover/tracks', async (req, res) => {
         id: t.id, title: t.title, artistId: t.artist_id, artistName: t.artist_name,
         playCount: t.play_count || 0, playCount7d: t.play_count_7d || 0,
         likeCount: t.like_count || 0, isExplicit: !!t.is_explicit,
+        contentRating: t.content_rating || 'clean',
         publishedAt: t.published_at, coverUrl: t.cover_url,
         likedByMe: likedIds.has(t.id),
         hasVideo: videoTrackIds.has(t.id),
@@ -8622,10 +8667,14 @@ app.get('/api/discover/videos', async (req, res) => {
   const mode = ['new', 'trending', 'most_played', 'most_liked'].includes(req.query.mode) ? req.query.mode : 'new';
   const limit = Math.min(Math.max(Number(req.query.limit) || 30, 1), 100);
   try {
+    // Part 3/12: video tracks are still `tracks` rows with a content_rating
+    // — Discover must hide blocked ones the same as the audio-only listing.
+    const allowedRatings = await getAllowedRatingsForRequest(req);
     let query = supabase
       .from('tracks')
-      .select('id, title, artist_id, artist_name, is_explicit, like_count, track_videos!inner(id, thumbnail_url, play_count, created_at, video_files(duration))')
-      .eq('is_published', true);
+      .select('id, title, artist_id, artist_name, is_explicit, content_rating, like_count, track_videos!inner(id, thumbnail_url, play_count, created_at, video_files(duration))')
+      .eq('is_published', true)
+      .in('content_rating', allowedRatings);
 
     if (mode === 'most_liked') {
       query = query.order('like_count', { ascending: false });
@@ -8649,7 +8698,8 @@ app.get('/api/discover/videos', async (req, res) => {
         const tv = Array.isArray(t.track_videos) ? t.track_videos[0] : t.track_videos;
         return {
           trackId: t.id, title: t.title, artistId: t.artist_id, artistName: t.artist_name,
-          isExplicit: !!t.is_explicit, likeCount: t.like_count || 0,
+          isExplicit: !!t.is_explicit, contentRating: t.content_rating || 'clean',
+          likeCount: t.like_count || 0,
           thumbnailUrl: tv?.thumbnail_url || null, playCount: tv?.play_count || 0,
           uploadedAt: tv?.created_at || null, duration: tv?.video_files?.duration || null,
         };
