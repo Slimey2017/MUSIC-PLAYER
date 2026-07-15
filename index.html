@@ -2730,6 +2730,26 @@ body.oled-mode {
   flex-shrink:0;
 }
 
+/* Content rating badge (🟢/🟡/🔴) — shown wherever content_rating needs a
+   compact inline indicator, e.g. next to release titles once rating filters
+   go live. Distinct from .explicit-badge (legacy "E" flag, kept for the
+   existing badge call sites — see dbPublishTrack's comment in server.js). */
+.rating-badge { font-size:0.5em; vertical-align:middle; margin-left:3px; }
+
+/* Content Rating selector — publish modal + edit track modal */
+.publish-rating-option.selected,
+.edit-rating-option.selected {
+  border-color: var(--accent) !important;
+  background: rgba(232,255,71,0.06);
+  color: var(--text-main) !important;
+}
+.publish-rating-tag.selected,
+.edit-rating-tag.selected {
+  border-color: var(--accent) !important;
+  background: rgba(232,255,71,0.12);
+  color: var(--text-main) !important;
+}
+
 /* Report modal */
 .report-overlay {
   position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:9200;
@@ -4174,13 +4194,35 @@ body.oled-mode {
     <select id="publishReleaseSelect" style="width:100%;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-main);font-family:'Space Mono',monospace;font-size:0.5rem;padding:9px 11px;box-sizing:border-box;margin-bottom:10px;">
       <option value="">— Standalone single (no release) —</option>
     </select>
-    <label style="display:flex;align-items:center;gap:8px;font-family:'Space Mono',monospace;font-size:0.48rem;color:var(--text-dim);margin-bottom:10px;cursor:pointer;">
-      <input type="checkbox" id="publishExplicitCheck" style="width:14px;height:14px;accent-color:var(--accent);cursor:pointer;" />
-      <span style="display:flex;align-items:center;gap:6px;">
-        <span style="background:#111;color:#fff;font-family:'Space Mono',monospace;font-size:0.4rem;font-weight:700;padding:1px 4px;border-radius:2px;letter-spacing:0.04em;">E</span>
-        Explicit Content
-      </span>
-    </label>
+    <!-- Content Rating (Part 1) — REQUIRED before publish. Three mutually
+         exclusive options; publishSelectedRating tracks the current choice
+         and getPublishTrackPayload() (submit handler) 400s client-side if
+         it's still null, mirroring the server's own RATING_REQUIRED check. -->
+    <div style="margin-bottom:10px;">
+      <div style="font-size:0.46rem;color:var(--text-dim);margin-bottom:6px;">Content Rating <span style="color:var(--accent);">*required*</span></div>
+      <div id="publishRatingGroup" style="display:flex;flex-direction:column;gap:6px;">
+        <label class="publish-rating-option" data-rating="clean" onclick="selectPublishRating('clean')" style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);cursor:pointer;font-family:'Space Mono',monospace;font-size:0.46rem;color:var(--text-dim);transition:border-color .15s;">
+          <span style="font-size:0.6rem;">🟢</span>
+          <span><strong style="color:var(--text-main);">Clean</strong> — suitable for everyone</span>
+        </label>
+        <label class="publish-rating-option" data-rating="parental_guidance" onclick="selectPublishRating('parental_guidance')" style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);cursor:pointer;font-family:'Space Mono',monospace;font-size:0.46rem;color:var(--text-dim);transition:border-color .15s;">
+          <span style="font-size:0.6rem;">🟡</span>
+          <span><strong style="color:var(--text-main);">Parental Guidance</strong> — may contain mature themes</span>
+        </label>
+        <label class="publish-rating-option" data-rating="adult" onclick="selectPublishRating('adult')" style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);cursor:pointer;font-family:'Space Mono',monospace;font-size:0.46rem;color:var(--text-dim);transition:border-color .15s;">
+          <span style="font-size:0.6rem;">🔴</span>
+          <span><strong style="color:var(--text-main);">18+</strong> — adults only</span>
+        </label>
+      </div>
+      <div id="publishRatingWarning" style="display:none;font-size:0.42rem;color:#ffa502;margin-top:6px;padding:6px 8px;background:rgba(255,165,2,0.08);border-radius:var(--radius);"></div>
+
+      <!-- Reason tags — optional, only shown once PG or 18+ is picked -->
+      <div id="publishRatingTagsWrap" style="display:none;margin-top:8px;">
+        <div style="font-size:0.42rem;color:var(--text-muted);margin-bottom:5px;">Reason (optional, select any that apply)</div>
+        <div id="publishRatingTagsGroup" style="display:flex;flex-wrap:wrap;gap:5px;"></div>
+      </div>
+    </div>
+
 
     <!-- Music Video (Optional) — uploads straight to Supabase Storage via a
          signed upload URL (see publishVideoFileInput's change handler);
@@ -4652,6 +4694,33 @@ body.oled-mode {
           <select id="editTrackReleaseSelect" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-main);font-family:'Space Mono',monospace;font-size:0.5rem;padding:9px 11px;box-sizing:border-box;margin-bottom:16px;">
             <option value="">— No release (standalone) —</option>
           </select>
+
+          <!-- Content Rating (Part 1/10) — editable post-publish unless an
+               admin has locked it (Part 15), in which case the options are
+               disabled and a lock notice shows instead. See openEditTrackOverlay
+               for how editRatingLocked drives the disabled state. -->
+          <label style="display:block;font-size:0.42rem;color:var(--text-dim);letter-spacing:0.04em;text-transform:uppercase;margin-bottom:5px;">Content Rating</label>
+          <div id="editRatingLockedNotice" style="display:none;font-size:0.42rem;color:var(--text-muted);margin-bottom:8px;padding:7px 9px;background:rgba(255,255,255,0.03);border-radius:var(--radius);border:1px solid var(--border);">
+            🔒 Locked by a moderator — contact support if you believe this rating is incorrect.
+          </div>
+          <div id="editRatingGroup" style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px;">
+            <label class="edit-rating-option" data-rating="clean" onclick="selectEditRating('clean')" style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);cursor:pointer;font-family:'Space Mono',monospace;font-size:0.46rem;color:var(--text-dim);transition:border-color .15s;">
+              <span style="font-size:0.6rem;">🟢</span>
+              <span><strong style="color:var(--text-main);">Clean</strong> — suitable for everyone</span>
+            </label>
+            <label class="edit-rating-option" data-rating="parental_guidance" onclick="selectEditRating('parental_guidance')" style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);cursor:pointer;font-family:'Space Mono',monospace;font-size:0.46rem;color:var(--text-dim);transition:border-color .15s;">
+              <span style="font-size:0.6rem;">🟡</span>
+              <span><strong style="color:var(--text-main);">Parental Guidance</strong> — may contain mature themes</span>
+            </label>
+            <label class="edit-rating-option" data-rating="adult" onclick="selectEditRating('adult')" style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);cursor:pointer;font-family:'Space Mono',monospace;font-size:0.46rem;color:var(--text-dim);transition:border-color .15s;">
+              <span style="font-size:0.6rem;">🔴</span>
+              <span><strong style="color:var(--text-main);">18+</strong> — adults only</span>
+            </label>
+          </div>
+          <div id="editRatingTagsWrap" style="display:none;margin-bottom:16px;">
+            <div style="font-size:0.42rem;color:var(--text-muted);margin-bottom:5px;">Reason (optional, select any that apply)</div>
+            <div id="editRatingTagsGroup" style="display:flex;flex-wrap:wrap;gap:5px;"></div>
+          </div>
 
           <!-- Music Video — reuses the exact same three-step direct-to-storage
                upload as Publish Track (POST /api/videos/upload-url → signed
@@ -10340,6 +10409,8 @@ function renderReleaseGrid() {
     const artStyle = r.coverUrl ? `background-image:url('${escapeHtml(r.coverUrl)}')` : '';
     const visiBadge = (r.visibility && r.visibility !== 'public')
       ? `<span class="release-visibility-badge ${escapeHtml(r.visibility)}">${escapeHtml(r.visibility)}</span>` : '';
+    const ratingIcon = { clean: '', parental_guidance: '🟡', adult: '🔴' }[r.contentRating] || '';
+    const ratingBadge = ratingIcon ? `<span class="rating-badge" title="${r.contentRating === 'adult' ? '18+' : 'Parental Guidance'}">${ratingIcon}</span>` : '';
     const isExpanded = _releaseGridExpandedId === r.id;
     return `
     <div class="release-card${isExpanded ? '" style="border-color:var(--accent)' : ''}" data-release-id="${escapeHtml(r.id)}" onclick="toggleReleaseCard('${escapeHtml(r.id)}')">
@@ -10348,7 +10419,7 @@ function renderReleaseGrid() {
         <button class="release-card-play-btn" onclick="event.stopPropagation();playEntireRelease('${escapeHtml(r.id)}')" title="Play release">▶</button>
       </div>
       <div class="release-card-meta">
-        <span class="release-type-badge ${escapeHtml(r.releaseType)}">${typeLabel}</span>${visiBadge}${r.isExplicit ? '<span class="explicit-badge">E</span>' : ''}
+        <span class="release-type-badge ${escapeHtml(r.releaseType)}">${typeLabel}</span>${visiBadge}${ratingBadge}
         <div class="release-card-title">${escapeHtml(r.title)}</div>
         <div class="release-card-sub">${year}${year && r.trackCount ? ' · ' : ''}${r.trackCount || 0} track${r.trackCount === 1 ? '' : 's'}</div>
       </div>
@@ -10745,6 +10816,73 @@ function openCloudLibraryForUpload() {
 let publishingCloudFileId = null;
 let publishingCoverUrl = null;
 
+// ── Content Rating selector (Part 1/10) ─────────────────────────────────
+// publishSelectedRating is null until the artist picks one — the submit
+// handler blocks on that. publishSelectedRatingTags is only ever populated
+// when the rating is parental_guidance/adult (the tag UI is hidden for
+// clean, and resetPublishRatingSelector clears it going back to clean).
+const PUBLISH_RATING_TAGS = [
+  ['explicit_language', 'Explicit Language'], ['sexual_content', 'Sexual Content'],
+  ['drug_reference', 'Drug Reference'], ['violence', 'Violence'],
+  ['graphic_violence', 'Graphic Violence'], ['horror', 'Horror'],
+  ['self_harm_reference', 'Self-Harm Reference'], ['strong_themes', 'Strong Themes'],
+];
+const PUBLISH_RATING_WARNINGS = {
+  clean: '',
+  parental_guidance: '🟡 Parental Guidance — this track may contain mature themes and will be hidden from listeners whose account or family settings restrict PG content.',
+  adult: '🔴 18+ — this track is adults only and will be hidden from listeners whose account or family settings don\'t allow 18+ content.',
+};
+let publishSelectedRating = null;
+let publishSelectedRatingTags = new Set();
+
+function resetPublishRatingSelector() {
+  publishSelectedRating = null;
+  publishSelectedRatingTags = new Set();
+  document.querySelectorAll('#publishRatingGroup .publish-rating-option').forEach(el => el.classList.remove('selected'));
+  $('publishRatingWarning').style.display = 'none';
+  $('publishRatingTagsWrap').style.display = 'none';
+  $('publishRatingTagsGroup').innerHTML = '';
+}
+
+function selectPublishRating(rating) {
+  publishSelectedRating = rating;
+  publishSelectedRatingTags = new Set();
+  document.querySelectorAll('#publishRatingGroup .publish-rating-option').forEach(el => {
+    el.classList.toggle('selected', el.dataset.rating === rating);
+  });
+  const warnEl = $('publishRatingWarning');
+  const warnText = PUBLISH_RATING_WARNINGS[rating] || '';
+  if (warnText) { warnEl.textContent = warnText; warnEl.style.display = ''; }
+  else { warnEl.style.display = 'none'; }
+
+  const tagsWrap = $('publishRatingTagsWrap');
+  if (rating === 'clean') {
+    tagsWrap.style.display = 'none';
+    $('publishRatingTagsGroup').innerHTML = '';
+  } else {
+    tagsWrap.style.display = '';
+    $('publishRatingTagsGroup').innerHTML = PUBLISH_RATING_TAGS.map(([id, label]) => `
+      <span class="publish-rating-tag" data-tag="${id}" onclick="togglePublishRatingTag('${id}')" style="font-size:0.4rem;padding:4px 8px;border:1px solid var(--border);border-radius:12px;cursor:pointer;color:var(--text-muted);user-select:none;">${escapeHtml(label)}</span>
+    `).join('');
+  }
+  // Clear the "select a rating" status message if it's currently showing it
+  if ($('publishTrackStatus').textContent === 'Select a content rating before publishing.') {
+    $('publishTrackStatus').textContent = '';
+  }
+}
+
+function togglePublishRatingTag(tagId) {
+  const el = document.querySelector(`#publishRatingTagsGroup .publish-rating-tag[data-tag="${tagId}"]`);
+  if (!el) return;
+  if (publishSelectedRatingTags.has(tagId)) {
+    publishSelectedRatingTags.delete(tagId);
+    el.classList.remove('selected');
+  } else {
+    publishSelectedRatingTags.add(tagId);
+    el.classList.add('selected');
+  }
+}
+
 async function openPublishTrackModal(cloudFileId) {
   publishingCloudFileId = cloudFileId;
   publishingCoverUrl = null;
@@ -10755,6 +10893,7 @@ async function openPublishTrackModal(cloudFileId) {
   $('publishTrackSourceFilename').textContent = '';
   resetPublishVideoSelection();
   resetPublishCanvasSelection();
+  resetPublishRatingSelector();
 
   // Populate the release dropdown from the cached releases list — refresh
   // first in case a release was created since the dashboard last loaded.
@@ -10771,6 +10910,7 @@ function closePublishTrackModal() {
   publishingCoverUrl = null;
   resetPublishVideoSelection();
   resetPublishCanvasSelection();
+  resetPublishRatingSelector();
 }
 
 $('publishCoverPreviewWrap')?.addEventListener('click', () => $('publishCoverFileInput')?.click());
@@ -11031,9 +11171,18 @@ $('publishCanvasFileInput')?.addEventListener('change', async function() {
 
 $('publishTrackSubmitBtn')?.addEventListener('click', async () => {
   if (!viewedArtist || !publishingCloudFileId) return;
+  // Part 1: "Artists cannot publish without selecting one." Mirrors the
+  // server's own 400 (RATING_REQUIRED) so the artist gets instant feedback
+  // instead of a round trip for something checkable client-side.
+  if (!publishSelectedRating) {
+    $('publishTrackStatus').textContent = 'Select a content rating before publishing.';
+    $('publishTrackStatus').style.color = '#ffa502';
+    return;
+  }
   const btn = $('publishTrackSubmitBtn');
   btn.disabled = true; btn.textContent = 'Publishing…';
   $('publishTrackStatus').textContent = '';
+  $('publishTrackStatus').style.color = '';
   try {
     const res = await fetch(`${ARTISTS_BASE}/${encodeURIComponent(viewedArtist.id)}/publish`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -11043,7 +11192,8 @@ $('publishTrackSubmitBtn')?.addEventListener('click', async () => {
         title: $('publishTrackTitleInput').value.trim() || undefined,
         coverUrl: publishingCoverUrl || undefined,
         releaseId: $('publishReleaseSelect').value || undefined,
-        isExplicit: !!$('publishExplicitCheck')?.checked,
+        contentRating: publishSelectedRating,
+        contentRatingTags: Array.from(publishSelectedRatingTags),
       }),
     });
     const data = await res.json();
@@ -11272,7 +11422,7 @@ async function loadDashTracks() {
           <div style="font-size:0.4rem;color:var(--text-muted);">${formatCompactCount(t.playCount)} plays</div>
         </div>
         <div style="display:flex;gap:4px;flex-shrink:0;">
-          <button class="dash-track-action-btn" onclick="${escapeHtml(`openEditTrackOverlay('${t.id}', ${JSON.stringify(t.title)}, ${JSON.stringify(t.coverUrl || '')}, ${JSON.stringify(t.description || '')}, ${JSON.stringify(t.releaseId || '')}, ${JSON.stringify(!!t.hasVideo)})`)}" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.38rem;padding:4px 7px;border-radius:var(--radius);cursor:pointer;">Edit</button>
+          <button class="dash-track-action-btn" onclick="${escapeHtml(`openEditTrackOverlay('${t.id}', ${JSON.stringify(t.title)}, ${JSON.stringify(t.coverUrl || '')}, ${JSON.stringify(t.description || '')}, ${JSON.stringify(t.releaseId || '')}, ${JSON.stringify(!!t.hasVideo)}, ${JSON.stringify(t.contentRating || 'clean')}, ${JSON.stringify(t.contentRatingTags || [])}, ${JSON.stringify(!!t.contentRatingLocked)})`)}" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.38rem;padding:4px 7px;border-radius:var(--radius);cursor:pointer;">Edit</button>
           <button class="dash-track-action-btn" onclick="${escapeHtml(`openManageCollaboratorsModal('track', '${t.id}', ${JSON.stringify(t.title)})`)}" style="background:none;border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:0.38rem;padding:4px 7px;border-radius:var(--radius);cursor:pointer;">Credits</button>
           <button class="dash-track-action-btn accent3" onclick="${escapeHtml(`openTrackAnalyticsModal('${t.id}', ${JSON.stringify(t.title)})`)}" style="background:none;border:1px solid var(--accent3);color:var(--accent3);font-family:'Space Mono',monospace;font-size:0.38rem;padding:4px 7px;border-radius:var(--radius);cursor:pointer;">Analytics</button>
           <button onclick="deleteDashTrack('${t.id}')" style="background:none;border:1px solid var(--accent2);color:var(--accent2);font-family:'Space Mono',monospace;font-size:0.38rem;padding:4px 7px;border-radius:var(--radius);cursor:pointer;">Delete</button>
@@ -11284,7 +11434,50 @@ async function loadDashTracks() {
   }
 }
 
-async function openEditTrackOverlay(trackId, title, coverUrl, description, releaseId, hasVideo) {
+// ── Edit Track > Content Rating (Part 1/10/15) ──────────────────────────
+// Mirrors the Publish modal's selector (selectPublishRating/PUBLISH_RATING_TAGS)
+// but with its own state, since both modals can theoretically exist in the
+// DOM at once and must not clobber each other. editRatingLocked mirrors
+// track.content_rating_locked (Part 15's admin lock) — when true, every
+// option gets pointer-events:none and the lock notice shows instead of
+// letting the artist attempt a change the server would 403 anyway.
+let editSelectedRating = null;
+let editSelectedRatingTags = new Set();
+let editRatingLocked = false;
+
+function selectEditRating(rating) {
+  if (editRatingLocked) return;
+  editSelectedRating = rating;
+  editSelectedRatingTags = new Set();
+  document.querySelectorAll('#editRatingGroup .edit-rating-option').forEach(el => {
+    el.classList.toggle('selected', el.dataset.rating === rating);
+  });
+  const tagsWrap = $('editRatingTagsWrap');
+  if (rating === 'clean') {
+    tagsWrap.style.display = 'none';
+    $('editRatingTagsGroup').innerHTML = '';
+  } else {
+    tagsWrap.style.display = '';
+    $('editRatingTagsGroup').innerHTML = PUBLISH_RATING_TAGS.map(([id, label]) => `
+      <span class="edit-rating-tag" data-tag="${id}" onclick="toggleEditRatingTag('${id}')" style="font-size:0.4rem;padding:4px 8px;border:1px solid var(--border);border-radius:12px;cursor:pointer;color:var(--text-muted);user-select:none;">${escapeHtml(label)}</span>
+    `).join('');
+  }
+}
+
+function toggleEditRatingTag(tagId) {
+  if (editRatingLocked) return;
+  const el = document.querySelector(`#editRatingTagsGroup .edit-rating-tag[data-tag="${tagId}"]`);
+  if (!el) return;
+  if (editSelectedRatingTags.has(tagId)) {
+    editSelectedRatingTags.delete(tagId);
+    el.classList.remove('selected');
+  } else {
+    editSelectedRatingTags.add(tagId);
+    el.classList.add('selected');
+  }
+}
+
+async function openEditTrackOverlay(trackId, title, coverUrl, description, releaseId, hasVideo, contentRating, contentRatingTags, contentRatingLocked) {
   editingTrackId = trackId;
   $('editTrackTitle').value = title || '';
   $('editTrackCoverUrl').value = coverUrl || '';
@@ -11308,6 +11501,29 @@ async function openEditTrackOverlay(trackId, title, coverUrl, description, relea
     // looked like it wasn't, and saving from here would have unlinked it.
     sel.value = releaseId || '';
   }
+
+  // Content rating: seed selector state from the track's current values,
+  // then lock the UI if a moderator has locked this track's rating.
+  editRatingLocked = !!contentRatingLocked;
+  editSelectedRating = contentRating || 'clean';
+  editSelectedRatingTags = new Set(Array.isArray(contentRatingTags) ? contentRatingTags : []);
+  document.querySelectorAll('#editRatingGroup .edit-rating-option').forEach(el => {
+    el.classList.toggle('selected', el.dataset.rating === editSelectedRating);
+    el.style.opacity = editRatingLocked ? '0.5' : '1';
+    el.style.pointerEvents = editRatingLocked ? 'none' : 'auto';
+  });
+  $('editRatingLockedNotice').style.display = editRatingLocked ? '' : 'none';
+  const tagsWrap = $('editRatingTagsWrap');
+  if (editSelectedRating === 'clean') {
+    tagsWrap.style.display = 'none';
+    $('editRatingTagsGroup').innerHTML = '';
+  } else {
+    tagsWrap.style.display = '';
+    $('editRatingTagsGroup').innerHTML = PUBLISH_RATING_TAGS.map(([id, label]) => `
+      <span class="edit-rating-tag${editSelectedRatingTags.has(id) ? ' selected' : ''}" data-tag="${id}" onclick="toggleEditRatingTag('${id}')" style="font-size:0.4rem;padding:4px 8px;border:1px solid var(--border);border-radius:12px;cursor:${editRatingLocked ? 'default' : 'pointer'};color:var(--text-muted);user-select:none;">${escapeHtml(label)}</span>
+    `).join('');
+  }
+
   $('editTrackCollabSearchInput').value = '';
   $('editTrackCollabSearchResults').innerHTML = '';
   $('editTrackCollabStatus').textContent = '';
@@ -11325,6 +11541,9 @@ function closeEditTrackOverlay() {
   const overlay = $('editTrackOverlay');
   if (overlay) overlay.style.display = 'none';
   editingTrackId = null;
+  editSelectedRating = null;
+  editSelectedRatingTags = new Set();
+  editRatingLocked = false;
 }
 
 // ── Edit Track > Music Video ────────────────────────────────────────────────
@@ -11560,6 +11779,13 @@ async function submitEditTrack() {
     // Include releaseId only if select exists and has a value (including empty = unlink)
     const sel = $('editTrackReleaseSelect');
     if (sel) body.releaseId = sel.value || null;
+    // Content rating: omit entirely when locked so the request can't even
+    // attempt a change the server would 403 anyway — locked artists can
+    // still edit title/description/cover/release from this same modal.
+    if (!editRatingLocked) {
+      body.contentRating = editSelectedRating;
+      body.contentRatingTags = Array.from(editSelectedRatingTags);
+    }
 
     const res = await fetch(`/api/tracks/${encodeURIComponent(editingTrackId)}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
