@@ -844,10 +844,22 @@ const premiumDb = {
   getPremiumStatusFromAccount,
 };
 
-async function dbCreateAccount(username, displayName, salt, hash, email) {
-  const { error } = await supabase.from('accounts').insert({
+async function dbCreateAccount(username, displayName, salt, hash, email, extra = {}) {
+  const patch = {
     username, display_name: displayName, salt, hash, email: email || null, created_at: new Date().toISOString()
-  });
+  };
+  // Part 7/9 signup fields — all optional at the DB level (existing
+  // pre-Phase-4 accounts have none of these) but required going forward by
+  // the signup route itself, same pattern as `email` above: the column
+  // stays nullable so this function keeps working for any other future
+  // caller, while POST /api/auth/signup is what actually enforces presence.
+  if (extra.birthdate) patch.birthdate = extra.birthdate;
+  if (extra.ageGroup) patch.age_group = extra.ageGroup;
+  if (extra.country) patch.country = extra.country;
+  if (extra.termsAcceptedAt) patch.terms_accepted_at = extra.termsAcceptedAt;
+  if (extra.privacyAcceptedAt) patch.privacy_accepted_at = extra.privacyAcceptedAt;
+
+  const { error } = await supabase.from('accounts').insert(patch);
   if (error) throw new Error(error.message);
 }
 
@@ -3360,6 +3372,63 @@ function generateToken() { return crypto.randomBytes(16).toString('hex'); }
 
 const TOKEN_TTL = 30 * 24 * 60 * 60 * 1000;
 
+// ─── Age Group (Part 7 / Part 9) ───────────────────────────────────────────
+// Age is ALWAYS derived server-side from a birthdate — the app never asks
+// or accepts a self-reported "I'm 18" claim, per the Part 9 spec. This is
+// the single source of truth every signup/birthdate-entry code path routes
+// through so "child < 13, teen 13-17, adult 18+" is computed exactly once,
+// the same way, everywhere. Matches the CHECK constraint on
+// accounts.age_group (child/teen/adult) — this always returns one of those
+// three, or throws for invalid input.
+
+// Loose but real validation: rejects garbage strings, future dates, and
+// dates implausibly far in the past, while staying lenient on exact format
+// since the browser <input type="date"> already constrains what reaches us
+// in the common case. Returns a plain YYYY-MM-DD string (never a Date
+// object) since that's what the `date` column and the comparisons below
+// expect.
+function validateBirthdate(raw) {
+  const value = String(raw || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const parsed = new Date(value + 'T00:00:00Z');
+  if (Number.isNaN(parsed.getTime())) return null;
+
+  const now = new Date();
+  const todayUTC = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  if (parsed.getTime() > todayUTC.getTime()) return null; // no future birthdates
+
+  const earliestPlausible = new Date(Date.UTC(todayUTC.getUTCFullYear() - 120, 0, 1));
+  if (parsed.getTime() < earliestPlausible.getTime()) return null; // nobody's 120+
+
+  return value;
+}
+
+// Whole-years-elapsed age calculation (accounts for month/day, not just
+// year subtraction). Takes an already-validated YYYY-MM-DD string.
+function computeAgeFromBirthdate(birthdateStr) {
+  const birth = new Date(birthdateStr + 'T00:00:00Z');
+  const now = new Date();
+  const todayUTC = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  let age = todayUTC.getUTCFullYear() - birth.getUTCFullYear();
+  const monthDiff = todayUTC.getUTCMonth() - birth.getUTCMonth();
+  const dayDiff = todayUTC.getUTCDate() - birth.getUTCDate();
+  if (monthDiff < 0 || (monthDiff === 0 && dayDiff < 0)) age--;
+  return age;
+}
+
+// The single function every signup/birthdate-update route calls. Takes a
+// RAW (unvalidated) birthdate input and returns { birthdate, ageGroup } or
+// throws with a user-facing message — callers just catch and surface
+// err.message rather than duplicating the validation dance.
+function computeAgeGroup(rawBirthdate) {
+  const birthdate = validateBirthdate(rawBirthdate);
+  if (!birthdate) throw new Error('Please enter a valid birthdate.');
+  const age = computeAgeFromBirthdate(birthdate);
+  if (age < 0) throw new Error('Please enter a valid birthdate.');
+  const ageGroup = age < 13 ? 'child' : age < 18 ? 'teen' : 'adult';
+  return { birthdate, ageGroup };
+}
+
 // resolveToken is now a thin alias for dbGetSession — kept for any call sites
 // that were not auth routes (there are none, but just in case)
 async function resolveToken(token) {
@@ -4252,8 +4321,23 @@ app.get('/api/yt/search', rateLimit, async (req, res) => {
 //  AUTH ROUTES  — Supabase-backed
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// ISO 3166-1 alpha-2 codes only — matches the <select> options on the
+// frontend signup form exactly (frontend never free-types a country, so
+// this whitelist is authoritative and rejects anything else outright,
+// same spirit as the content_rating_tags CHECK constraint elsewhere in
+// this codebase).
+const VALID_COUNTRY_CODES = new Set([
+  'US','CA','GB','AU','NZ','IE','DE','FR','ES','IT','PT','NL','BE','CH','AT','SE','NO','DK','FI','IS',
+  'PL','CZ','SK','HU','RO','BG','GR','HR','SI','EE','LV','LT','LU','MT','CY',
+  'JP','KR','CN','TW','HK','SG','MY','TH','VN','PH','ID','IN','PK','BD',
+  'BR','MX','AR','CL','CO','PE','VE','UY','EC','BO','PY',
+  'ZA','NG','EG','KE','MA','GH','ET','TZ','UG',
+  'MX','IL','AE','SA','TR','RU','UA',
+  'OTHER',
+]);
+
 app.post('/api/auth/signup', rateLimit, async (req, res) => {
-  const { username, displayName, password, email } = req.body;
+  const { username, displayName, password, email, birthdate, country, termsAccepted, privacyAccepted } = req.body;
   if (!username || !password)
     return res.status(400).json({ error: 'Username and password required.' });
 
@@ -4275,6 +4359,27 @@ app.post('/api/auth/signup', rateLimit, async (req, res) => {
   if (!looksLikeEmail(normalizedEmail))
     return res.status(400).json({ error: 'Please enter a valid email address.' });
 
+  // Part 7/9 — birthdate is required going forward and is the ONLY source
+  // of age_group; nothing here ever accepts a raw "I'm an adult" checkbox
+  // instead. computeAgeGroup throws a user-facing message on anything
+  // invalid (bad format, future date, implausible age), which the outer
+  // catch below surfaces as-is.
+  let birthdateResult;
+  try {
+    birthdateResult = computeAgeGroup(birthdate);
+  } catch (ageErr) {
+    return res.status(400).json({ error: ageErr.message });
+  }
+
+  const normalizedCountry = String(country || '').trim().toUpperCase();
+  if (!VALID_COUNTRY_CODES.has(normalizedCountry))
+    return res.status(400).json({ error: 'Please select a valid country.' });
+
+  if (!termsAccepted)
+    return res.status(400).json({ error: 'You must accept the Terms of Service to continue.' });
+  if (!privacyAccepted)
+    return res.status(400).json({ error: 'You must accept the Privacy Policy to continue.' });
+
   try {
     const existing = await dbGetAccount(key);
     if (existing) return res.status(409).json({ error: 'Username already taken.' });
@@ -4285,7 +4390,14 @@ app.post('/api/auth/signup', rateLimit, async (req, res) => {
     const salt        = generateSalt();
     const hash        = await hashPassword(password, salt);
     const dName       = (displayName || '').trim() || key;
-    await dbCreateAccount(key, dName, salt, hash, normalizedEmail);
+    const nowIso       = new Date().toISOString();
+    await dbCreateAccount(key, dName, salt, hash, normalizedEmail, {
+      birthdate: birthdateResult.birthdate,
+      ageGroup: birthdateResult.ageGroup,
+      country: normalizedCountry,
+      termsAcceptedAt: nowIso,
+      privacyAcceptedAt: nowIso,
+    });
     try {
       await dbCreateProfile(key, dName);
     } catch (profileErr) {
@@ -4333,6 +4445,8 @@ app.post('/api/auth/signup', rateLimit, async (req, res) => {
       isPremium: !!acct?.is_premium,
       premiumStatus: getPremiumStatusFromAccount(acct),
       emailRequired: false,
+      ageGroup: acct?.age_group || birthdateResult.ageGroup,
+      birthdateRequired: false,
     });
   } catch (err) {
     console.error('[signup]', err);
@@ -4402,6 +4516,14 @@ app.post('/api/auth/signin', rateLimit, async (req, res) => {
       // non-blocking "add your email" prompt after login rather than
       // gating sign-in itself. See POST /api/account/email.
       emailRequired: !acctForResponse.email,
+      // Same idea for accounts created before birthdate collection existed
+      // (Part 7/9) — but this ONE, unlike emailRequired, is meant to block
+      // interaction with a non-dismissible prompt until resolved, per
+      // Deidre's call: age-gating enforcement downstream needs a real
+      // age_group on every account, not an indefinitely-postponable nudge.
+      // See POST /api/account/birthdate.
+      birthdateRequired: !acctForResponse.age_group,
+      ageGroup: acctForResponse.age_group || null,
     });
   } catch (err) {
     console.error('[signin]', err);
@@ -4451,6 +4573,68 @@ app.post('/api/account/email', rateLimit, async (req, res) => {
   } catch (err) {
     console.error('[account/email]', err);
     return res.status(500).json({ error: 'Could not update email right now. Please try again.' });
+  }
+});
+
+// Lets an existing (pre-Phase-4) account complete the Part 7 signup fields
+// it was created without — birthdate, country, terms/privacy acceptance —
+// so age_group can finally be computed. This is the ONE-TIME, NON-DISMISSIBLE
+// prompt (see the birthdateRequired comment on /api/auth/signin above):
+// Deidre's call was to force this rather than let it be postponed
+// indefinitely like /api/account/email, since downstream age-gating
+// enforcement needs every account to have a real age_group. Once set, an
+// account's birthdate/age_group become locked per Part 5 ("Child accounts
+// cannot change... Birthdate... Only parent can") — this route only ever
+// WRITES when age_group is currently null, so it can't be used to alter an
+// already-set birthdate. A future admin or parent-initiated correction
+// path is out of scope for this route.
+app.post('/api/account/birthdate', rateLimit, async (req, res) => {
+  const token = (req.headers.authorization || '').replace('Bearer ', '') || req.body?.token;
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Authentication required.' });
+
+  const { birthdate, country, termsAccepted, privacyAccepted } = req.body || {};
+
+  let birthdateResult;
+  try {
+    birthdateResult = computeAgeGroup(birthdate);
+  } catch (ageErr) {
+    return res.status(400).json({ error: ageErr.message });
+  }
+
+  const normalizedCountry = String(country || '').trim().toUpperCase();
+  if (!VALID_COUNTRY_CODES.has(normalizedCountry))
+    return res.status(400).json({ error: 'Please select a valid country.' });
+  if (!termsAccepted)
+    return res.status(400).json({ error: 'You must accept the Terms of Service to continue.' });
+  if (!privacyAccepted)
+    return res.status(400).json({ error: 'You must accept the Privacy Policy to continue.' });
+
+  try {
+    const acct = await dbGetAccount(sess.username);
+    if (!acct) return res.status(401).json({ error: 'Authentication required.' });
+
+    if (acct.age_group) {
+      // Already set — nothing to do. Not an error: a second tab or a retry
+      // after a network blip shouldn't surface a scary failure message for
+      // what is, from the person's point of view, "yeah I already did that."
+      return res.json({ ageGroup: acct.age_group, alreadySet: true });
+    }
+
+    const nowIso = new Date().toISOString();
+    const { error } = await supabase.from('accounts').update({
+      birthdate: birthdateResult.birthdate,
+      age_group: birthdateResult.ageGroup,
+      country: normalizedCountry,
+      terms_accepted_at: nowIso,
+      privacy_accepted_at: nowIso,
+    }).eq('username', acct.username);
+    if (error) throw new Error(error.message);
+
+    return res.json({ ageGroup: birthdateResult.ageGroup, alreadySet: false });
+  } catch (err) {
+    console.error('[account/birthdate]', err);
+    return res.status(500).json({ error: 'Could not save birthdate right now. Please try again.' });
   }
 });
 
@@ -4780,6 +4964,8 @@ app.post('/api/auth/token-refresh', async (req, res) => {
     isPremium: !!acct?.is_premium,
     premiumStatus: getPremiumStatusFromAccount(acct),
     emailRequired: !acct?.email,
+    birthdateRequired: !acct?.age_group,
+    ageGroup: acct?.age_group || null,
   });
 });
 
@@ -4906,6 +5092,8 @@ app.get('/api/auth/pull', async (req, res) => {
       premiumStatus: getPremiumStatusFromAccount(acct),
       playlists,
       pulledAt:    Date.now(),
+      birthdateRequired: !acct?.age_group,
+      ageGroup: acct?.age_group || null,
     });
   } catch (err) {
     console.error('[pull]', err);
