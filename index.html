@@ -966,6 +966,9 @@ body.local-player-active #embedContainer{display:none;}
 .auth-submit{background:var(--accent);color:var(--bg);border:none;border-radius:var(--radius);padding:10px;font-family:'Unbounded',sans-serif;font-size:0.6rem;font-weight:700;cursor:pointer;letter-spacing:0.05em;transition:opacity 0.2s;}
 .auth-submit:hover{opacity:0.85;}
 .auth-note{font-size:0.5rem;color:var(--text-muted);text-align:center;line-height:1.8;margin-top:4px;}
+.auth-checkbox-row{display:flex;align-items:flex-start;gap:8px;font-size:0.58rem;color:var(--text-dim);line-height:1.5;cursor:pointer;}
+.auth-checkbox-row input[type="checkbox"]{margin-top:2px;accent-color:var(--accent);flex-shrink:0;}
+.auth-checkbox-row a{color:var(--accent);text-decoration:underline;}
 .auth-error{font-size:0.55rem;color:var(--accent2);text-align:center;display:none;}
 .auth-error.show{display:block;}
 .auth-user-bar{display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--surface3);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:14px;}
@@ -6252,9 +6255,25 @@ body.oled-mode {
           <label class="auth-field-label">Confirm Password</label>
           <input type="password" class="auth-input" id="signupConfirm" placeholder="Confirm password…" autocomplete="new-password" />
         </div>
+        <div class="auth-field">
+          <label class="auth-field-label">Birthdate</label>
+          <input type="date" class="auth-input" id="signupBirthdate" autocomplete="bday" />
+        </div>
+        <div class="auth-field">
+          <label class="auth-field-label">Country</label>
+          <select class="auth-input" id="signupCountry" autocomplete="country"></select>
+        </div>
+        <label class="auth-checkbox-row">
+          <input type="checkbox" id="signupTerms" />
+          <span>I agree to the <a href="#" id="signupTermsLink">Terms of Service</a></span>
+        </label>
+        <label class="auth-checkbox-row">
+          <input type="checkbox" id="signupPrivacy" />
+          <span>I agree to the <a href="#" id="signupPrivacyLink">Privacy Policy</a></span>
+        </label>
         <div class="auth-error" id="signupError">Passwords do not match.</div>
         <button class="auth-submit" id="signupSubmit">CREATE ACCOUNT</button>
-        <div class="auth-note">Email is required — it's how we verify FREQ Premium purchases and help you recover your account. Your playlists sync automatically across all your devices.</div>
+        <div class="auth-note">Email and birthdate are required — birthdate determines your account type and is never shown publicly. Your playlists sync automatically across all your devices.</div>
       </div>
     </div>
     <button class="auth-close" id="authClose" style="margin-top:16px;background:var(--surface3);color:var(--text-dim);border:1px solid var(--border);border-radius:var(--radius);padding:8px;font-family:'Space Mono',monospace;font-size:0.55rem;cursor:pointer;width:100%;letter-spacing:0.08em;text-transform:uppercase;">CLOSE</button>
@@ -6279,6 +6298,39 @@ body.oled-mode {
     <div class="auth-error" id="addEmailError">Please enter a valid email address.</div>
     <button class="auth-submit" id="addEmailSubmit">SAVE EMAIL</button>
     <button class="support-close-btn" id="addEmailSkip" style="margin-top:8px;">Later</button>
+  </div>
+</div>
+
+<!-- Shown once, right after sign-in, for accounts created before birthdate
+     collection existed (AUTH.birthdateRequired). Unlike addEmailOverlay
+     above, this one is DELIBERATELY NOT DISMISSIBLE — no "Later" button —
+     per the decision to force a one-time birthdate prompt rather than let
+     age_group stay indefinitely unset. Sign-in has already succeeded and
+     the token is already valid, so this isn't blocking auth itself, just
+     gating the rest of the app until the account has a real age_group for
+     downstream Family Accounts / content-rating enforcement to rely on. -->
+<div class="lyrics-overlay" id="addBirthdateOverlay">
+  <div class="lyrics-panel" style="max-width:400px;">
+    <div class="lyrics-title">🎂 Confirm your birthdate</div>
+    <div class="lyrics-artist" style="margin-bottom:10px;">FREQ now uses your birthdate to determine your account type and keep content appropriate for your age. This is required once before you can continue.</div>
+    <div class="auth-field">
+      <label class="auth-field-label">Birthdate</label>
+      <input type="date" class="auth-input" id="addBirthdateInput" autocomplete="bday" />
+    </div>
+    <div class="auth-field">
+      <label class="auth-field-label">Country</label>
+      <select class="auth-input" id="addBirthdateCountry"></select>
+    </div>
+    <label class="auth-checkbox-row">
+      <input type="checkbox" id="addBirthdateTerms" />
+      <span>I agree to the <a href="#" id="addBirthdateTermsLink">Terms of Service</a></span>
+    </label>
+    <label class="auth-checkbox-row">
+      <input type="checkbox" id="addBirthdatePrivacy" />
+      <span>I agree to the <a href="#" id="addBirthdatePrivacyLink">Privacy Policy</a></span>
+    </label>
+    <div class="auth-error" id="addBirthdateError">Please enter a valid birthdate.</div>
+    <button class="auth-submit" id="addBirthdateSubmit">CONTINUE</button>
   </div>
 </div>
 
@@ -6464,6 +6516,8 @@ const AUTH = {
   name:        '',
   email:       '',
   emailRequired: false,
+  ageGroup:    null,          // 'child' | 'teen' | 'adult' | null (unset) — Part 7/9
+  birthdateRequired: false,   // forces addBirthdateOverlay when true — Part 7/9
   playlists:   [],
   isAdmin:     false,
   isPremium:   false,
@@ -15330,6 +15384,8 @@ async function authInit() {
     AUTH.isPremium = !!data.isPremium;
     AUTH.premiumStatus = data.premiumStatus || null;
     AUTH.emailRequired = !!refData.emailRequired;
+    AUTH.birthdateRequired = !!(refData.birthdateRequired || data.birthdateRequired);
+    AUTH.ageGroup = refData.ageGroup || data.ageGroup || null;
     // Check admin status separately; premium is already reflected from pull.
     fetch('/api/admin/me', { headers: { 'Authorization': `Bearer ${AUTH.token}` } })
       .then(r => r.json()).then(d => { AUTH.isAdmin = !!d.isAdmin; AUTH.isPremium = AUTH.isPremium || !!d.isPremium; updateAuthUI(); }).catch(() => {});
@@ -15339,10 +15395,11 @@ async function authInit() {
     loadLikedPlaylists();
     activityInit();
     pcoResumeIfPending(); // resume "Activating Premium…" if a checkout was left in-flight
-    // Same one-time, dismissible nudge as fresh sign-in — see the
-    // addEmailOverlay markup comment. Restored sessions can carry this flag
-    // just as much as a fresh login for pre-email accounts.
-    if (AUTH.emailRequired) setTimeout(openAddEmailOverlay, 600);
+    // Forced birthdate prompt takes priority over the dismissible email
+    // nudge — see the addBirthdateOverlay markup comment. Restored
+    // sessions carry this flag just as much as a fresh login.
+    if (AUTH.birthdateRequired) setTimeout(openAddBirthdateOverlay, 600);
+    else if (AUTH.emailRequired) setTimeout(openAddEmailOverlay, 600);
   } catch (err) {
     // Server offline — gracefully skip, don't nuke the token
     setSyncStatus('Server offline — working locally', 'var(--text-muted)');
@@ -15372,6 +15429,8 @@ $('signinSubmit').addEventListener('click', async () => {
     AUTH.isPremium = !!data.isPremium;
     AUTH.premiumStatus = data.premiumStatus || null;
     AUTH.emailRequired = !!data.emailRequired;
+    AUTH.birthdateRequired = !!data.birthdateRequired;
+    AUTH.ageGroup = data.ageGroup || null;
     localStorage.setItem('freq_token_v4', AUTH.token);
     fetch('/api/admin/me', { headers: { 'Authorization': `Bearer ${AUTH.token}` } })
       .then(r => r.json()).then(d => { AUTH.isAdmin = !!d.isAdmin; AUTH.isPremium = !!d.isPremium; updateAuthUI(); }).catch(() => {});
@@ -15382,17 +15441,44 @@ $('signinSubmit').addEventListener('click', async () => {
     errEl.classList.remove('show');
     $('signinPassword').value = ''; $('signinUsername').value = '';
     showToast('Welcome back!', AUTH.name, 'success');
-    // Pre-email accounts get a one-time, dismissible prompt to add one —
-    // see the addEmailOverlay markup comment for why this isn't a harder
-    // gate. Delayed slightly so it doesn't fight the closing auth overlay
-    // for focus/animation.
-    if (AUTH.emailRequired) setTimeout(openAddEmailOverlay, 400);
+    // Forced birthdate prompt takes priority over the dismissible email
+    // nudge — see the addBirthdateOverlay markup comment. Delayed slightly
+    // so it doesn't fight the closing auth overlay for focus/animation.
+    if (AUTH.birthdateRequired) setTimeout(openAddBirthdateOverlay, 400);
+    else if (AUTH.emailRequired) setTimeout(openAddEmailOverlay, 400);
   } catch (err) {
     errEl.textContent = 'Network error — is the server running?'; errEl.classList.add('show');
   } finally {
     $('signinSubmit').disabled = false; $('signinSubmit').textContent = 'SIGN IN';
   }
 });
+
+// ─── Country list (Part 7 signup field) ────────────────────────────────────
+// Kept in sync with VALID_COUNTRY_CODES in server.js — this is a curated
+// list, not exhaustive ISO-3166, with "OTHER" as an explicit catch-all so
+// nobody's blocked from signing up over a missing country.
+const SIGNUP_COUNTRIES = [
+  ['US','United States'],['CA','Canada'],['GB','United Kingdom'],['AU','Australia'],['NZ','New Zealand'],
+  ['IE','Ireland'],['DE','Germany'],['FR','France'],['ES','Spain'],['IT','Italy'],['PT','Portugal'],
+  ['NL','Netherlands'],['BE','Belgium'],['CH','Switzerland'],['AT','Austria'],['SE','Sweden'],['NO','Norway'],
+  ['DK','Denmark'],['FI','Finland'],['IS','Iceland'],['PL','Poland'],['CZ','Czechia'],['SK','Slovakia'],
+  ['HU','Hungary'],['RO','Romania'],['BG','Bulgaria'],['GR','Greece'],['HR','Croatia'],['SI','Slovenia'],
+  ['EE','Estonia'],['LV','Latvia'],['LT','Lithuania'],['LU','Luxembourg'],['MT','Malta'],['CY','Cyprus'],
+  ['JP','Japan'],['KR','South Korea'],['CN','China'],['TW','Taiwan'],['HK','Hong Kong'],['SG','Singapore'],
+  ['MY','Malaysia'],['TH','Thailand'],['VN','Vietnam'],['PH','Philippines'],['ID','Indonesia'],['IN','India'],
+  ['PK','Pakistan'],['BD','Bangladesh'],['BR','Brazil'],['MX','Mexico'],['AR','Argentina'],['CL','Chile'],
+  ['CO','Colombia'],['PE','Peru'],['VE','Venezuela'],['UY','Uruguay'],['EC','Ecuador'],['BO','Bolivia'],
+  ['PY','Paraguay'],['ZA','South Africa'],['NG','Nigeria'],['EG','Egypt'],['KE','Kenya'],['MA','Morocco'],
+  ['GH','Ghana'],['ET','Ethiopia'],['TZ','Tanzania'],['UG','Uganda'],['IL','Israel'],['AE','United Arab Emirates'],
+  ['SA','Saudi Arabia'],['TR','Turkey'],['RU','Russia'],['UA','Ukraine'],['OTHER','Other / Not Listed'],
+];
+function populateCountrySelect(selectEl) {
+  if (!selectEl || selectEl.dataset.populated) return;
+  selectEl.innerHTML = '<option value="">Select your country…</option>' +
+    SIGNUP_COUNTRIES.map(([code, label]) => `<option value="${code}">${label}</option>`).join('');
+  selectEl.dataset.populated = 'true';
+}
+populateCountrySelect($('signupCountry'));
 
 // ─── Sign Up ──────────────────────────────────────────────────────────────────
 $('signupSubmit').addEventListener('click', async () => {
@@ -15401,15 +15487,24 @@ $('signupSubmit').addEventListener('click', async () => {
   const name  = ($('signupName').value || '').trim() || uname;
   const pw    = $('signupPassword').value;
   const conf  = $('signupConfirm').value;
+  const birthdate = ($('signupBirthdate').value || '').trim();
+  const country    = ($('signupCountry').value || '').trim();
+  const termsAccepted   = !!$('signupTerms').checked;
+  const privacyAccepted = !!$('signupPrivacy').checked;
   const errEl = $('signupError');
   if (!uname) { errEl.textContent = 'Username required (letters, numbers, _).'; errEl.classList.add('show'); return; }
   if (!email) { errEl.textContent = 'Email is required.'; errEl.classList.add('show'); return; }
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { errEl.textContent = 'Please enter a valid email address.'; errEl.classList.add('show'); return; }
   if (!pw || pw !== conf) { errEl.textContent = pw ? 'Passwords do not match.' : 'Password required.'; errEl.classList.add('show'); return; }
   if (pw.length < 4) { errEl.textContent = 'Password must be at least 4 characters.'; errEl.classList.add('show'); return; }
+  if (!birthdate) { errEl.textContent = 'Birthdate is required.'; errEl.classList.add('show'); return; }
+  if (new Date(birthdate) > new Date()) { errEl.textContent = 'Birthdate cannot be in the future.'; errEl.classList.add('show'); return; }
+  if (!country) { errEl.textContent = 'Please select your country.'; errEl.classList.add('show'); return; }
+  if (!termsAccepted) { errEl.textContent = 'You must agree to the Terms of Service.'; errEl.classList.add('show'); return; }
+  if (!privacyAccepted) { errEl.textContent = 'You must agree to the Privacy Policy.'; errEl.classList.add('show'); return; }
   $('signupSubmit').disabled = true; $('signupSubmit').textContent = '…';
   try {
-    const res  = await fetch(`${AUTH_BASE}/signup`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ username: uname, displayName: name, password: pw, email }) });
+    const res  = await fetch(`${AUTH_BASE}/signup`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ username: uname, displayName: name, password: pw, email, birthdate, country, termsAccepted, privacyAccepted }) });
     const data = await res.json();
     if (!res.ok) { errEl.textContent = data.error || 'Signup failed.'; errEl.classList.add('show'); return; }
     AUTH.loggedIn  = true;
@@ -15418,6 +15513,8 @@ $('signupSubmit').addEventListener('click', async () => {
     AUTH.name      = data.displayName;
     AUTH.email     = data.email || email;
     AUTH.emailRequired = false;
+    AUTH.ageGroup  = data.ageGroup || null;
+    AUTH.birthdateRequired = false;
     AUTH.playlists = [];
     AUTH.isAdmin = false; // New accounts are never admins
     AUTH.isPremium = !!data.isPremium;
@@ -15425,7 +15522,10 @@ $('signupSubmit').addEventListener('click', async () => {
     localStorage.setItem('freq_token_v4', AUTH.token);
     updateAuthUI();
     errEl.classList.remove('show');
-    ['signupUsername','signupEmail','signupName','signupPassword','signupConfirm'].forEach(id => $(id).value = '');
+    ['signupUsername','signupEmail','signupName','signupPassword','signupConfirm','signupBirthdate'].forEach(id => $(id).value = '');
+    $('signupCountry').value = '';
+    $('signupTerms').checked = false;
+    $('signupPrivacy').checked = false;
     showToast('Account created!', 'Welcome, ' + AUTH.name, 'success');
   } catch (err) {
     errEl.textContent = 'Network error — is the server running?'; errEl.classList.add('show');
@@ -15477,9 +15577,51 @@ $('addEmailSubmit')?.addEventListener('click', async () => {
   }
 });
 
+// ─── Add Birthdate (existing pre-Phase-4 accounts, FORCED) ────────────────────
+// Deliberately no skip/dismiss path — see the addBirthdateOverlay markup
+// comment. Not wired into the click-outside-to-close array either.
+function openAddBirthdateOverlay() {
+  populateCountrySelect($('addBirthdateCountry'));
+  $('addBirthdateOverlay')?.classList.add('open');
+}
+function closeAddBirthdateOverlay() {
+  $('addBirthdateOverlay')?.classList.remove('open');
+}
+$('addBirthdateSubmit')?.addEventListener('click', async () => {
+  const errEl = $('addBirthdateError');
+  const birthdate = ($('addBirthdateInput')?.value || '').trim();
+  const country    = ($('addBirthdateCountry')?.value || '').trim();
+  const termsAccepted   = !!$('addBirthdateTerms')?.checked;
+  const privacyAccepted = !!$('addBirthdatePrivacy')?.checked;
+  if (!birthdate) { if (errEl) { errEl.textContent = 'Birthdate is required.'; errEl.classList.add('show'); } return; }
+  if (new Date(birthdate) > new Date()) { if (errEl) { errEl.textContent = 'Birthdate cannot be in the future.'; errEl.classList.add('show'); } return; }
+  if (!country) { if (errEl) { errEl.textContent = 'Please select your country.'; errEl.classList.add('show'); } return; }
+  if (!termsAccepted) { if (errEl) { errEl.textContent = 'You must agree to the Terms of Service.'; errEl.classList.add('show'); } return; }
+  if (!privacyAccepted) { if (errEl) { errEl.textContent = 'You must agree to the Privacy Policy.'; errEl.classList.add('show'); } return; }
+  const btn = $('addBirthdateSubmit');
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+  try {
+    const res  = await fetch('/api/account/birthdate', { method: 'POST', headers: authHeaders(), body: JSON.stringify({ birthdate, country, termsAccepted, privacyAccepted }) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      if (errEl) { errEl.textContent = data.error || 'Could not save birthdate.'; errEl.classList.add('show'); }
+      return;
+    }
+    AUTH.ageGroup = data.ageGroup || null;
+    AUTH.birthdateRequired = false;
+    if (errEl) errEl.classList.remove('show');
+    closeAddBirthdateOverlay();
+    showToast('All set!', 'Thanks for confirming your birthdate.', 'success');
+  } catch (err) {
+    if (errEl) { errEl.textContent = 'Network error — is the server running?'; errEl.classList.add('show'); }
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'CONTINUE'; }
+  }
+});
+
 // ─── Sign Out ─────────────────────────────────────────────────────────────────
 $('authLogoutBtn').addEventListener('click', () => {
-  AUTH.loggedIn = false; AUTH.token = null; AUTH.username = ''; AUTH.name = ''; AUTH.playlists = []; AUTH.isAdmin = false; AUTH.isPremium = false; AUTH.premiumStatus = null;
+  AUTH.loggedIn = false; AUTH.token = null; AUTH.username = ''; AUTH.name = ''; AUTH.playlists = []; AUTH.isAdmin = false; AUTH.isPremium = false; AUTH.premiumStatus = null; AUTH.ageGroup = null; AUTH.birthdateRequired = false;
   localStorage.removeItem('freq_token_v4');
   updateAuthUI();
   showToast('Signed out', '', 'info');
