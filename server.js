@@ -3018,8 +3018,12 @@ async function dbGetSession(token) {
     await supabase.from('sessions').delete().eq('token', token);
     return null;
   }
-  // Fetch is_admin/is_premium from accounts (cheap read, cached by Postgres for repeated calls)
-  const { data: acct } = await supabase.from('accounts').select('is_admin, is_premium').eq('username', data.username).maybeSingle();
+  // Fetch is_admin/is_premium/email_verified_at/age_group from accounts
+  // (cheap read, cached by Postgres for repeated calls). email_verified_at
+  // and age_group were added for Part 8 (requireVerifiedEmail below) and
+  // future age-gating middleware — same "resolve once here, every gate
+  // reads off the session" shape as is_admin/is_premium already use.
+  const { data: acct } = await supabase.from('accounts').select('is_admin, is_premium, email_verified_at, age_group').eq('username', data.username).maybeSingle();
   // Always return a normalized username — guards against any historical row that
   // somehow has trailing whitespace, mixed case, or stray characters drifting through.
   return {
@@ -3027,6 +3031,8 @@ async function dbGetSession(token) {
     expiresAt:  new Date(data.expires_at).getTime(),
     isAdmin:    !!(acct?.is_admin),
     isPremium:  !!(acct?.is_premium),
+    emailVerified: !!(acct?.email_verified_at),
+    ageGroup:   acct?.age_group || null,
   };
 }
 
@@ -3116,12 +3122,37 @@ async function requirePremium(req, res, next) {
   next();
 }
 
-// Middleware: require an authenticated admin session
+// Middleware: require an authenticated session whose account email has been
+// verified (Part 8). Same token-resolution/response shape as requirePremium
+// above so every gate in this app behaves identically from the client's
+// point of view — a plain 401 for "not signed in" vs a 403 with a specific
+// reason for "signed in, but not allowed yet." Gates: upload, comment,
+// publish, artist-page creation, Premium purchase, becoming a verified
+// artist, and moderation tools, per the Part 8 spec. Does NOT gate browsing/
+// playback — those stay open to unverified accounts by design.
+async function requireVerifiedEmail(req, res, next) {
+  const token = (req.headers.authorization || '').replace('Bearer ', '') || req.body?.token || req.query.token;
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Authentication required.' });
+  if (!sess.emailVerified) return res.status(403).json({ error: 'Please verify your email address to continue.', emailVerificationRequired: true });
+  req._verifiedSession = sess;
+  next();
+}
+
+// Middleware: require an authenticated admin session. Also requires a
+// verified email (Part 8: "use moderation tools" is one of the gated
+// actions) — folded in here rather than added to every individual
+// requireAdmin route below, since is_admin is granted manually (not through
+// self-signup) and every moderation-tool route already goes through this
+// one gate. An admin whose email somehow isn't verified should verify it
+// via the same banner/flow as anyone else, not get a silent pass because
+// they're an admin.
 async function requireAdmin(req, res, next) {
   const token = (req.headers.authorization || '').replace('Bearer ', '') || req.body?.token || req.query.token;
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Authentication required.' });
   if (!sess.isAdmin) return res.status(403).json({ error: 'Admin access required.' });
+  if (!sess.emailVerified) return res.status(403).json({ error: 'Please verify your email address to use moderation tools.', emailVerificationRequired: true });
   req._adminSession = sess;
   next();
 }
@@ -4436,6 +4467,20 @@ app.post('/api/auth/signup', rateLimit, async (req, res) => {
     const expiresAt = Date.now() + TOKEN_TTL;
     await dbCreateSession(token, key, expiresAt);
 
+    // Part 8: every new account needs to verify its email. Generate the
+    // link now (same mechanism POST /api/account/verify-email/start uses)
+    // and hand it back so the frontend can trigger emailjs.send() itself —
+    // right after signup is a real browser/user-gesture context, exactly
+    // like submitVerificationClaim() does for artist verification. Not
+    // fatal if this fails — the account still exists and can request a
+    // fresh link from the verify-email banner.
+    let verifyEmailLink = null;
+    try {
+      verifyEmailLink = await issueAccountVerificationLink(req, key);
+    } catch (linkErr) {
+      console.error('[signup] could not issue verification link (non-fatal):', linkErr?.message || linkErr);
+    }
+
     const acct = await dbGetAccount(key);
     return res.status(201).json({
       token,
@@ -4447,6 +4492,9 @@ app.post('/api/auth/signup', rateLimit, async (req, res) => {
       emailRequired: false,
       ageGroup: acct?.age_group || birthdateResult.ageGroup,
       birthdateRequired: false,
+      emailVerified: false,
+      verifyUrl: verifyEmailLink?.verifyUrl || null,
+      verifyExpiresInHours: verifyEmailLink?.expiresInHours || null,
     });
   } catch (err) {
     console.error('[signup]', err);
@@ -4524,10 +4572,181 @@ app.post('/api/auth/signin', rateLimit, async (req, res) => {
       // See POST /api/account/birthdate.
       birthdateRequired: !acctForResponse.age_group,
       ageGroup: acctForResponse.age_group || null,
+      emailVerified: !!acctForResponse.email_verified_at,
     });
   } catch (err) {
     console.error('[signin]', err);
     return res.status(500).json({ error: 'Server error during sign in.' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  ACCOUNT EMAIL VERIFICATION (Part 8)
+// ═══════════════════════════════════════════════════════════════════════════
+// Same pattern as artist verification (see /api/verification/start and
+// confirmVerificationEmail above): server generates + hashes + stores a
+// token, hands back the raw verifyUrl, and the FRONTEND sends the actual
+// email via emailjs.send() in a real browser context — EmailJS's API blocks
+// server-side/non-browser sends by default. Kept as its own small module
+// rather than merged into the artist-verification code above because it's
+// keyed by accounts.username, not a request row, and gates a different set
+// of actions (upload/comment/publish/artist-page-creation/premium-purchase/
+// becoming-verified-artist/moderation-tools per the Part 8 spec) — trying to
+// share confirmVerificationEmail()'s requestId-shaped plumbing would make
+// both flows harder to read for a difference that's only skin-deep.
+
+const ACCOUNT_EMAIL_TOKEN_TTL_HOURS = 24; // same window as artist verification
+
+function generateAccountVerificationToken() {
+  return crypto.randomBytes(32).toString('hex');
+}
+function hashAccountVerificationToken(token) {
+  return crypto.createHash('sha256').update(String(token || '')).digest('hex');
+}
+
+// Generates a fresh token, stores its hash + expiry on the account, and
+// returns the raw verifyUrl for the caller to hand to the frontend for
+// emailjs.send(). Used by both signup (auto-triggered) and the explicit
+// resend route below, so the two never drift out of sync.
+async function issueAccountVerificationLink(req, username) {
+  const rawToken = generateAccountVerificationToken();
+  const { error } = await supabase.from('accounts').update({
+    email_verification_token_hash: hashAccountVerificationToken(rawToken),
+    email_verification_expires_at: new Date(Date.now() + ACCOUNT_EMAIL_TOKEN_TTL_HOURS * 3600 * 1000).toISOString(),
+  }).eq('username', username);
+  if (error) throw new Error(error.message);
+  return {
+    verifyUrl: `${req.protocol}://${req.get('host')}/verify-account-email?username=${encodeURIComponent(username)}&token=${rawToken}`,
+    expiresInHours: ACCOUNT_EMAIL_TOKEN_TTL_HOURS,
+  };
+}
+
+// Shared by POST /api/account/verify-email/confirm (programmatic) and
+// GET /verify-account-email (the actual magic-link click target). Returns
+// { ok: true, username } or { ok: false, httpStatus, error } so both routes
+// can format the response their own way (JSON vs redirect) — same split as
+// confirmVerificationEmail() above.
+async function confirmAccountEmailVerification(username, token) {
+  if (!username || !token) return { ok: false, httpStatus: 400, error: 'username and token are required.' };
+  const acct = await dbGetAccount(username);
+  if (!acct) return { ok: false, httpStatus: 404, error: 'Account not found.' };
+  if (acct.email_verified_at) return { ok: true, username: acct.username, alreadyVerified: true };
+  if (!acct.email_verification_expires_at || new Date(acct.email_verification_expires_at).getTime() < Date.now()) {
+    return { ok: false, httpStatus: 410, error: 'This verification link has expired. Please request a new one.' };
+  }
+  if (hashAccountVerificationToken(token) !== acct.email_verification_token_hash) {
+    return { ok: false, httpStatus: 403, error: 'Invalid verification link.' };
+  }
+
+  const { error } = await supabase.from('accounts').update({
+    email_verified_at: new Date().toISOString(),
+    // Clear the token once used — single-use, same as artist verification's
+    // implicit behavior (a re-click just fails the status check above once
+    // email_verified_at is set, thanks to the alreadyVerified early return).
+    email_verification_token_hash: null,
+    email_verification_expires_at: null,
+  }).eq('username', acct.username);
+  if (error) throw new Error(error.message);
+
+  return { ok: true, username: acct.username, alreadyVerified: false };
+}
+
+// POST /api/account/verify-email/start — authenticated. Generates a fresh
+// link for the CURRENT session's account. Signup also calls
+// issueAccountVerificationLink directly (see /api/auth/signup above) so a
+// brand-new account gets its first link without a separate round-trip; this
+// route exists for "I'm signed in but never got the email" / re-triggering
+// on demand from a verify-your-email banner.
+app.post('/api/account/verify-email/start', rateLimit, async (req, res) => {
+  const token = (req.headers.authorization || '').replace('Bearer ', '') || req.body?.token;
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Authentication required.' });
+
+  try {
+    const acct = await dbGetAccount(sess.username);
+    if (!acct) return res.status(401).json({ error: 'Authentication required.' });
+    if (!acct.email) return res.status(400).json({ error: 'Add an email to your account before verifying it.' });
+    if (acct.email_verified_at) return res.json({ alreadyVerified: true, email: acct.email });
+
+    const { verifyUrl, expiresInHours } = await issueAccountVerificationLink(req, acct.username);
+    console.log(`[account verification link generated] ${acct.username} <${acct.email}> (${expiresInHours}h): ${verifyUrl}`);
+
+    return res.json({
+      email: acct.email,
+      displayName: acct.display_name,
+      verifyUrl,
+      expiresInHours,
+    });
+  } catch (err) {
+    console.error('[account/verify-email/start]', err);
+    return res.status(500).json({ error: 'Could not start email verification.' });
+  }
+});
+
+// POST /api/account/verify-email/resend — identical to /start in practice
+// (both regenerate a fresh token, invalidating any prior link), kept as a
+// separate name only to match the resend/start split the frontend and
+// artist-verification flow already use elsewhere, so the "Resend" button
+// wiring is a drop-in copy of resendVerificationEmail()'s shape.
+app.post('/api/account/verify-email/resend', rateLimit, async (req, res) => {
+  const token = (req.headers.authorization || '').replace('Bearer ', '') || req.body?.token;
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Authentication required.' });
+
+  try {
+    const acct = await dbGetAccount(sess.username);
+    if (!acct) return res.status(401).json({ error: 'Authentication required.' });
+    if (!acct.email) return res.status(400).json({ error: 'Add an email to your account before verifying it.' });
+    if (acct.email_verified_at) return res.json({ alreadyVerified: true, email: acct.email });
+
+    const { verifyUrl, expiresInHours } = await issueAccountVerificationLink(req, acct.username);
+    console.log(`[account verification link regenerated] ${acct.username} <${acct.email}>: ${verifyUrl}`);
+
+    return res.json({
+      email: acct.email,
+      displayName: acct.display_name,
+      verifyUrl,
+      expiresInHours,
+    });
+  } catch (err) {
+    console.error('[account/verify-email/resend]', err);
+    return res.status(500).json({ error: 'Could not resend verification email.' });
+  }
+});
+
+// POST /api/account/verify-email/confirm  { username, token }
+// Public route (no session needed) since the link is clicked from an email
+// client — mirrors POST /api/verification/confirm-email.
+app.post('/api/account/verify-email/confirm', rateLimit, async (req, res) => {
+  const { username, token } = req.body || {};
+  try {
+    const result = await confirmAccountEmailVerification(normalizeUsername(username), token);
+    if (!result.ok) return res.status(result.httpStatus).json({ error: result.error });
+    return res.json({ username: result.username, alreadyVerified: !!result.alreadyVerified });
+  } catch (err) {
+    console.error('[account/verify-email/confirm]', err);
+    return res.status(500).json({ error: 'Could not confirm email verification.' });
+  }
+});
+
+// GET /verify-account-email?username=...&token=...
+// The ACTUAL link target clicked from the confirmation email. Mirrors
+// GET /verify-email above exactly — does the confirm server-side, then
+// redirects into the SPA with a query flag so the frontend can show a
+// toast/banner update once it boots. rateLimit intentionally omitted, same
+// reasoning as /verify-email: the token itself is the auth (single-use,
+// hashed, expires), and this is a GET a human clicks from their inbox.
+app.get('/verify-account-email', async (req, res) => {
+  const { username, token } = req.query || {};
+  try {
+    const result = await confirmAccountEmailVerification(normalizeUsername(username), token);
+    if (!result.ok) {
+      return res.redirect(`/?accountVerifyError=${encodeURIComponent(result.error)}`);
+    }
+    return res.redirect(`/?accountVerified=1`);
+  } catch (err) {
+    console.error('[verify-account-email link]', err);
+    return res.redirect(`/?accountVerifyError=${encodeURIComponent('Could not confirm email verification.')}`);
   }
 });
 
@@ -4966,6 +5185,7 @@ app.post('/api/auth/token-refresh', async (req, res) => {
     emailRequired: !acct?.email,
     birthdateRequired: !acct?.age_group,
     ageGroup: acct?.age_group || null,
+    emailVerified: !!acct?.email_verified_at,
   });
 });
 
@@ -5005,6 +5225,13 @@ async function handlePremiumVerifyRequest(req, res, routeLabel) {
   const token = (req.headers.authorization || '').replace('Bearer ', '') || req.body?.token || req.query.token;
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Authentication required.' });
+  // Part 8 gates *purchasing* Premium behind a verified email — but /sync
+  // (checking an already-active subscription, including detecting a
+  // cancellation) must keep working regardless, or an unverified account
+  // that somehow already has Premium could never find out it lapsed.
+  if (routeLabel === 'premium verify' && !sess.emailVerified) {
+    return res.status(403).json({ error: 'Please verify your email address before purchasing Premium.', emailVerificationRequired: true });
+  }
 
   try {
     const acct = await dbGetAccount(sess.username);
@@ -5094,6 +5321,7 @@ app.get('/api/auth/pull', async (req, res) => {
       pulledAt:    Date.now(),
       birthdateRequired: !acct?.age_group,
       ageGroup: acct?.age_group || null,
+      emailVerified: !!acct?.email_verified_at,
     });
   } catch (err) {
     console.error('[pull]', err);
@@ -5929,6 +6157,7 @@ app.patch('/api/profiles/me', rateLimit, async (req, res) => {
 app.post('/api/profiles/me/avatar', rateLimit, imageUpload.single('file'), async (req, res) => {
   const sess = await dbGetSession(req.body?.token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  if (!sess.emailVerified) return res.status(403).json({ error: 'Please verify your email address before uploading.', emailVerificationRequired: true });
   if (!req.file) return res.status(400).json({ error: 'No image file uploaded.' });
   try {
     const avatarUrl = await uploadMediaImage(req.file, 'avatars', sess.username);
@@ -5943,6 +6172,7 @@ app.post('/api/profiles/me/avatar', rateLimit, imageUpload.single('file'), async
 app.post('/api/profiles/me/cover', rateLimit, imageUpload.single('file'), async (req, res) => {
   const sess = await dbGetSession(req.body?.token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  if (!sess.emailVerified) return res.status(403).json({ error: 'Please verify your email address before uploading.', emailVerificationRequired: true });
   if (!req.file) return res.status(400).json({ error: 'No image file uploaded.' });
   try {
     const coverImageUrl = await uploadMediaImage(req.file, 'covers', sess.username);
@@ -8008,6 +8238,7 @@ const partyChatRateLimitHits = new Map();
 app.post('/api/parties/:id/chat', requirePremium, async (req, res) => {
   const { message } = req.body;
   if (typeof message !== 'string' || !message.trim()) return res.status(400).json({ error: '"message" is required.' });
+  if (!req._premiumSession.emailVerified) return res.status(403).json({ error: 'Please verify your email address before chatting.', emailVerificationRequired: true });
   const key = req._premiumSession.username;
   const now = Date.now();
   const times = (partyChatRateLimitHits.get(key) || []).filter(t => now - t < 10_000);
@@ -8130,6 +8361,7 @@ app.post('/api/cloud-files', rateLimit, (req, res, next) => {
       const token    = req.body.token || (req.headers.authorization || '').replace('Bearer ', '');
       const sess     = await dbGetSession(token);
       if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+      if (!sess.emailVerified) return res.status(403).json({ error: 'Please verify your email address before uploading.', emailVerificationRequired: true });
 
       if (!req.file) return res.status(400).json({ error: 'No file received.' });
 
@@ -8189,6 +8421,7 @@ app.post('/api/cloud-files', rateLimit, (req, res, next) => {
   const { token, filename, data, folder, title, artist, duration } = req.body;
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  if (!sess.emailVerified) return res.status(403).json({ error: 'Please verify your email address before uploading.', emailVerificationRequired: true });
   if (!filename || !data) return res.status(400).json({ error: '"filename" and "data" are required.' });
 
   const parsed = parseDataUrl(data);
@@ -8468,6 +8701,7 @@ app.post('/api/videos/upload-url', rateLimit, async (req, res) => {
   const { token, filename, mimeType, size } = req.body || {};
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  if (!sess.emailVerified) return res.status(403).json({ error: 'Please verify your email address before uploading.', emailVerificationRequired: true });
   if (!VIDEO_MIME_TYPES[mimeType]) {
     return res.status(400).json({ error: 'Unsupported video format. Upload MP4, WebM, or MOV.' });
   }
@@ -8646,6 +8880,7 @@ app.post('/api/tracks/:trackId/video', rateLimit, async (req, res) => {
 app.post('/api/tracks/:trackId/video-thumbnail', rateLimit, imageUpload.single('file'), async (req, res) => {
   const sess = await dbGetSession(req.body?.token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  if (!sess.emailVerified) return res.status(403).json({ error: 'Please verify your email address before uploading.', emailVerificationRequired: true });
   if (!req.file) return res.status(400).json({ error: 'No image file uploaded.' });
   try {
     const track = await dbGetTrackById(req.params.trackId);
@@ -8961,6 +9196,7 @@ app.post('/api/motion-canvas/upload-url', rateLimit, async (req, res) => {
   const { token, filename, mimeType, size } = req.body || {};
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  if (!sess.emailVerified) return res.status(403).json({ error: 'Please verify your email address before uploading.', emailVerificationRequired: true });
   if (!MOTION_CANVAS_MIME_TYPES[mimeType]) {
     return res.status(400).json({ error: 'Unsupported format. Upload MP4 or WebM.' });
   }
@@ -9508,6 +9744,7 @@ app.post('/api/posts', rateLimit, async (req, res) => {
   const { token, postType, body, playlistId, trackId, artistId, releaseId } = req.body || {};
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  if (!sess.emailVerified) return res.status(403).json({ error: 'Please verify your email address before posting.', emailVerificationRequired: true });
   if (!body && !playlistId && !trackId && !artistId && !releaseId) {
     return res.status(400).json({ error: 'Post must have body text or reference content.' });
   }
@@ -9774,6 +10011,7 @@ app.post('/api/posts/:id/comments', rateLimit, async (req, res) => {
   const { token, body } = req.body || {};
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  if (!sess.emailVerified) return res.status(403).json({ error: 'Please verify your email address before commenting.', emailVerificationRequired: true });
   if (!body || typeof body !== 'string' || !body.trim()) return res.status(400).json({ error: '"body" is required.' });
   if (body.length > 500) return res.status(400).json({ error: 'Comment must be 500 characters or fewer.' });
   try {
@@ -10218,6 +10456,7 @@ app.post('/api/artists/create', rateLimit, async (req, res) => {
   const { token, name } = req.body || {};
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  if (!sess.emailVerified) return res.status(403).json({ error: 'Please verify your email address before creating an artist page.', emailVerificationRequired: true });
 
   const existing = await dbGetArtistByAccount(sess.username);
   if (existing) return res.status(409).json({ error: 'Your account has already claimed an artist page.' });
@@ -10281,6 +10520,7 @@ app.post('/api/artists/claim', rateLimit, async (req, res) => {
   const { token, artistId } = req.body || {};
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  if (!sess.emailVerified) return res.status(403).json({ error: 'Please verify your email address before claiming an artist page.', emailVerificationRequired: true });
   if (!artistId || typeof artistId !== 'string') return res.status(400).json({ error: '"artistId" is required.' });
   try {
     const existing = await dbGetArtistByAccount(sess.username);
@@ -10361,6 +10601,7 @@ app.patch('/api/artists/:id', rateLimit, async (req, res) => {
 app.post('/api/artists/:id/avatar', rateLimit, imageUpload.single('file'), async (req, res) => {
   const sess = await dbGetSession(req.body?.token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  if (!sess.emailVerified) return res.status(403).json({ error: 'Please verify your email address before uploading artist art.', emailVerificationRequired: true });
   if (!req.file) return res.status(400).json({ error: 'No image file uploaded.' });
   try {
     const artist = await resolveArtistFromParam(req.params.id);
@@ -10400,6 +10641,7 @@ app.post('/api/artists/:id/releases', rateLimit, async (req, res) => {
   const { token, title, releaseType, coverUrl, releaseDate, trackIds, visibility } = req.body || {};
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  if (!sess.emailVerified) return res.status(403).json({ error: 'Please verify your email address before publishing.', emailVerificationRequired: true });
   try {
     const artist = await resolveArtistFromParam(req.params.id);
     if (!artist) return res.status(404).json({ error: 'Artist not found.' });
@@ -10792,6 +11034,7 @@ app.get('/api/artists/:id/publishable', rateLimit, async (req, res) => {
 app.post('/api/artists/:id/track-cover', rateLimit, imageUpload.single('file'), async (req, res) => {
   const sess = await dbGetSession(req.body?.token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  if (!sess.emailVerified) return res.status(403).json({ error: 'Please verify your email address before uploading.', emailVerificationRequired: true });
   if (!req.file) return res.status(400).json({ error: 'No image file uploaded.' });
   const cloudFileId = Number(req.body?.cloudFileId);
   if (!cloudFileId) return res.status(400).json({ error: '"cloudFileId" is required.' });
@@ -10815,6 +11058,7 @@ app.post('/api/artists/:id/publish', rateLimit, async (req, res) => {
   const { token, cloudFileId, title, coverUrl, releaseId, contentRating, contentRatingTags } = req.body || {};
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
+  if (!sess.emailVerified) return res.status(403).json({ error: 'Please verify your email address before publishing.', emailVerificationRequired: true });
   if (!cloudFileId) return res.status(400).json({ error: '"cloudFileId" is required.' });
   // Part 1: "Artists cannot publish without selecting one." Validated here
   // (in addition to dbPublishTrack's own check) so a bad request 400s before
@@ -11961,6 +12205,7 @@ app.post('/api/artists/:id/verification/start', rateLimit, async (req, res) => {
   const token = req.body?.token || (req.headers.authorization || '').replace('Bearer ', '');
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Authentication required.' });
+  if (!sess.emailVerified) return res.status(403).json({ error: 'Please verify your account email before starting artist verification.', emailVerificationRequired: true });
 
   const { role, legalName, stageName, contactEmail, officialLinks } = req.body || {};
   const VALID_ROLES = ['artist', 'manager', 'label_rep', 'authorized_team_member'];
