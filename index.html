@@ -1189,6 +1189,37 @@ textarea.support-field { height:90px;resize:vertical; }
   letter-spacing:0.08em;text-transform:uppercase;margin-top:10px;
 }
 .support-close-btn:hover { border-color:var(--accent2);color:var(--accent2); }
+.family-panel { max-width:560px; }
+.family-child-card {
+  background:var(--surface3);border:1px solid var(--border);border-radius:var(--radius);
+  padding:12px;margin-bottom:8px;
+}
+.family-child-card-top { display:flex;align-items:center;justify-content:space-between;gap:8px; }
+.family-child-name { font-size:0.62rem;color:var(--text);font-family:'Unbounded',sans-serif;font-weight:700; }
+.family-child-meta { font-size:0.44rem;color:var(--text-muted);margin-top:3px;line-height:1.6; }
+.family-child-edit-btn {
+  background:var(--surface2);border:1px solid var(--accent3);color:var(--accent3);
+  border-radius:var(--radius);padding:5px 10px;font-family:'Space Mono',monospace;
+  font-size:0.44rem;letter-spacing:0.06em;text-transform:uppercase;cursor:pointer;
+  transition:all 0.15s;flex-shrink:0;
+}
+.family-child-edit-btn:hover { background:var(--accent3);color:#000; }
+.family-feature-toggle-row {
+  display:flex;align-items:center;justify-content:space-between;
+  padding:7px 0;border-bottom:1px solid rgba(255,255,255,0.04);font-size:0.5rem;color:var(--text-dim);
+}
+.family-feature-toggle-row:last-child { border-bottom:none; }
+.family-toggle-switch {
+  width:34px;height:18px;border-radius:10px;background:var(--surface3);border:1px solid var(--border);
+  position:relative;cursor:pointer;transition:background 0.2s;flex-shrink:0;
+}
+.family-toggle-switch.on { background:var(--accent);border-color:var(--accent); }
+.family-toggle-switch::after {
+  content:'';position:absolute;top:1px;left:1px;width:14px;height:14px;border-radius:50%;
+  background:var(--text);transition:transform 0.2s;
+}
+.family-toggle-switch.on::after { transform:translateX(16px);background:#000; }
+
 
 /* ─── About Modal ────────────────────────────────────────────────── */
 .about-panel {
@@ -3767,6 +3798,120 @@ body.oled-mode {
   </div>
 </div>
 
+<!-- ─── Family Accounts Modal ─────────────────────────────────── -->
+<div class="support-overlay" id="familyOverlay">
+  <div class="support-panel family-panel">
+
+    <!-- View: no family yet — create one, or join with a code -->
+    <div id="familyViewNone">
+      <div class="support-title">👪 Family Accounts</div>
+      <div class="support-sub">Set up parental controls, or join a family with an invite code.</div>
+
+      <div class="support-section">
+        <div class="support-section-title">Create a Family</div>
+        <div style="font-size:0.5rem;color:var(--text-muted);margin-bottom:8px;line-height:1.8;">
+          Only adult accounts can create a family and invite children. You'll get a dashboard to manage restrictions, listening time, and devices.
+        </div>
+        <input type="text" class="support-field" id="familyCreateName" placeholder="Family name (optional)…" maxlength="60" />
+        <button class="support-send-btn" id="familyCreateBtn">CREATE FAMILY</button>
+        <div class="auth-error" id="familyCreateError"></div>
+      </div>
+
+      <div class="support-section">
+        <div class="support-section-title">Join a Family</div>
+        <div style="font-size:0.5rem;color:var(--text-muted);margin-bottom:8px;line-height:1.8;">
+          Got an invite code from a parent? Enter it below to join their family.
+        </div>
+        <input type="text" class="support-field" id="familyJoinCode" placeholder="INVITE CODE" maxlength="8" style="text-transform:uppercase;letter-spacing:0.15em;text-align:center;font-size:0.8rem;" />
+        <button class="support-send-btn" id="familyJoinBtn" style="background:var(--accent3);">JOIN FAMILY</button>
+        <div class="auth-error" id="familyJoinError"></div>
+      </div>
+
+      <button class="support-close-btn" onclick="closeFamilyModal()">Close</button>
+    </div>
+
+    <!-- View: parent dashboard -->
+    <div id="familyViewParent" style="display:none;">
+      <div class="support-title">👪 <span id="familyDashName">My Family</span></div>
+      <div class="support-sub">Manage children, content restrictions, and devices.</div>
+
+      <div class="support-section">
+        <div class="support-section-title">Invite a Child</div>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <button class="support-send-btn" id="familyGenerateInviteBtn" style="margin-top:0;flex:1;">GENERATE INVITE CODE</button>
+        </div>
+        <div id="familyInviteResult" style="display:none;margin-top:10px;padding:10px 12px;background:rgba(232,255,71,0.06);border:1px solid var(--accent);border-radius:var(--radius);text-align:center;">
+          <div style="font-size:0.46rem;color:var(--text-muted);letter-spacing:0.1em;text-transform:uppercase;margin-bottom:4px;">Invite Code (expires in 7 days)</div>
+          <div id="familyInviteCode" style="font-family:'Unbounded',sans-serif;font-size:1.1rem;color:var(--accent);letter-spacing:0.2em;"></div>
+        </div>
+      </div>
+
+      <div class="support-section">
+        <div class="support-section-title">Children</div>
+        <div id="familyChildrenList"><div class="empty-panel" style="font-size:0.5rem;padding:14px;text-align:center;color:var(--text-muted);">No children yet — send an invite code above.</div></div>
+      </div>
+
+      <button class="support-close-btn" onclick="closeFamilyModal()">Close</button>
+    </div>
+
+    <!-- View: per-child restriction editor (nested inside parent dashboard) -->
+    <div id="familyViewChildEdit" style="display:none;">
+      <div class="support-title">⚙ Restrictions — <span id="familyEditChildName">child</span></div>
+      <div class="support-sub">Changes apply immediately and are enforced server-side.</div>
+
+      <div class="support-section">
+        <div class="support-section-title">Maximum Content Rating</div>
+        <div class="support-tag-row">
+          <span class="support-tag" data-rating="clean" onclick="setFamilyEditRating(this,'clean')">🟢 Clean</span>
+          <span class="support-tag" data-rating="parental_guidance" onclick="setFamilyEditRating(this,'parental_guidance')">🟡 PG</span>
+          <span class="support-tag" data-rating="adult" onclick="setFamilyEditRating(this,'adult')">🔴 18+</span>
+        </div>
+      </div>
+
+      <div class="support-section">
+        <div class="support-section-title">Feature Access</div>
+        <div id="familyFeatureToggles"></div>
+      </div>
+
+      <div class="support-section">
+        <div class="support-section-title">Daily Listening Limit</div>
+        <input type="number" class="support-field" id="familyEditDailyLimit" placeholder="Minutes per day (blank = no limit)" min="1" />
+      </div>
+
+      <div class="support-section">
+        <div class="support-section-title">Bedtime Hours</div>
+        <div style="display:flex;gap:8px;">
+          <input type="time" class="support-field" id="familyEditBedtimeStart" style="flex:1;" />
+          <input type="time" class="support-field" id="familyEditBedtimeEnd" style="flex:1;" />
+        </div>
+        <div style="font-size:0.44rem;color:var(--text-muted);margin-top:4px;">Leave blank to disable bedtime restriction.</div>
+      </div>
+
+      <button class="support-send-btn" id="familySaveRestrictionsBtn">SAVE CHANGES</button>
+      <div class="auth-error" id="familyEditError"></div>
+
+      <div class="support-section" style="margin-top:18px;">
+        <div class="support-section-title" style="color:var(--accent2);border-color:rgba(255,71,87,0.2);">Danger Zone</div>
+        <button class="support-close-btn" id="familySignOutChildBtn" style="border-color:var(--accent3);color:var(--accent3);">Sign Out This Child (all devices)</button>
+        <button class="support-close-btn" id="familyRemoveChildBtn" style="border-color:var(--accent2);color:var(--accent2);margin-top:8px;">Remove From Family</button>
+      </div>
+
+      <button class="support-close-btn" id="familyBackToDashboardBtn" style="margin-top:10px;">← Back to Dashboard</button>
+    </div>
+
+    <!-- View: child's own read-only summary -->
+    <div id="familyViewChild" style="display:none;">
+      <div class="support-title">👪 Family Controls</div>
+      <div class="support-sub">Your account is managed by a parent or guardian.</div>
+      <div class="support-section">
+        <div id="familyChildSummary"></div>
+      </div>
+      <button class="support-close-btn" onclick="closeFamilyModal()">Close</button>
+    </div>
+
+  </div>
+</div>
+
 <!-- ─── Settings Modal ────────────────────────────────────────── -->
 <div class="settings-overlay" id="settingsOverlay">
   <div class="settings-panel">
@@ -6086,6 +6231,7 @@ body.oled-mode {
       <div class="auth-user-bar">
         <span class="auth-user-name" id="authUserName">—</span>
         <button class="auth-verify-pill" id="authVerifyEmailPill" style="display:none;" title="Click to resend verification email">✉ Verify Email</button>
+        <button class="auth-verify-pill" id="authFamilyPill" style="display:none;border-color:var(--accent3);color:var(--accent3);background:rgba(0,212,255,0.08);" title="Family Accounts">👪 Family</button>
         <span id="authSyncBadge" style="font-size:0.45rem;padding:2px 7px;border-radius:2px;border:1px solid;margin-right:auto;display:none;"></span>
         <button class="auth-logout-btn" id="authLogoutBtn">Sign Out</button>
       </div>
@@ -6537,6 +6683,12 @@ const AUTH = {
   emailVerified: false,       // Part 8 — gates upload/comment/publish/etc server-side regardless of this flag
   ageGroup:    null,          // 'child' | 'teen' | 'adult' | null (unset) — Part 7/9
   birthdateRequired: false,   // forces addBirthdateOverlay when true — Part 7/9
+  familyControls: {           // safe capability summary from the server; never the authorization source
+    isChildAccount: false,
+    parentManaged: false,
+    maxContentRating: null,
+    disabledFeatures: {},
+  },
   playlists:   [],
   isAdmin:     false,
   isPremium:   false,
@@ -6548,6 +6700,308 @@ const AUTH_BASE = '/api/auth';
 function authHeaders() {
   return { 'Content-Type': 'application/json', 'Authorization': `Bearer ${AUTH.token || ''}` };
 }
+
+const FAMILY_FEATURE_LABELS = {
+  radio: 'Radio', discover: 'Discover', social_feed: 'Social Feed',
+  following: 'Following', uploads: 'Uploads', artist_pages: 'Artist Pages',
+  labs: 'Experimental Labs', premium_purchases: 'Premium purchases',
+};
+
+function setFamilyControls(summary) {
+  AUTH.familyControls = {
+    isChildAccount: !!summary?.isChildAccount,
+    parentManaged: !!summary?.parentManaged,
+    maxContentRating: summary?.maxContentRating || null,
+    disabledFeatures: { ...(summary?.disabledFeatures || {}) },
+  };
+}
+
+function isFamilyFeatureDisabled(feature) {
+  return !!AUTH.loggedIn && !!AUTH.familyControls?.disabledFeatures?.[feature];
+}
+
+function guardFamilyFeature(feature) {
+  if (!isFamilyFeatureDisabled(feature)) return false;
+  const label = FAMILY_FEATURE_LABELS[feature] || 'This feature';
+  showToast('Family Controls', `${label} has been disabled by a parent or guardian.`, 'error');
+  return true;
+}
+
+// ─── Family Accounts Modal (Phase 4, Parts 4-5) ────────────────────────────
+// FAMILY_STATE holds this modal's own working data (parent's family + child
+// roster + which child is being edited) — deliberately separate from
+// AUTH.familyControls, which is the small, safe, always-current capability
+// summary every route already checks. This state is only ever populated
+// while the modal is open and is thrown away on close, so a stale roster
+// can't silently drive enforcement anywhere else in the app.
+const FAMILY_STATE = {
+  family: null,
+  children: [],
+  editingUsername: null,
+  editingRestrictions: null,
+};
+
+function openFamilyModal() {
+  $('familyOverlay')?.classList.add('open');
+  loadFamilyModalData();
+}
+function closeFamilyModal() {
+  $('familyOverlay')?.classList.remove('open');
+  FAMILY_STATE.editingUsername = null;
+  FAMILY_STATE.editingRestrictions = null;
+}
+$('authFamilyPill')?.addEventListener('click', () => { playSfx?.('click'); openFamilyModal(); });
+
+function familySwitchView(view) {
+  ['familyViewNone', 'familyViewParent', 'familyViewChildEdit', 'familyViewChild'].forEach(id => {
+    const el = $(id);
+    if (el) el.style.display = id === view ? 'block' : 'none';
+  });
+}
+
+// Decides which of the modal's views to show: a managed child sees their
+// own read-only summary; anyone else either has a family already (parent
+// dashboard) or doesn't yet (the create/join landing).
+async function loadFamilyModalData() {
+  if (AUTH.familyControls?.isChildAccount) {
+    familySwitchView('familyViewChild');
+    renderFamilyChildSummary();
+    return;
+  }
+  try {
+    const res = await fetch('/api/family', { headers: authHeaders() });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { showToast('Family', data.error || 'Could not load family.', 'error'); familySwitchView('familyViewNone'); return; }
+    FAMILY_STATE.family = data.family;
+    FAMILY_STATE.children = data.children || [];
+    if (data.family) {
+      familySwitchView('familyViewParent');
+      renderFamilyDashboard();
+    } else {
+      familySwitchView('familyViewNone');
+    }
+  } catch (err) {
+    showToast('Family', 'Network error loading family.', 'error');
+    familySwitchView('familyViewNone');
+  }
+}
+
+function renderFamilyChildSummary() {
+  const fc = AUTH.familyControls || {};
+  const ratingLabel = { clean: '🟢 Clean', parental_guidance: '🟡 Parental Guidance', adult: '🔴 18+' }[fc.maxContentRating] || 'Not set';
+  const disabledList = Object.entries(fc.disabledFeatures || {})
+    .filter(([, v]) => v)
+    .map(([k]) => FAMILY_FEATURE_LABELS[k] || k);
+  $('familyChildSummary').innerHTML = `
+    <div class="support-row"><div class="support-row-text"><div class="support-row-label">Max Content Rating</div><div class="support-row-desc">${ratingLabel}</div></div></div>
+    <div class="support-row"><div class="support-row-text"><div class="support-row-label">Restricted Features</div><div class="support-row-desc">${disabledList.length ? escapeHtml(disabledList.join(', ')) : 'None'}</div></div></div>
+  `;
+}
+
+function renderFamilyDashboard() {
+  $('familyDashName').textContent = FAMILY_STATE.family?.name || 'My Family';
+  const list = $('familyChildrenList');
+  if (!FAMILY_STATE.children.length) {
+    list.innerHTML = '<div class="empty-panel" style="font-size:0.5rem;padding:14px;text-align:center;color:var(--text-muted);">No children yet — send an invite code above.</div>';
+    return;
+  }
+  const ratingBadge = { clean: '🟢 Clean', parental_guidance: '🟡 PG', adult: '🔴 18+' };
+  list.innerHTML = FAMILY_STATE.children.map(c => {
+    const rating = c.restrictions?.max_content_rating || 'clean';
+    return `
+      <div class="family-child-card">
+        <div class="family-child-card-top">
+          <div>
+            <div class="family-child-name">${escapeHtml(c.displayName)}</div>
+            <div class="family-child-meta">${ratingBadge[rating] || rating} · ${c.listeningMinutesToday}m listened today</div>
+          </div>
+          <button class="family-child-edit-btn" onclick="openFamilyChildEdit('${escapeHtml(c.username)}')">MANAGE</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+$('familyCreateBtn')?.addEventListener('click', async () => {
+  const errEl = $('familyCreateError');
+  const btn = $('familyCreateBtn');
+  btn.disabled = true; btn.textContent = '…';
+  try {
+    const name = ($('familyCreateName').value || '').trim();
+    const res = await fetch('/api/family/create', { method: 'POST', headers: authHeaders(), body: JSON.stringify({ name }) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { errEl.textContent = data.error || 'Could not create family.'; errEl.classList.add('show'); return; }
+    errEl.classList.remove('show');
+    showToast('Family created', data.family?.name || 'My Family', 'success');
+    await loadFamilyModalData();
+  } catch (err) {
+    errEl.textContent = 'Network error — is the server running?'; errEl.classList.add('show');
+  } finally {
+    btn.disabled = false; btn.textContent = 'CREATE FAMILY';
+  }
+});
+
+$('familyJoinBtn')?.addEventListener('click', async () => {
+  const errEl = $('familyJoinError');
+  const btn = $('familyJoinBtn');
+  const inviteCode = ($('familyJoinCode').value || '').trim().toUpperCase();
+  if (!inviteCode) { errEl.textContent = 'Enter an invite code.'; errEl.classList.add('show'); return; }
+  btn.disabled = true; btn.textContent = '…';
+  try {
+    const res = await fetch('/api/family/join', { method: 'POST', headers: authHeaders(), body: JSON.stringify({ inviteCode }) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { errEl.textContent = data.error || 'Could not join family.'; errEl.classList.add('show'); return; }
+    errEl.classList.remove('show');
+    showToast('Joined family!', 'Your account is now managed by a parent or guardian.', 'success');
+    // Refresh the capability summary immediately so enforcement (and this
+    // modal's own view routing) reflects the new membership right away
+    // rather than waiting for the next sign-in/token-refresh cycle.
+    try {
+      const refreshRes = await fetch('/api/auth/token-refresh', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: AUTH.token }) });
+      const refreshData = await refreshRes.json().catch(() => ({}));
+      if (refreshRes.ok) setFamilyControls(refreshData.familyControls);
+    } catch (_) {}
+    closeFamilyModal();
+    updateAuthUI();
+  } catch (err) {
+    errEl.textContent = 'Network error — is the server running?'; errEl.classList.add('show');
+  } finally {
+    btn.disabled = false; btn.textContent = 'JOIN FAMILY';
+  }
+});
+
+$('familyGenerateInviteBtn')?.addEventListener('click', async () => {
+  const btn = $('familyGenerateInviteBtn');
+  btn.disabled = true; btn.textContent = '…';
+  try {
+    const res = await fetch('/api/family/invite', { method: 'POST', headers: authHeaders() });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { showToast('Family', data.error || 'Could not create invite.', 'error'); return; }
+    $('familyInviteCode').textContent = data.inviteCode;
+    $('familyInviteResult').style.display = 'block';
+  } catch (err) {
+    showToast('Family', 'Network error creating invite.', 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = 'GENERATE INVITE CODE';
+  }
+});
+
+function openFamilyChildEdit(username) {
+  const child = FAMILY_STATE.children.find(c => c.username === username);
+  if (!child) return;
+  FAMILY_STATE.editingUsername = username;
+  FAMILY_STATE.editingRestrictions = { ...(child.restrictions || {}) };
+  $('familyEditChildName').textContent = child.displayName;
+  familySwitchView('familyViewChildEdit');
+  renderFamilyEditForm();
+}
+
+function renderFamilyEditForm() {
+  const r = FAMILY_STATE.editingRestrictions || {};
+  document.querySelectorAll('#familyFeatureToggles').forEach(() => {}); // no-op guard for older browsers
+  document.querySelectorAll('.support-tag[data-rating]').forEach(tag => {
+    tag.classList.toggle('active', tag.dataset.rating === (r.max_content_rating || 'clean'));
+  });
+  const toggles = $('familyFeatureToggles');
+  toggles.innerHTML = Object.entries(FAMILY_FEATURE_LABELS).map(([key, label]) => {
+    const column = 'disable_' + key;
+    const isOn = !r[column]; // toggle shows "allowed" state — on means NOT disabled
+    return `
+      <div class="family-feature-toggle-row">
+        <span>${escapeHtml(label)}</span>
+        <div class="family-toggle-switch ${isOn ? 'on' : ''}" onclick="toggleFamilyFeature('${key}')"></div>
+      </div>
+    `;
+  }).join('');
+  $('familyEditDailyLimit').value = r.daily_listening_limit_minutes || '';
+  $('familyEditBedtimeStart').value = r.bedtime_start ? String(r.bedtime_start).slice(0, 5) : '';
+  $('familyEditBedtimeEnd').value = r.bedtime_end ? String(r.bedtime_end).slice(0, 5) : '';
+}
+
+function setFamilyEditRating(el, rating) {
+  if (!FAMILY_STATE.editingRestrictions) return;
+  FAMILY_STATE.editingRestrictions.max_content_rating = rating;
+  document.querySelectorAll('.support-tag[data-rating]').forEach(tag => tag.classList.toggle('active', tag === el));
+}
+
+function toggleFamilyFeature(key) {
+  if (!FAMILY_STATE.editingRestrictions) return;
+  const column = 'disable_' + key;
+  FAMILY_STATE.editingRestrictions[column] = !FAMILY_STATE.editingRestrictions[column];
+  renderFamilyEditForm();
+}
+
+$('familySaveRestrictionsBtn')?.addEventListener('click', async () => {
+  const username = FAMILY_STATE.editingUsername;
+  if (!username) return;
+  const errEl = $('familyEditError');
+  const btn = $('familySaveRestrictionsBtn');
+  btn.disabled = true; btn.textContent = '…';
+  try {
+    const r = FAMILY_STATE.editingRestrictions || {};
+    const patch = { max_content_rating: r.max_content_rating || 'clean' };
+    Object.keys(FAMILY_FEATURE_LABELS).forEach(key => { patch['disable_' + key] = !!r['disable_' + key]; });
+    const dailyLimit = ($('familyEditDailyLimit').value || '').trim();
+    patch.daily_listening_limit_minutes = dailyLimit ? Math.max(1, parseInt(dailyLimit, 10)) : null;
+    const bedtimeStart = $('familyEditBedtimeStart').value || '';
+    const bedtimeEnd = $('familyEditBedtimeEnd').value || '';
+    patch.bedtime_start = bedtimeStart || null;
+    patch.bedtime_end = bedtimeEnd || null;
+
+    const res = await fetch(`/api/family/child/${encodeURIComponent(username)}/restrictions`, {
+      method: 'PATCH', headers: authHeaders(), body: JSON.stringify(patch),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { errEl.textContent = data.error || 'Could not save changes.'; errEl.classList.add('show'); return; }
+    errEl.classList.remove('show');
+    showToast('Saved', 'Restrictions updated.', 'success');
+    await loadFamilyModalData();
+    familySwitchView('familyViewParent');
+  } catch (err) {
+    errEl.textContent = 'Network error — is the server running?'; errEl.classList.add('show');
+  } finally {
+    btn.disabled = false; btn.textContent = 'SAVE CHANGES';
+  }
+});
+
+$('familyBackToDashboardBtn')?.addEventListener('click', () => {
+  familySwitchView('familyViewParent');
+});
+
+$('familySignOutChildBtn')?.addEventListener('click', async () => {
+  const username = FAMILY_STATE.editingUsername;
+  if (!username) return;
+  if (!confirm(`Sign "${username}" out of all devices?`)) return;
+  try {
+    const res = await fetch(`/api/family/child/${encodeURIComponent(username)}/signout`, { method: 'POST', headers: authHeaders() });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { showToast('Family', data.error || 'Could not sign out child.', 'error'); return; }
+    showToast('Signed out', `${username} has been signed out of all devices.`, 'success');
+  } catch (err) {
+    showToast('Family', 'Network error.', 'error');
+  }
+});
+
+$('familyRemoveChildBtn')?.addEventListener('click', async () => {
+  const username = FAMILY_STATE.editingUsername;
+  if (!username) return;
+  if (!confirm(`Remove "${username}" from your family? Their account keeps its history, but restrictions will lift and control returns to them.`)) return;
+  try {
+    const res = await fetch(`/api/family/child/${encodeURIComponent(username)}/remove`, { method: 'POST', headers: authHeaders() });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { showToast('Family', data.error || 'Could not remove child.', 'error'); return; }
+    showToast('Removed', `${username} has been removed from your family.`, 'info');
+    await loadFamilyModalData();
+    familySwitchView('familyViewParent');
+  } catch (err) {
+    showToast('Family', 'Network error.', 'error');
+  }
+});
+
+// Replaced with authInit()'s promise near startup. Playback and shared-route
+// entry points await it so a stale persisted token cannot momentarily fall
+// back to anonymous content defaults while session restoration is running.
+let AUTH_READY = Promise.resolve();
 
 // ─── Sync Status Indicator ────────────────────────────────────────────────────
 function setSyncStatus(msg, color) {
@@ -6630,6 +7084,8 @@ function updateAuthUI() {
     if (badge) { badge.style.display = 'inline'; badge.textContent = '● server'; badge.style.color = 'var(--accent3)'; badge.style.borderColor = 'var(--accent3)'; }
     const verifyPill = $('authVerifyEmailPill');
     if (verifyPill) verifyPill.style.display = AUTH.emailVerified ? 'none' : 'inline-block';
+    const familyPill = $('authFamilyPill');
+    if (familyPill) familyPill.style.display = 'inline-block';
     renderSavedPlaylists();
     loadOwnProfile();
     loadMyPlaylists();
@@ -6814,11 +7270,12 @@ $('profileSaveBtn')?.addEventListener('click', async () => {
 // than the wait justifies. Click the preview swatch to open the file picker;
 // the actual <input type=file> stays hidden, same indirection cloudFileInput
 // already uses elsewhere in this file.
-$('myAvatarUploadWrap')?.addEventListener('click', () => $('myAvatarFileInput')?.click());
-$('myCoverUploadWrap')?.addEventListener('click', () => $('myCoverFileInput')?.click());
+$('myAvatarUploadWrap')?.addEventListener('click', () => { if (!guardFamilyFeature('uploads')) $('myAvatarFileInput')?.click(); });
+$('myCoverUploadWrap')?.addEventListener('click', () => { if (!guardFamilyFeature('uploads')) $('myCoverFileInput')?.click(); });
 
 async function uploadOwnImage(file, endpoint, urlField, onDone) {
   if (!AUTH.loggedIn) { showToast('Sign in required', 'Please sign in first.', 'error'); return; }
+  if (guardFamilyFeature('uploads')) return;
   const form = new FormData();
   form.append('token', AUTH.token);
   form.append('file', file);
@@ -7235,8 +7692,11 @@ function setChartsWindow(win) {
 // via trackFinderPlay, which is why those two surfaces worked fine). Route
 // cloud: tracks the same way trackFinderPlay does instead of through resolve.
 async function resolveChartTrack(t, source = 'chart') {
+  await AUTH_READY;
   if (t.originalUrl && t.originalUrl.startsWith('cloud:')) {
-    const res = await fetch(`/api/tracks/${encodeURIComponent(t.id)}/stream`);
+    const res = await fetch(`/api/tracks/${encodeURIComponent(t.id)}/stream`, {
+      headers: AUTH.token ? { 'Authorization': `Bearer ${AUTH.token}` } : {},
+    });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Could not load this track.');
     const ttlMs = (Number(data.expiresIn) || 600) * 1000;
@@ -7323,6 +7783,7 @@ let trackFinderSearchTimer  = null;
 let trackFinderData         = [];
 
 function openDiscoverOverlay() {
+  if (guardFamilyFeature('discover')) return;
   $('discoverOverlay')?.classList.add('open');
   if (!discoverTracksLoaded) loadDiscoverTracks();
 }
@@ -7728,6 +8189,7 @@ function radioAuthedFetch(url, options = {}) {
 }
 
 function openRadioOverlay() {
+  if (guardFamilyFeature('radio')) return;
   $('radioOverlay')?.classList.add('open');
   const locked = !AUTH.isPremium;
   $('radioLockCard').style.display = locked ? 'flex' : 'none';
@@ -8151,6 +8613,7 @@ function labsAuthedFetch(url, options = {}) {
 }
 
 function openLabsOverlay() {
+  if (guardFamilyFeature('labs')) return;
   $('labsOverlay')?.classList.add('open');
   const locked = !AUTH.isPremium;
   $('labsLockCard').style.display = locked ? 'flex' : 'none';
@@ -8983,8 +9446,11 @@ function pcoShowStep(stepId) {
 async function pcoFetchCheckoutUrl() {
   if (PCO.checkoutUrl) return PCO.checkoutUrl;
   try {
-    const res = await fetch('/api/premium/config');
+    const res = await fetch('/api/premium/config', {
+      headers: AUTH.token ? { 'Authorization': `Bearer ${AUTH.token}` } : {},
+    });
     const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Checkout is unavailable.');
     PCO.checkoutUrl = data.checkoutUrl || null;
   } catch (err) {
     PCO.checkoutUrl = null;
@@ -8996,6 +9462,7 @@ async function pcoFetchCheckoutUrl() {
 // DJ BOOM lock card, etc). Figures out which step to open on: signed-out
 // users see the sign-in gate, everyone else starts at the plan/features step.
 async function openPremiumCheckout() {
+  if (guardFamilyFeature('premium_purchases')) return;
   $('premiumCheckoutOverlay')?.classList.add('open');
   pcoFetchCheckoutUrl(); // fire off in background, no need to block the modal opening on it
 
@@ -9737,13 +10204,16 @@ async function loadTrackFinder() {
 }
 
 async function trackFinderPlay(i) {
+  await AUTH_READY;
   const t = trackFinderData[i];
   if (!t) return;
   try {
     // FREQ tracks stream via their signed URL — same path as artist page / discovery chart
-    const res = await fetch(`/api/tracks/${encodeURIComponent(t.id)}/stream`);
-    if (!res.ok) throw new Error('Could not load track.');
+    const res = await fetch(`/api/tracks/${encodeURIComponent(t.id)}/stream`, {
+      headers: AUTH.token ? { 'Authorization': `Bearer ${AUTH.token}` } : {},
+    });
     const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not load track.');
     const ttlMs = (Number(data.expiresIn) || 600) * 1000;
     const item = {
       id: t.id, title: data.title, platform: 'freq', type: 'track',
@@ -9764,12 +10234,15 @@ async function trackFinderPlay(i) {
 }
 
 async function trackFinderQueue(i) {
+  await AUTH_READY;
   const t = trackFinderData[i];
   if (!t) return;
   try {
-    const res = await fetch(`/api/tracks/${encodeURIComponent(t.id)}/stream`);
-    if (!res.ok) throw new Error('Could not load track.');
+    const res = await fetch(`/api/tracks/${encodeURIComponent(t.id)}/stream`, {
+      headers: AUTH.token ? { 'Authorization': `Bearer ${AUTH.token}` } : {},
+    });
     const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not load track.');
     const ttlMs = (Number(data.expiresIn) || 600) * 1000;
     const item = {
       id: t.id, title: data.title, platform: 'freq', type: 'track',
@@ -10047,6 +10520,7 @@ function closeArtistProfileModal() {
 // "@username" — anything resolveArtistFromParam accepts server-side, since
 // this hits the exact same GET /api/artists/:id route.
 async function openArtistProfile(idOrSlug) {
+  if (guardFamilyFeature('artist_pages')) return;
   const key = (idOrSlug || '').trim();
   if (!key) return;
   $('artistProfileOverlay')?.classList.add('open');
@@ -10644,7 +11118,10 @@ async function playEntireRelease(releaseId) {
 // published track's URL was fetched once at enqueue time and never
 // refreshed, so playback failed ~10 minutes in with "no supported source".
 async function resolvePublishedTrack(trackId) {
-  const res = await fetch(`${TRACKS_BASE}/${encodeURIComponent(trackId)}/stream`);
+  await AUTH_READY;
+  const res = await fetch(`${TRACKS_BASE}/${encodeURIComponent(trackId)}/stream`, {
+    headers: AUTH.token ? { 'Authorization': `Bearer ${AUTH.token}` } : {},
+  });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Could not load track.');
   const ttlMs = (Number(data.expiresIn) || 600) * 1000;
@@ -10666,7 +11143,10 @@ async function resolvePublishedTrack(trackId) {
 // url/expiresAt, everything else on the queue item left untouched. Used both
 // by the lookahead refresh below and by playItem()'s just-in-time check.
 async function refreshPublishedTrackUrl(item) {
-  const res = await fetch(`${TRACKS_BASE}/${encodeURIComponent(item.freqTrackId)}/stream`);
+  await AUTH_READY;
+  const res = await fetch(`${TRACKS_BASE}/${encodeURIComponent(item.freqTrackId)}/stream`, {
+    headers: AUTH.token ? { 'Authorization': `Bearer ${AUTH.token}` } : {},
+  });
   const data = await res.json();
   if (!res.ok || !data.url) return false;
   item.blobUrl = data.url;
@@ -10776,6 +11256,7 @@ $('artistBannerUploadWrap')?.addEventListener('click', () => { if (viewedArtist?
 
 async function uploadArtistImage(file, kind) {
   if (!viewedArtist) return;
+  if (guardFamilyFeature('uploads')) return;
   const form = new FormData();
   form.append('token', AUTH.token);
   form.append('file', file);
@@ -11025,7 +11506,7 @@ function closePublishTrackModal() {
   resetPublishRatingSelector();
 }
 
-$('publishCoverPreviewWrap')?.addEventListener('click', () => $('publishCoverFileInput')?.click());
+$('publishCoverPreviewWrap')?.addEventListener('click', () => { if (!guardFamilyFeature('uploads')) $('publishCoverFileInput')?.click(); });
 $('publishCoverFileInput')?.addEventListener('change', async function() {
   const file = this.files?.[0]; this.value = '';
   if (!file || !viewedArtist || !publishingCloudFileId) return;
@@ -12256,6 +12737,7 @@ let _videoSeekDragging = false;
 function $videoEl() { return $('videoPlayerEl'); }
 
 async function openVideoPlayer(trackId, trackTitle, artistName, artistId) {
+  await AUTH_READY;
   _videoPlayerTrackId = trackId;
   _videoPlayerTitle = trackTitle || '';
   _videoWatchStartSent = false;
@@ -12271,7 +12753,7 @@ async function openVideoPlayer(trackId, trackTitle, artistName, artistId) {
   playSfx('click');
 
   try {
-    const params = new URLSearchParams(AUTH.loggedIn ? { token: AUTH.token } : {});
+    const params = new URLSearchParams(AUTH.token ? { token: AUTH.token } : {});
     const res = await fetch(`${TRACKS_BASE}/${encodeURIComponent(trackId)}/video-stream?${params}`);
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Could not load video.');
@@ -13181,7 +13663,7 @@ async function viewAdminTarget(targetType, targetId) {
       }
       case 'track': {
         // Open the artist page that owns this track
-        const res = await fetch(`/api/tracks/${encodeURIComponent(targetId)}/stream`);
+        const res = await fetch(`/api/tracks/${encodeURIComponent(targetId)}/stream`, { headers: authHeaders() });
         if (!res.ok) { showToast('Not found', 'Could not locate this track.', 'error'); return; }
         const data = await res.json();
         if (data.artistId) {
@@ -13499,6 +13981,7 @@ $('dashSettingsSaveBtn')?.addEventListener('click', async () => {
 // ─── Become an Artist ───────────────────────────────────────────────────────
 function openBecomeArtistModal() {
   if (!AUTH.loggedIn) { showToast('Sign in required', 'Please sign in to become an artist.', 'error'); return; }
+  if (guardFamilyFeature('artist_pages')) return;
   $('becomeArtistOverlay')?.classList.add('open');
   const input = $('becomeArtistNameInput');
   if (input) { input.value = AUTH.name || ''; }
@@ -14756,6 +15239,7 @@ function renderPostCard(post) {
 
 function closePostsFeed() { $('postsFeedOverlay')?.classList.remove('open'); }
 async function openPostsFeed() {
+  if (guardFamilyFeature('social_feed')) return;
   postsCursor = null;
   $('postsFeedOverlay')?.classList.add('open');
   const compose = $('postComposeBox');
@@ -15367,6 +15851,7 @@ async function serverPull() {
     AUTH.playlists = data.playlists || [];
     AUTH.premiumStatus = data.premiumStatus || null;
     AUTH.isPremium = !!data.isPremium;
+    setFamilyControls(data.familyControls);
     renderSavedPlaylists();
     const d = new Date(data.pulledAt);
     setSyncStatus(`✓ Pulled ${data.playlists.length} playlists · ${d.toLocaleTimeString()}`, 'var(--accent3)');
@@ -15379,6 +15864,7 @@ async function serverPull() {
 
 function handleTokenExpiry() {
   AUTH.loggedIn = false; AUTH.token = null; AUTH.username = ''; AUTH.name = ''; AUTH.playlists = []; AUTH.isPremium = false; AUTH.premiumStatus = null;
+  setFamilyControls(null);
   localStorage.removeItem('freq_token_v4');
   updateAuthUI();
   activitySseDisconnect();
@@ -15408,6 +15894,7 @@ async function authInit() {
     AUTH.birthdateRequired = !!(refData.birthdateRequired || data.birthdateRequired);
     AUTH.ageGroup = refData.ageGroup || data.ageGroup || null;
     AUTH.emailVerified = !!(refData.emailVerified || data.emailVerified);
+    setFamilyControls(data.familyControls || refData.familyControls);
     // Check admin status separately; premium is already reflected from pull.
     fetch('/api/admin/me', { headers: { 'Authorization': `Bearer ${AUTH.token}` } })
       .then(r => r.json()).then(d => { AUTH.isAdmin = !!d.isAdmin; AUTH.isPremium = AUTH.isPremium || !!d.isPremium; updateAuthUI(); }).catch(() => {});
@@ -15454,6 +15941,7 @@ $('signinSubmit').addEventListener('click', async () => {
     AUTH.birthdateRequired = !!data.birthdateRequired;
     AUTH.ageGroup = data.ageGroup || null;
     AUTH.emailVerified = !!data.emailVerified;
+    setFamilyControls(data.familyControls);
     localStorage.setItem('freq_token_v4', AUTH.token);
     fetch('/api/admin/me', { headers: { 'Authorization': `Bearer ${AUTH.token}` } })
       .then(r => r.json()).then(d => { AUTH.isAdmin = !!d.isAdmin; AUTH.isPremium = !!d.isPremium; updateAuthUI(); }).catch(() => {});
@@ -15539,6 +16027,7 @@ $('signupSubmit').addEventListener('click', async () => {
     AUTH.ageGroup  = data.ageGroup || null;
     AUTH.birthdateRequired = false;
     AUTH.emailVerified = !!data.emailVerified;
+    setFamilyControls(data.familyControls);
     AUTH.playlists = [];
     AUTH.isAdmin = false; // New accounts are never admins
     AUTH.isPremium = !!data.isPremium;
@@ -15754,6 +16243,7 @@ $('authVerifyEmailPill')?.addEventListener('click', async () => {
 // ─── Sign Out ─────────────────────────────────────────────────────────────────
 $('authLogoutBtn').addEventListener('click', () => {
   AUTH.loggedIn = false; AUTH.token = null; AUTH.username = ''; AUTH.name = ''; AUTH.playlists = []; AUTH.isAdmin = false; AUTH.isPremium = false; AUTH.premiumStatus = null; AUTH.ageGroup = null; AUTH.birthdateRequired = false; AUTH.emailVerified = false;
+  setFamilyControls(null);
   localStorage.removeItem('freq_token_v4');
   updateAuthUI();
   showToast('Signed out', '', 'info');
@@ -15783,6 +16273,7 @@ $('deleteAccountBtn').addEventListener('click', async () => {
     const res = await fetch(`${AUTH_BASE}/account`, { method:'DELETE', headers: authHeaders(), body: JSON.stringify({ token: AUTH.token }) });
     if (res.ok) {
       AUTH.loggedIn = false; AUTH.token = null; AUTH.username = ''; AUTH.name = ''; AUTH.playlists = []; AUTH.isPremium = false; AUTH.premiumStatus = null;
+      setFamilyControls(null);
       localStorage.removeItem('freq_token_v4');
       updateAuthUI();
       showToast('Account deleted', 'Your account has been removed.', 'info');
@@ -19284,7 +19775,7 @@ const _origClearBtnHandler = () => {
 };
 
 
-authInit();
+AUTH_READY = authInit();
 
 // ─── Keep-Alive + Auto-Refresh Engine ────────────────────────────────────────
 // Prevents Render free-tier from spinning down the server, and keeps the
@@ -19763,7 +20254,7 @@ async function loadContentFilterSettings() {
     $('settingAllowClean').checked = data.allowClean !== false;
     $('settingAllowPG').checked    = !!data.allowParentalGuidance;
     $('settingAllowAdult').checked = !!data.allowAdult;
-    contentFilterIsParentEnforced  = !!data.isParentEnforced;
+    contentFilterIsParentEnforced  = !!data.isParentEnforced || !!AUTH.familyControls?.isChildAccount;
     setContentFilterLockUi(contentFilterIsParentEnforced);
   } catch (err) {
     console.error('[content filters load]', err);
@@ -19782,6 +20273,11 @@ function setContentFilterLockUi(locked) {
 
 async function applyContentFilter(key, value) {
   if (!AUTH.token) return; // toggles are disabled visually too, but guard the network call regardless
+  if (AUTH.familyControls?.isChildAccount) {
+    setContentFilterLockUi(true);
+    showToast('Content', 'These settings are managed by a parent or guardian.', 'error');
+    return;
+  }
   const body = {
     token: AUTH.token,
     allowClean: $('settingAllowClean').checked,
@@ -20402,6 +20898,7 @@ async function renameCloudFile(id) {
 if ($('cloudUploadBtn')) {
   $('cloudUploadBtn').addEventListener('click', () => {
     if (!AUTH.loggedIn) { showToast('Sign in required','Please sign in to upload cloud files.','error'); return; }
+    if (guardFamilyFeature('uploads')) return;
     $('cloudFileInput').click();
   });
 }
@@ -21124,7 +21621,8 @@ document.addEventListener('keydown', e => {
 // cleans the URL back to "/" via replaceState so refreshing or sharing
 // again from inside the app doesn't re-trigger it or fight with in-app
 // navigation that was never built around real routing.
-(function handleSharedProfileLink() {
+(async function handleSharedProfileLink() {
+  await AUTH_READY;
   const path = window.location.pathname;
   let match;
   if ((match = path.match(/^\/u\/([^\/]+)\/?$/))) {
