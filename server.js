@@ -53,6 +53,8 @@
  * POST   /api/plays                            { originalUrl, platform?, title?, token? }
  * GET    /api/mp/wallet                        Authenticated Musi-Pixels balance
  * GET    /api/mp/ledger                        Authenticated immutable MP transaction ledger
+ * GET    /api/mp/shop                          Configurable Musi-Shop catalog + owned access
+ * POST   /api/mp/shop/purchase                 Atomic MP purchase + entitlement grant
  * GET    /api/mp/listen-to-earn/offers         Authenticated eligible discovery tracks
  * POST   /api/mp/listen-to-earn/heartbeat      Authenticated server-verified playback heartbeat
  * POST   /api/mp/listen-to-earn/stop           Ends an incomplete earning attempt
@@ -2195,6 +2197,86 @@ async function dbGetMpLedger(username, { limit = 30, before = null } = {}) {
     note: row.note,
     createdAt: row.created_at,
   }));
+}
+
+// ─── Musi-Shop · Phase 2 ─────────────────────────────────────────────────
+// Catalog prices and grant sizes live in musi_shop_items so they can be
+// tuned without deploying server/client code. Purchases reuse the Phase 1
+// wallet and immutable ledger; the database RPC is the only place a debit
+// and its entitlement grant can happen, keeping them in one transaction.
+async function dbGetMusiShopEnabled() {
+  const { data, error } = await supabase.from('app_config')
+    .select('value').eq('key', 'musi_shop.enabled').maybeSingle();
+  if (error) throw new Error(error.message);
+  return data ? data.value !== false : true;
+}
+
+async function dbGetMusiShopCatalog() {
+  const { data, error } = await supabase.from('musi_shop_items')
+    .select('sku, name, description, category, entitlement_type, price_mp, grant_quantity, grant_unit, icon, badge, sort_order, available_from, available_until, metadata')
+    .eq('active', true)
+    .order('sort_order', { ascending: true })
+    .order('sku', { ascending: true });
+  if (error) throw new Error(error.message);
+  const now = Date.now();
+  return (data || []).filter(row => {
+    const starts = row.available_from ? new Date(row.available_from).getTime() : null;
+    const ends = row.available_until ? new Date(row.available_until).getTime() : null;
+    return (!starts || starts <= now) && (!ends || ends > now);
+  }).map(row => ({
+    sku: row.sku,
+    name: row.name,
+    description: row.description || '',
+    category: row.category,
+    entitlementType: row.entitlement_type,
+    priceMp: Number(row.price_mp) || 0,
+    grantQuantity: Number(row.grant_quantity) || 0,
+    grantUnit: row.grant_unit,
+    icon: row.icon || '🟣',
+    badge: row.badge || null,
+    valueLabel: row.metadata?.value_label || null,
+    availableFrom: row.available_from || null,
+    availableUntil: row.available_until || null,
+  }));
+}
+
+async function dbGetMusiShopEntitlements(username, isPremium = false) {
+  const { data, error } = await supabase.from('musi_shop_entitlements')
+    .select('entitlement_type, remaining_uses, expires_at, updated_at')
+    .eq('username', username);
+  if (error) throw new Error(error.message);
+  const byType = new Map((data || []).map(row => [row.entitlement_type, row]));
+  const djRow = byType.get('dj_boom_messages');
+  const radioRow = byType.get('radio_access');
+  const radioPassExpiresAt = radioRow?.expires_at || null;
+  const radioPassActive = !!radioPassExpiresAt && new Date(radioPassExpiresAt).getTime() > Date.now();
+  const djBoomMessagesRemaining = Math.max(0, Number(djRow?.remaining_uses) || 0);
+  return {
+    premiumUnlimited: !!isPremium,
+    djBoomMessagesRemaining,
+    djBoomAccess: !!isPremium || djBoomMessagesRemaining > 0,
+    radioPassExpiresAt,
+    radioPassActive,
+    radioAccess: !!isPremium || radioPassActive,
+  };
+}
+
+async function dbPurchaseMusiShopItem(username, sku, idempotencyKey) {
+  const { data, error } = await supabase.rpc('purchase_musi_shop_item', {
+    p_username: username,
+    p_sku: sku,
+    p_idempotency_key: idempotencyKey,
+  });
+  if (error) throw new Error(error.message);
+  return data || { ok: false, reason: 'purchase_failed' };
+}
+
+async function dbConsumeDjBoomMessage(username) {
+  const { data, error } = await supabase.rpc('consume_dj_boom_message', {
+    p_username: username,
+  });
+  if (error) throw new Error(error.message);
+  return data || { ok: false, reason: 'dj_boom_pack_required' };
 }
 
 function mpRequestIdentity(req, username, clientDeviceId) {
@@ -4597,6 +4679,55 @@ async function requirePremium(req, res, next) {
   next();
 }
 
+// Phase 2 access layers sit beside requirePremium instead of weakening it:
+// Premium accounts remain unlimited, while a non-Premium account may enter
+// only the specific feature covered by an active Musi-Shop entitlement.
+// Labs and every other Premium route continue to use requirePremium exactly
+// as before.
+async function requireDjBoomAccess(req, res, next) {
+  const token = (req.headers.authorization || '').replace('Bearer ', '') || req.body?.token || req.query.token;
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Authentication required.' });
+  try {
+    const entitlements = await dbGetMusiShopEntitlements(sess.username, sess.isPremium);
+    if (!entitlements.djBoomAccess) {
+      return res.status(403).json({
+        error: 'DJ BOOM requires FREQ Premium or a DJ BOOM message pack.',
+        code: 'dj_boom_pack_required',
+        shopAvailable: true,
+      });
+    }
+    req._djBoomSession = sess;
+    req._djBoomEntitlements = entitlements;
+    next();
+  } catch (err) {
+    console.error('[djboom access]', err);
+    return res.status(500).json({ error: 'Could not verify DJ BOOM access.' });
+  }
+}
+
+async function requireRadioAccess(req, res, next) {
+  const token = (req.headers.authorization || '').replace('Bearer ', '') || req.body?.token || req.query.token;
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Authentication required.' });
+  try {
+    const entitlements = await dbGetMusiShopEntitlements(sess.username, sess.isPremium);
+    if (!entitlements.radioAccess) {
+      return res.status(403).json({
+        error: 'Real-Life Radio requires FREQ Premium or an active Radio Pass.',
+        code: 'radio_pass_required',
+        shopAvailable: true,
+      });
+    }
+    req._radioSession = sess;
+    req._radioEntitlements = entitlements;
+    next();
+  } catch (err) {
+    console.error('[radio access]', err);
+    return res.status(500).json({ error: 'Could not verify Radio access.' });
+  }
+}
+
 // Middleware: require an authenticated session whose account email has been
 // verified (Part 8). Same token-resolution/response shape as requirePremium
 // above so every gate in this app behaves identically from the client's
@@ -6357,11 +6488,10 @@ app.post('/api/account/birthdate', rateLimit, async (req, res) => {
   }
 });
 
-// ─── DJ BOOM (Premium AI assistant) ────────────────────────────────────────
-// Server-side only — the Gemini key never touches the client. Gated by
-// requirePremium so a non-Premium account gets a clean 403 with the same
-// upsell copy the frontend already shows when the panel is blurred, rather
-// than the request silently doing nothing.
+// ─── DJ BOOM (Premium or Musi-Shop message pack) ───────────────────────────
+// Server-side only — the Gemini key never touches the client. Premium stays
+// unlimited; requireDjBoomAccess also accepts a purchased message balance,
+// and one message is consumed only after Gemini produces a usable reply.
 //
 // v2: DJ BOOM is now grounded in the caller's actual FREQ session instead of
 // talking like a generic chatbot with no idea what's playing. The frontend
@@ -6546,7 +6676,7 @@ async function dbGetDjBoomPersona(username) {
 // unlike a follow/unfollow row write, so this deliberately throttles harder.
 const djBoomRateLimitHits = new Map();
 function djBoomRateLimit(req, res, next) {
-  const sess = req._premiumSession;
+  const sess = req._djBoomSession;
   const key = sess?.username || req.ip;
   const now = Date.now();
   const times = (djBoomRateLimitHits.get(key) || []).filter(t => now - t < 60_000);
@@ -6565,7 +6695,20 @@ setInterval(() => {
   }
 }, 300_000);
 
-app.post('/api/djboom/chat', requireFeatureAllowed('djboom'), requirePremium, djBoomRateLimit, async (req, res) => {
+async function finalizeDjBoomReplyAccess(req) {
+  if (req._djBoomSession?.isPremium) {
+    return { ok: true, premiumUnlimited: true, djBoomMessagesRemaining: null };
+  }
+  const consumed = await dbConsumeDjBoomMessage(req._djBoomSession?.username);
+  if (!consumed.ok) return consumed;
+  return {
+    ok: true,
+    premiumUnlimited: false,
+    djBoomMessagesRemaining: Math.max(0, Number(consumed.djBoomMessagesRemaining) || 0),
+  };
+}
+
+app.post('/api/djboom/chat', requireFeatureAllowed('djboom'), requireDjBoomAccess, djBoomRateLimit, async (req, res) => {
   if (!gemini) {
     console.error('[djboom] GEMINI_API_KEY not configured');
     return res.status(503).json({ error: 'DJ BOOM is temporarily unavailable.' });
@@ -6586,10 +6729,11 @@ app.post('/api/djboom/chat', requireFeatureAllowed('djboom'), requirePremium, dj
   }
 
   const contextBlock = buildDjBoomContextBlock(context);
-  // Experimental Labs hook: if this Premium user has 'dj-boom-personalities'
-  // enabled and has picked a persona, layer its overlay onto the base
-  // prompt. req._premiumSession is set by requirePremium above.
-  const personaKey = await dbGetDjBoomPersona(req._premiumSession?.username);
+  // Experimental Labs remains Premium-only. Message-pack access opens the
+  // core assistant but does not silently unlock Premium Labs personalities.
+  const personaKey = req._djBoomSession?.isPremium
+    ? await dbGetDjBoomPersona(req._djBoomSession.username)
+    : null;
   const personaOverlay = personaKey ? `\n\n${DJ_BOOM_PERSONALITIES[personaKey].prompt}` : '';
   const systemInstruction = `${DJ_BOOM_SYSTEM_PROMPT_BASE}${personaOverlay}\n\n${contextBlock}`;
 
@@ -6621,7 +6765,19 @@ app.post('/api/djboom/chat', requireFeatureAllowed('djboom'), requirePremium, dj
       // the whole request. No action in this path since there's no
       // structured data to trust.
       console.error('[djboom] Non-JSON response from Gemini:', raw.slice(0, 300));
-      return res.json({ reply: raw.trim() || "Sorry, I didn't catch that — can you try again?", action: null });
+      const access = await finalizeDjBoomReplyAccess(req);
+      if (!access.ok) {
+        return res.status(403).json({
+          error: 'Your DJ BOOM message pack is empty.',
+          code: 'dj_boom_pack_required',
+          shopAvailable: true,
+        });
+      }
+      return res.json({
+        reply: raw.trim() || "Sorry, I didn't catch that — can you try again?",
+        action: null,
+        access,
+      });
     }
 
     const reply = typeof parsed?.reply === 'string' && parsed.reply.trim()
@@ -6649,7 +6805,15 @@ app.post('/api/djboom/chat', requireFeatureAllowed('djboom'), requirePremium, dj
       action = { type: rawType, payload };
     }
 
-    return res.json({ reply, action });
+    const access = await finalizeDjBoomReplyAccess(req);
+    if (!access.ok) {
+      return res.status(403).json({
+        error: 'Your DJ BOOM message pack is empty.',
+        code: 'dj_boom_pack_required',
+        shopAvailable: true,
+      });
+    }
+    return res.json({ reply, action, access });
   } catch (err) {
     console.error('[djboom] Gemini API error:', err?.message || err);
     return res.status(502).json({ error: 'DJ BOOM is temporarily unavailable.' });
@@ -6940,19 +7104,16 @@ app.get('/api/premium/manage', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  REAL-LIFE RADIO (PTB) — Premium-only live internet radio
+//  REAL-LIFE RADIO (PTB) — Premium or active Radio Pass
 //  Backed by the free Radio Browser directory (lib/radio.js) — FREQ never
 //  stores the station catalog itself, only per-user favorites/recent-plays
 //  rows that reference a station by its Radio Browser stationuuid.
 //
 //  Every route that can hand back a playable stream URL (search, popular,
 //  favorites, recent, and the play/click endpoint) is gated by
-//  requirePremium — per the "do not rely only on frontend locking"
-//  requirement, a non-Premium session gets a 403 from the API itself, not
-//  just a blurred panel. countries/tags are metadata-only (no stream URLs)
-//  and are left open so the upgrade prompt can show real genre/country
-//  browse chips before someone subscribes, same "show it, don't hide it"
-//  spirit as the DJ BOOM lock card.
+//  requireRadioAccess — Premium remains unlimited; Phase 2 Radio Passes add
+//  time-limited access without changing the Premium subscription model.
+//  The API remains the authorization boundary, not the blurred client card.
 //
 //  Radio plays are DELIBERATELY never written to tracks/track_plays — see
 //  radio_recent_plays in the migration — so Real-Life Radio never counts
@@ -6965,7 +7126,7 @@ app.get('/api/premium/manage', async (req, res) => {
 // FREQ), not because it costs FREQ money the way an LLM call does.
 const radioRateLimitHits = new Map();
 function radioRateLimit(req, res, next) {
-  const sess = req._premiumSession;
+  const sess = req._radioSession || req._premiumSession;
   const key = sess?.username || req.ip;
   const now = Date.now();
   const times = (radioRateLimitHits.get(key) || []).filter(t => now - t < 60_000);
@@ -7002,7 +7163,7 @@ function shapeStationForClient(s) {
 }
 
 // GET /api/radio/search?token=&name=&tag=&country=&countryCode=&language=&limit=&offset=
-app.get('/api/radio/search', requireFeatureAllowed('radio'), requirePremium, radioRateLimit, async (req, res) => {
+app.get('/api/radio/search', requireFeatureAllowed('radio'), requireRadioAccess, radioRateLimit, async (req, res) => {
   try {
     const stations = await radio.searchStations({
       name: req.query.name,
@@ -7021,7 +7182,7 @@ app.get('/api/radio/search', requireFeatureAllowed('radio'), requirePremium, rad
 });
 
 // GET /api/radio/popular?token=&limit=
-app.get('/api/radio/popular', requireFeatureAllowed('radio'), requirePremium, radioRateLimit, async (req, res) => {
+app.get('/api/radio/popular', requireFeatureAllowed('radio'), requireRadioAccess, radioRateLimit, async (req, res) => {
   try {
     const stations = await radio.getPopularStations({ limit: req.query.limit });
     return res.json({ stations: stations.map(shapeStationForClient) });
@@ -7034,7 +7195,7 @@ app.get('/api/radio/popular', requireFeatureAllowed('radio'), requirePremium, ra
 // GET /api/radio/featured?token=&limit=  — top-voted stations, used for the
 // Radio Home "Featured" rail, kept distinct from Popular (clickcount) since
 // they're different signals (community votes vs. actual live listens).
-app.get('/api/radio/featured', requireFeatureAllowed('radio'), requirePremium, radioRateLimit, async (req, res) => {
+app.get('/api/radio/featured', requireFeatureAllowed('radio'), requireRadioAccess, radioRateLimit, async (req, res) => {
   try {
     const stations = await radio.getTopVotedStations({ limit: req.query.limit });
     return res.json({ stations: stations.map(shapeStationForClient) });
@@ -7046,7 +7207,7 @@ app.get('/api/radio/featured', requireFeatureAllowed('radio'), requirePremium, r
 
 // GET /api/radio/countries?limit=  — metadata only (names + counts), but still
 // part of the disabled Radio surface, so it shares the family + Premium gate.
-app.get('/api/radio/countries', requireFeatureAllowed('radio'), requirePremium, rateLimit, async (req, res) => {
+app.get('/api/radio/countries', requireFeatureAllowed('radio'), requireRadioAccess, rateLimit, async (req, res) => {
   try {
     const countries = await radio.getCountries({ limit: req.query.limit });
     return res.json({ countries });
@@ -7057,7 +7218,7 @@ app.get('/api/radio/countries', requireFeatureAllowed('radio'), requirePremium, 
 });
 
 // GET /api/radio/tags?limit=  — same family + Premium boundary as countries.
-app.get('/api/radio/tags', requireFeatureAllowed('radio'), requirePremium, rateLimit, async (req, res) => {
+app.get('/api/radio/tags', requireFeatureAllowed('radio'), requireRadioAccess, rateLimit, async (req, res) => {
   try {
     const tags = await radio.getTags({ limit: req.query.limit });
     return res.json({ tags });
@@ -7118,8 +7279,8 @@ app.get('/api/radio/spin-globe', requireFeatureAllowed('radio'), requirePremium,
 // from Radio Browser directly, and registers the click with Radio Browser
 // per their own usage guidance. This is the one route whose entire purpose
 // is handing back a playable URL, so it's the most important to keep
-// behind requirePremium regardless of what the frontend does.
-app.post('/api/radio/play', requireFeatureAllowed('radio'), requirePremium, radioRateLimit, async (req, res) => {
+// behind requireRadioAccess regardless of what the frontend does.
+app.post('/api/radio/play', requireFeatureAllowed('radio'), requireRadioAccess, radioRateLimit, async (req, res) => {
   const { stationUuid } = req.body || {};
   if (!stationUuid) return res.status(400).json({ error: 'stationUuid is required.' });
   try {
@@ -7138,12 +7299,12 @@ app.post('/api/radio/play', requireFeatureAllowed('radio'), requirePremium, radi
 // ─── Favorites ──────────────────────────────────────────────────────────
 
 // GET /api/radio/favorites?token=
-app.get('/api/radio/favorites', requireFeatureAllowed('radio'), requirePremium, radioRateLimit, async (req, res) => {
+app.get('/api/radio/favorites', requireFeatureAllowed('radio'), requireRadioAccess, radioRateLimit, async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('radio_favorites')
       .select('station_uuid, station_name, station_url, station_favicon, homepage_url, country, tags, codec, bitrate, created_at')
-      .eq('owner', req._premiumSession.username)
+      .eq('owner', req._radioSession.username)
       .order('created_at', { ascending: false });
     if (error) throw new Error(error.message);
     return res.json({
@@ -7174,7 +7335,7 @@ app.get('/api/radio/favorites', requireFeatureAllowed('radio'), requirePremium, 
 // that would make a second round-trip meaningful here. Premium-gated like
 // everything else radio, even though it doesn't hand back a stream URL
 // itself, since favoriting is part of the same Premium feature surface.
-app.post('/api/radio/favorites', requireFeatureAllowed('radio'), requirePremium, radioRateLimit, async (req, res) => {
+app.post('/api/radio/favorites', requireFeatureAllowed('radio'), requireRadioAccess, radioRateLimit, async (req, res) => {
   const { station } = req.body || {};
   const stationUuid = station?.stationUuid;
   const name = station?.name;
@@ -7184,7 +7345,7 @@ app.post('/api/radio/favorites', requireFeatureAllowed('radio'), requirePremium,
   }
   try {
     const row = {
-      owner: req._premiumSession.username,
+      owner: req._radioSession.username,
       station_uuid: String(stationUuid).slice(0, 200),
       station_name: String(name).slice(0, 300),
       station_url: String(streamUrl).slice(0, 1000),
@@ -7208,12 +7369,12 @@ app.post('/api/radio/favorites', requireFeatureAllowed('radio'), requirePremium,
 });
 
 // DELETE /api/radio/favorites/:stationId   { token }
-app.delete('/api/radio/favorites/:stationId', requireFeatureAllowed('radio'), requirePremium, radioRateLimit, async (req, res) => {
+app.delete('/api/radio/favorites/:stationId', requireFeatureAllowed('radio'), requireRadioAccess, radioRateLimit, async (req, res) => {
   try {
     const { error } = await supabase
       .from('radio_favorites')
       .delete()
-      .eq('owner', req._premiumSession.username)
+      .eq('owner', req._radioSession.username)
       .eq('station_uuid', req.params.stationId);
     if (error) throw new Error(error.message);
     return res.json({ favorited: false });
@@ -7233,13 +7394,13 @@ app.delete('/api/radio/favorites/:stationId', requireFeatureAllowed('radio'), re
 // helper on the query builder used elsewhere in this codebase — see
 // server-config.js — so this stays consistent with how every other route
 // here shapes results after a plain .select()).
-app.get('/api/radio/recent', requireFeatureAllowed('radio'), requirePremium, radioRateLimit, async (req, res) => {
+app.get('/api/radio/recent', requireFeatureAllowed('radio'), requireRadioAccess, radioRateLimit, async (req, res) => {
   const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 100);
   try {
     const { data, error } = await supabase
       .from('radio_recent_plays')
       .select('station_uuid, station_name, stream_url, homepage_url, favicon_url, country, tags, codec, bitrate, played_at')
-      .eq('owner', req._premiumSession.username)
+      .eq('owner', req._radioSession.username)
       .order('played_at', { ascending: false })
       .limit(limit * 3); // over-fetch a bit to have enough left after de-duping by station
     if (error) throw new Error(error.message);
@@ -7277,7 +7438,7 @@ app.get('/api/radio/recent', requireFeatureAllowed('radio'), requirePremium, rad
 // Logs one play event. Called by the frontend right after a station
 // actually starts playing (not on hover/search-result-render) — same
 // timing as /api/radio/play, and typically fired alongside it.
-app.post('/api/radio/recent', requireFeatureAllowed('radio'), requirePremium, radioRateLimit, async (req, res) => {
+app.post('/api/radio/recent', requireFeatureAllowed('radio'), requireRadioAccess, radioRateLimit, async (req, res) => {
   const { station } = req.body || {};
   const stationUuid = station?.stationUuid;
   const name = station?.name;
@@ -7287,7 +7448,7 @@ app.post('/api/radio/recent', requireFeatureAllowed('radio'), requirePremium, ra
   }
   try {
     const { error } = await supabase.from('radio_recent_plays').insert({
-      owner: req._premiumSession.username,
+      owner: req._radioSession.username,
       station_uuid: String(stationUuid).slice(0, 200),
       station_name: String(name).slice(0, 300),
       stream_url: String(streamUrl).slice(0, 1000),
@@ -8430,9 +8591,11 @@ app.post('/api/plays', rateLimit, async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  MUSI-PIXELS · PHASE 1
+//  MUSI-PIXELS · PHASE 1 + MUSI-SHOP · PHASE 2
 //  GET  /api/mp/wallet
 //  GET  /api/mp/ledger?limit=&before=
+//  GET  /api/mp/shop
+//  POST /api/mp/shop/purchase
 //  GET  /api/mp/listen-to-earn/offers?limit=
 //  POST /api/mp/listen-to-earn/heartbeat
 //  POST /api/mp/listen-to-earn/stop
@@ -8471,6 +8634,82 @@ app.get('/api/mp/ledger', rateLimit, async (req, res) => {
   } catch (err) {
     console.error('[mp ledger]', err);
     return res.status(500).json({ error: 'Could not load your Musi-Pixels ledger.' });
+  }
+});
+
+app.get('/api/mp/shop', rateLimit, async (req, res) => {
+  const token = (req.headers.authorization || '').replace('Bearer ', '') || req.query.token;
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Authentication required.' });
+  try {
+    const [enabled, catalog, wallet, entitlements] = await Promise.all([
+      dbGetMusiShopEnabled(),
+      dbGetMusiShopCatalog(),
+      dbGetMpWallet(sess.username),
+      dbGetMusiShopEntitlements(sess.username, sess.isPremium),
+    ]);
+    return res.json({
+      enabled,
+      currency: 'MP',
+      catalog: enabled ? catalog : [],
+      wallet,
+      entitlements,
+    });
+  } catch (err) {
+    console.error('[musi-shop catalog]', err);
+    return res.status(500).json({ error: 'Could not load the Musi-Shop.' });
+  }
+});
+
+app.post('/api/mp/shop/purchase', rateLimit, async (req, res) => {
+  const token = (req.headers.authorization || '').replace('Bearer ', '') || req.body?.token;
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Authentication required.' });
+  const sku = String(req.body?.sku || '').trim();
+  const idempotencyKey = String(req.body?.idempotencyKey || '').trim();
+  if (!/^[a-z0-9][a-z0-9_-]{2,79}$/.test(sku) || !UUID_RE.test(idempotencyKey)) {
+    return res.status(400).json({ error: 'Invalid Musi-Shop purchase request.' });
+  }
+
+  try {
+    const result = await dbPurchaseMusiShopItem(sess.username, sku, idempotencyKey);
+    if (!result.ok) {
+      const responses = {
+        shop_disabled: [503, 'The Musi-Shop is temporarily unavailable.'],
+        item_unavailable: [404, 'This shop item is no longer available.'],
+        insufficient_mp: [409, 'You do not have enough MP for this item.'],
+        included_with_premium: [409, 'This access is already included with FREQ Premium.'],
+        authentication_required: [401, 'Authentication required.'],
+        invalid_request: [400, 'Invalid Musi-Shop purchase request.'],
+      };
+      const [status, message] = responses[result.reason] || [409, 'This purchase could not be completed.'];
+      return res.status(status).json({
+        error: message,
+        reason: result.reason || 'purchase_failed',
+        balanceMp: Number(result.balanceMp) || 0,
+        priceMp: Number(result.priceMp) || null,
+      });
+    }
+
+    const [wallet, entitlements] = await Promise.all([
+      dbGetMpWallet(sess.username),
+      dbGetMusiShopEntitlements(sess.username, sess.isPremium),
+    ]);
+    return res.status(result.idempotent ? 200 : 201).json({
+      success: true,
+      idempotent: !!result.idempotent,
+      purchase: {
+        id: result.purchaseId,
+        sku: result.sku,
+        itemName: result.itemName,
+        priceMp: Number(result.priceMp) || 0,
+      },
+      wallet,
+      entitlements,
+    });
+  } catch (err) {
+    console.error('[musi-shop purchase]', err);
+    return res.status(500).json({ error: 'Could not complete this Musi-Shop purchase.' });
   }
 });
 
