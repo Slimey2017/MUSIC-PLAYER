@@ -108,6 +108,7 @@ const radio = require('./lib/radio');
 const EMAILJS_SERVICE_ID = process.env.EMAILJS_SERVICE_ID || 'service_gfpf5hf';
 const EMAILJS_TEMPLATE_ID_VERIFY = process.env.EMAILJS_TEMPLATE_ID_VERIFY || 'template_hy427sb';
 const EMAILJS_TEMPLATE_ID_STATUS = process.env.EMAILJS_TEMPLATE_ID_STATUS || process.env.EMAILJS_TEMPLATE_ID_VERIFY || 'template_hy427sb';
+const EMAILJS_TEMPLATE_ID_ACCOUNT = process.env.EMAILJS_TEMPLATE_ID_ACCOUNT || 'template_524i64l';
 const EMAILJS_PUBLIC_KEY = process.env.EMAILJS_PUBLIC_KEY || 'pYuzWgI7zierUF20O';
 const EMAILJS_PRIVATE_KEY = process.env.EMAILJS_PRIVATE_KEY || ''; // optional but recommended for server-side sends
 const EMAILJS_ENABLED = Boolean(EMAILJS_SERVICE_ID && EMAILJS_TEMPLATE_ID_VERIFY && EMAILJS_PUBLIC_KEY);
@@ -484,7 +485,6 @@ const captureRawBody = (req, _res, buf, encoding) => {
 };
 
 app.use(cors());
-app.get('/health', (_req, res) => res.json({ ok: true, service: 'freq' }));
 
 app.use(express.json({ limit: '35mb', verify: captureRawBody }));
 app.use(express.urlencoded({ extended: true, limit: '35mb', verify: captureRawBody }));
@@ -591,6 +591,20 @@ function normalizeUsername(username) {
   return (username || '').trim().toLowerCase().replace(/[^a-z0-9_]/g, '');
 }
 
+async function refreshAccountAgeGroup(account) {
+  if (!account?.birthdate) return account;
+  try {
+    const derived = computeAgeGroup(String(account.birthdate).slice(0, 10)).ageGroup;
+    if (derived === account.age_group) return account;
+    const { error } = await supabase.from('accounts').update({ age_group: derived }).eq('username', account.username);
+    if (error) throw new Error(error.message);
+    return { ...account, age_group: derived };
+  } catch (err) {
+    console.error('[db] refreshAccountAgeGroup:', err.message);
+    return account;
+  }
+}
+
 async function dbGetAccount(username) {
   // Always normalize through the single shared rule — see normalizeUsername
   // above for why this can't just be trim()+toLowerCase() anymore.
@@ -602,7 +616,7 @@ async function dbGetAccount(username) {
     .eq('username', key)
     .single();
   if (error && error.code !== 'PGRST116') console.error('[db] getAccount:', error.message);
-  return data || null;
+  return data ? await refreshAccountAgeGroup(data) : null;
 }
 
 // Normalizes an email the same way for every lookup/write: trimmed,
@@ -640,7 +654,7 @@ async function dbGetAccountByEmail(email) {
     .ilike('email', key)
     .maybeSingle();
   if (error && error.code !== 'PGRST116') console.error('[db] getAccountByEmail:', error.message);
-  return data || null;
+  return data ? await refreshAccountAgeGroup(data) : null;
 }
 
 async function dbGetPremiumSubscription(provider, providerPurchaseId) {
@@ -3193,6 +3207,13 @@ async function isTrackBlockedForRequest(req, track) {
   return await isTrackBlockedByRestrictions(track, restrictions);
 }
 
+async function isTrackVisibleForRequest(req, track) {
+  if (!track || !track.is_published) return false;
+  const allowedRatings = await getAllowedRatingsForRequest(req);
+  if (!allowedRatings.includes(track.content_rating || 'clean')) return false;
+  return !(await isTrackBlockedForRequest(req, track));
+}
+
 // Shared by isTrackBlockedForRequest and filterBlockedTracksForRequest so
 // the two never resolve "which restrictions apply to this request" two
 // different ways. Returns null for non-child requests / children with no
@@ -3202,17 +3223,34 @@ async function getFamilyRestrictionsForRequest(req) {
   const token = (req.headers.authorization || '').replace('Bearer ', '') || req.body?.token || req.query.token;
   const sess = token ? await dbGetSession(token) : null;
   if (!sess) return null;
-  return await dbGetFamilyRestrictions(sess.username);
+  return await dbGetEffectiveFamilyRestrictions(sess.username);
 }
 
 // Pure check against an already-resolved restrictions row — split out from
 // isTrackBlockedForRequest so the batch filter below can resolve
 // restrictions ONCE per request and reuse this per-row, rather than
 // re-fetching family_restrictions once per track in a list of 50.
-async function isTrackBlockedByRestrictions(track, restrictions, genreCache) {
+async function isTrackBlockedByRestrictions(track, restrictions, cache = null) {
   if (!restrictions) return false;
   if (Array.isArray(restrictions.blocked_track_ids) && restrictions.blocked_track_ids.includes(track.id)) return true;
   if (track.artist_id && Array.isArray(restrictions.blocked_artist_ids) && restrictions.blocked_artist_ids.includes(track.artist_id)) return true;
+
+  const genreCache = cache instanceof Map ? cache : cache?.genres;
+  const adultArtistCache = cache?.adultArtists;
+
+  if (restrictions.block_explicit_artists && track.artist_id) {
+    let hasAdultCatalog;
+    if (adultArtistCache?.has(track.artist_id)) {
+      hasAdultCatalog = adultArtistCache.get(track.artist_id);
+    } else {
+      const { data: adultTrack } = await supabase.from('tracks')
+        .select('id').eq('artist_id', track.artist_id).eq('is_published', true)
+        .eq('content_rating', 'adult').limit(1).maybeSingle();
+      hasAdultCatalog = !!adultTrack;
+      adultArtistCache?.set(track.artist_id, hasAdultCatalog);
+    }
+    if (hasAdultCatalog) return true;
+  }
 
   if (Array.isArray(restrictions.blocked_genres) && restrictions.blocked_genres.length && track.artist_id) {
     let genre;
@@ -3242,12 +3280,15 @@ async function filterBlockedTracksForRequest(req, rows) {
   if (!restrictions) return input;
 
   const hasAnyBlockList = (restrictions.blocked_track_ids?.length || restrictions.blocked_artist_ids?.length || restrictions.blocked_genres?.length);
-  if (!hasAnyBlockList) return input;
+  if (!hasAnyBlockList && !restrictions.block_explicit_artists) return input;
 
-  const genreCache = new Map(); // artist_id -> genre, reused across every row in this one request
+  const blockCache = {
+    genres: new Map(),       // artist_id -> genre
+    adultArtists: new Map(), // artist_id -> has any published adult track
+  };
   const kept = [];
   for (const row of input) {
-    const blocked = await isTrackBlockedByRestrictions(row, restrictions, genreCache);
+    const blocked = await isTrackBlockedByRestrictions(row, restrictions, blockCache);
     if (!blocked) kept.push(row);
   }
   return kept;
@@ -3268,18 +3309,24 @@ async function filterPlaylistTracksForRequest(req, rows) {
 
   const allowedRatings = await getAllowedRatingsForRequest(req);
   const { data, error } = await supabase.from('tracks')
-    .select('id, content_rating')
+    .select('id, artist_id, content_rating')
     .in('id', freqIds)
     .eq('is_published', true);
   if (error) throw new Error(error.message);
 
-  const ratingById = new Map((data || []).map(track => [track.id, track.content_rating || 'clean']));
+  const restrictions = await getFamilyRestrictionsForRequest(req);
+  const visibleIds = new Set();
   const allowed = new Set(allowedRatings);
+  const blockCache = { genres: new Map(), adultArtists: new Map() };
+  for (const track of data || []) {
+    if (!allowed.has(track.content_rating || 'clean')) continue;
+    if (await isTrackBlockedByRestrictions(track, restrictions, blockCache)) continue;
+    visibleIds.add(track.id);
+  }
   return input.filter(row => {
     const track = row?.track_data;
     if (track?.platform !== 'freq' || !uuidRe.test(track.id || '')) return true;
-    const rating = ratingById.get(track.id);
-    return rating ? allowed.has(rating) : false;
+    return visibleIds.has(track.id);
   });
 }
 
@@ -3326,12 +3373,33 @@ async function dbIsActiveChildMember(username) {
 // disabling features after removal from a family.
 async function dbGetEffectiveFamilyRestrictions(username) {
   if (!username) return null;
-  const [isChildMember, restrictions] = await Promise.all([
+  const [isChildMember, restrictions, account] = await Promise.all([
     dbIsActiveChildMember(username),
     dbGetFamilyRestrictions(username),
+    dbGetAccount(username),
   ]);
-  return isChildMember ? restrictions : null;
+  if (isChildMember) return restrictions || { ...UNMANAGED_CHILD_DEFAULT_RESTRICTIONS, username };
+  // A child account is safe from its first sign-in, even before a parent
+  // redeems/approves a family invitation. This closes the old window where
+  // an under-13 account had no family_restrictions row and therefore
+  // inherited the adult "allow everything" playback defaults.
+  if (account?.age_group === 'child') return { ...UNMANAGED_CHILD_DEFAULT_RESTRICTIONS, username };
+  return null;
 }
+
+const UNMANAGED_CHILD_DEFAULT_RESTRICTIONS = Object.freeze({
+  max_content_rating: 'clean',
+  blocked_artist_ids: [], blocked_track_ids: [], blocked_genres: [],
+  block_explicit_artists: true,
+  disable_radio: true, disable_djboom: true, disable_discover: false,
+  disable_social_feed: true, disable_following: false,
+  disable_uploads: true, disable_artist_pages: true,
+  disable_labs: true, disable_premium_purchases: true,
+  daily_listening_limit_minutes: null,
+  bedtime_start: null, bedtime_end: null,
+  allowed_hours_start: null, allowed_hours_end: null,
+  timezone: 'UTC',
+});
 
 function playbackSettingsForMaximumRating(rawMaximum) {
   const maximum = ['clean', 'parental_guidance', 'adult'].includes(rawMaximum)
@@ -3379,7 +3447,8 @@ async function requireNotChild(req, res, next) {
   // age_group is derived from the immutable birthdate and is the primary
   // age gate. Active family membership is also honored so a parent can keep
   // supervising a teen account without inventing a second account type.
-  const isChild = sess.ageGroup === 'child' || await dbIsActiveChildMember(sess.username);
+  const membership = await dbGetFamilyMembership(sess.username);
+  const isChild = sess.ageGroup === 'child' || membership?.role === 'child';
   if (isChild) {
     return res.status(403).json({ error: 'This action is managed by a parent or guardian and can\'t be done from a child account.', childAccountRestricted: true });
   }
@@ -3400,6 +3469,7 @@ async function requireNotChild(req, res, next) {
 // disable_ prefix stripped off (e.g. 'radio' checks disable_radio).
 const FAMILY_FEATURE_COLUMNS = {
   radio: 'disable_radio',
+  djboom: 'disable_djboom',
   discover: 'disable_discover',
   social_feed: 'disable_social_feed',
   following: 'disable_following',
@@ -3425,6 +3495,16 @@ function requireFeatureAllowed(featureKey, { allowAnonymous = false } = {}) {
     if (restrictions && restrictions[column]) {
       return res.status(403).json({
         error: 'This feature has been disabled by a parent or guardian on this account.',
+        childAccountRestricted: true,
+        feature: featureKey,
+      });
+    }
+    // Live internet radio has no reliable per-song FREQ content_rating.
+    // Treat it as unrated/adult for managed accounts instead of pretending
+    // a station directory can guarantee Clean or PG programming.
+    if (featureKey === 'radio' && restrictions && restrictions.max_content_rating !== 'adult') {
+      return res.status(403).json({
+        error: 'Live radio is unavailable under the current maximum content rating because live broadcasts are unrated.',
         childAccountRestricted: true,
         feature: featureKey,
       });
@@ -3467,20 +3547,19 @@ async function isFeatureDisabledForUsername(username, featureKey) {
 // parent identity, invite data, blocked-item lists, or other private rows.
 async function dbGetFamilyGateSummary(username) {
   if (!username) return { isChildAccount: false, parentManaged: false, maxContentRating: null, disabledFeatures: {} };
-  const [isChildMember, rawRestrictions, account] = await Promise.all([
+  const [isChildMember, account] = await Promise.all([
     dbIsActiveChildMember(username),
-    dbGetFamilyRestrictions(username),
     dbGetAccount(username),
   ]);
-  const restrictions = isChildMember ? rawRestrictions : null;
   const isChildAccount = isChildMember || account?.age_group === 'child';
+  const restrictions = isChildAccount ? await dbGetEffectiveFamilyRestrictions(username) : null;
   const disabledFeatures = {};
   for (const [feature, column] of Object.entries(FAMILY_FEATURE_COLUMNS)) {
     disabledFeatures[feature] = !!restrictions?.[column];
   }
   return {
     isChildAccount,
-    parentManaged: !!restrictions,
+    parentManaged: isChildMember,
     maxContentRating: restrictions?.max_content_rating || null,
     disabledFeatures,
   };
@@ -3518,7 +3597,7 @@ async function dbGetFamilyByParent(parentUsername) {
 }
 
 async function dbGetFamilyMembership(username) {
-  const { data, error } = await supabase.from('family_members').select('*').eq('username', username).eq('status', 'active').maybeSingle();
+  const { data, error } = await supabase.from('family_members').select('*').eq('username', username).in('status', ['pending', 'active']).maybeSingle();
   if (error) { console.error('[db] getFamilyMembership:', error.message); return null; }
   return data || null;
 }
@@ -3626,29 +3705,26 @@ app.post('/api/family/join', rateLimit, async (req, res) => {
       return res.status(400).json({ error: "You can't join a family using your own invite code." });
     }
 
-    const { error: memberErr } = await supabase.from('family_members').insert({
-      family_id: invite.family_id, username: sess.username, role: 'child', status: 'active',
+    // Joining submits a request; it does not silently create an active
+    // parent/child relationship. The parent must approve it from Family
+    // Controls. The migration's redeem_family_invite() function performs
+    // the invite lock + membership insert + invite redemption atomically,
+    // preventing two accounts from racing the same single-use code.
+    const { data: joinedFamilyId, error: redeemErr } = await supabase.rpc('redeem_family_invite', {
+      p_invite_code: inviteCode,
+      p_username: sess.username,
     });
-    if (memberErr) throw new Error(memberErr.message);
+    if (redeemErr) throw new Error(redeemErr.message);
 
-    const { error: redeemErr } = await supabase.from('family_invites').update({
-      status: 'redeemed', redeemed_by: sess.username, redeemed_at: new Date().toISOString(),
-    }).eq('id', invite.id);
-    if (redeemErr) console.error('[family/join] invite redeem update failed (non-fatal):', redeemErr.message);
+    // Age-derived child defaults already keep the account Clean-only while
+    // approval is pending; this makes the playback row explicit as well.
+    if (sess.ageGroup === 'child') await syncChildPlaybackFilters(sess.username, 'clean');
 
-    // Seed a default family_restrictions row immediately — the schema's
-    // column defaults are already the sensible "locked down" starting point
-    // (max_content_rating='clean', uploads/labs/premium_purchases disabled
-    // by default per the column defaults) so a child is never mid-join with
-    // NO restrictions row and therefore no enforcement in effect.
-    const { error: restrErr } = await supabase.from('family_restrictions').insert({
-      username: sess.username, family_id: invite.family_id, updated_by: invite.created_by,
+    return res.status(202).json({
+      joined: false,
+      pendingApproval: true,
+      familyId: Array.isArray(joinedFamilyId) ? joinedFamilyId[0] : joinedFamilyId,
     });
-    if (restrErr) throw new Error(restrErr.message);
-
-    await syncChildPlaybackFilters(sess.username, 'clean');
-
-    return res.status(201).json({ joined: true, familyId: invite.family_id });
   } catch (err) {
     console.error('[family/join]', err);
     return res.status(500).json({ error: 'Could not join family.' });
@@ -3667,43 +3743,122 @@ app.get('/api/family', requireNotChild, async (req, res) => {
     if (!family) return res.json({ family: null, children: [] });
 
     const { data: members, error: membersErr } = await supabase
-      .from('family_members').select('*').eq('family_id', family.id).eq('status', 'active').neq('username', sess.username);
+      .from('family_members').select('*').eq('family_id', family.id)
+      .in('status', ['pending', 'active']).neq('username', sess.username);
     if (membersErr) throw new Error(membersErr.message);
 
     const childUsernames = (members || []).map(m => m.username);
-    const [restrictionsRows, listeningRows, accountsRows] = await Promise.all([
+    const [restrictionsRows, accountsRows] = await Promise.all([
       childUsernames.length
         ? supabase.from('family_restrictions').select('*').in('username', childUsernames).then(r => r.data || [])
-        : [],
-      childUsernames.length
-        ? supabase.from('family_listening_time').select('*').in('username', childUsernames).eq('listen_date', new Date().toISOString().slice(0, 10)).then(r => r.data || [])
         : [],
       childUsernames.length
         ? Promise.all(childUsernames.map(u => dbGetAccount(u)))
         : [],
     ]);
     const restrictionsByUser = new Map(restrictionsRows.map(r => [r.username, r]));
-    const listeningByUser = new Map(listeningRows.map(r => [r.username, r]));
     const accountByUser = new Map(accountsRows.filter(Boolean).map(a => [a.username, a]));
+
+    const activeMembers = (members || []).filter(m => m.status === 'active');
+    const relevantDates = [...new Set(activeMembers.map(m =>
+      dateKeyInTimeZone(new Date(), restrictionsByUser.get(m.username)?.timezone || 'UTC')
+    ))];
+    const { data: listeningRows } = activeMembers.length
+      ? await supabase.from('family_listening_time').select('*')
+          .in('username', activeMembers.map(m => m.username)).in('listen_date', relevantDates)
+      : { data: [] };
+    const listeningByUser = new Map((listeningRows || []).map(r => [`${r.username}:${r.listen_date}`, r]));
 
     const children = (members || []).map(m => {
       const acct = accountByUser.get(m.username);
       const restrictions = restrictionsByUser.get(m.username) || null;
-      const listening = listeningByUser.get(m.username) || null;
+      const listenDate = dateKeyInTimeZone(new Date(), restrictions?.timezone || 'UTC');
+      const listening = listeningByUser.get(`${m.username}:${listenDate}`) || null;
       return {
         username: m.username,
         displayName: acct?.display_name || m.username,
         ageGroup: acct?.age_group || null,
         joinedAt: m.joined_at,
+        status: m.status,
         restrictions,
         listeningMinutesToday: listening ? Math.round(listening.seconds_listened / 60) : 0,
       };
     });
 
-    return res.json({ family, children });
+    return res.json({
+      family,
+      children: children.filter(c => c.status === 'active'),
+      pendingChildren: children.filter(c => c.status === 'pending'),
+    });
   } catch (err) {
     console.error('[family get]', err);
     return res.status(500).json({ error: 'Could not load family.' });
+  }
+});
+
+// Parent approval is a separate, explicit step after a child redeems an
+// invite code. This prevents possession of a code alone from immediately
+// establishing the parent relationship.
+app.post('/api/family/child/:username/approve', requireNotChild, async (req, res) => {
+  const sess = req._session;
+  const childUsername = normalizeUsername(req.params.username);
+  try {
+    const family = await dbGetFamilyByParent(sess.username);
+    if (!family) return res.status(404).json({ error: 'You do not have a family.' });
+    const { data: membership, error: memberErr } = await supabase.from('family_members')
+      .select('*').eq('family_id', family.id).eq('username', childUsername)
+      .eq('role', 'child').eq('status', 'pending').maybeSingle();
+    if (memberErr) throw new Error(memberErr.message);
+    if (!membership) return res.status(404).json({ error: 'No pending child request was found.' });
+
+    const { error: activateErr } = await supabase.from('family_members').update({
+      status: 'active', approved_at: new Date().toISOString(), approved_by: sess.username,
+    }).eq('id', membership.id).eq('status', 'pending');
+    if (activateErr) throw new Error(activateErr.message);
+
+    const { error: restrictionErr } = await supabase.from('family_restrictions').upsert({
+      username: childUsername,
+      family_id: family.id,
+      max_content_rating: 'clean',
+      block_explicit_artists: true,
+      disable_radio: true,
+      disable_djboom: true,
+      disable_uploads: true,
+      disable_artist_pages: true,
+      disable_labs: true,
+      disable_premium_purchases: true,
+      timezone: 'UTC',
+      updated_by: sess.username,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'username' });
+    if (restrictionErr) throw new Error(restrictionErr.message);
+    await syncChildPlaybackFilters(childUsername, 'clean');
+    return res.json({ approved: true, username: childUsername });
+  } catch (err) {
+    console.error('[family child approve]', err);
+    return res.status(500).json({ error: 'Could not approve this child.' });
+  }
+});
+
+app.post('/api/family/child/:username/reject', requireNotChild, async (req, res) => {
+  const sess = req._session;
+  const childUsername = normalizeUsername(req.params.username);
+  try {
+    const family = await dbGetFamilyByParent(sess.username);
+    if (!family) return res.status(404).json({ error: 'You do not have a family.' });
+    const { data: membership, error: memberErr } = await supabase.from('family_members')
+      .select('id').eq('family_id', family.id).eq('username', childUsername)
+      .eq('role', 'child').eq('status', 'pending').maybeSingle();
+    if (memberErr) throw new Error(memberErr.message);
+    if (!membership) return res.status(404).json({ error: 'No pending child request was found.' });
+    const { error } = await supabase.from('family_members').update({
+      status: 'rejected', removed_at: new Date().toISOString(),
+    }).eq('id', membership.id);
+    if (error) throw new Error(error.message);
+    return res.json({ rejected: true, username: childUsername });
+  } catch (err) {
+    console.error('[family child reject]', err);
+    return res.status(500).json({ error: 'Could not reject this request.' });
   }
 });
 
@@ -3712,11 +3867,35 @@ app.get('/api/family', requireNotChild, async (req, res) => {
 // must never come from client input.
 const FAMILY_RESTRICTION_EDITABLE_FIELDS = [
   'max_content_rating', 'blocked_artist_ids', 'blocked_genres', 'blocked_track_ids',
-  'disable_radio', 'disable_discover', 'disable_social_feed', 'disable_following',
+  'block_explicit_artists',
+  'disable_radio', 'disable_djboom', 'disable_discover', 'disable_social_feed', 'disable_following',
   'disable_uploads', 'disable_artist_pages', 'disable_labs', 'disable_premium_purchases',
   'daily_listening_limit_minutes', 'bedtime_start', 'bedtime_end',
-  'allowed_hours_start', 'allowed_hours_end',
+  'allowed_hours_start', 'allowed_hours_end', 'timezone',
 ];
+
+function sanitizeFamilyIdList(value, fieldName) {
+  if (!Array.isArray(value)) throw new Error(`${fieldName} must be an array.`);
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  const ids = [...new Set(value.map(v => String(v || '').trim()).filter(Boolean))];
+  if (ids.length > 200 || ids.some(id => !uuid.test(id))) {
+    throw new Error(`${fieldName} must contain at most 200 valid IDs.`);
+  }
+  return ids;
+}
+
+function sanitizeFamilyGenreList(value) {
+  if (!Array.isArray(value)) throw new Error('blocked_genres must be an array.');
+  const genres = [...new Set(value.map(v => String(v || '').trim().slice(0, 60)).filter(Boolean))];
+  if (genres.length > 100) throw new Error('blocked_genres must contain at most 100 genres.');
+  return genres;
+}
+
+function isValidIanaTimeZone(value) {
+  if (typeof value !== 'string' || !value.trim() || value.length > 80) return false;
+  try { new Intl.DateTimeFormat('en-US', { timeZone: value.trim() }).format(); return true; }
+  catch (_) { return false; }
+}
 
 // PATCH /api/family/child/:username/restrictions — the route
 // dbGetPlaybackFilterSettings's own doc comment already pointed to. Parent-
@@ -3740,6 +3919,47 @@ app.patch('/api/family/child/:username/restrictions', requireNotChild, async (re
     }
     if (patch.max_content_rating && !['clean', 'parental_guidance', 'adult'].includes(patch.max_content_rating)) {
       return res.status(400).json({ error: 'Invalid max_content_rating.' });
+    }
+    try {
+      if (Object.prototype.hasOwnProperty.call(patch, 'blocked_artist_ids')) {
+        patch.blocked_artist_ids = sanitizeFamilyIdList(patch.blocked_artist_ids, 'blocked_artist_ids');
+      }
+      if (Object.prototype.hasOwnProperty.call(patch, 'blocked_track_ids')) {
+        patch.blocked_track_ids = sanitizeFamilyIdList(patch.blocked_track_ids, 'blocked_track_ids');
+      }
+      if (Object.prototype.hasOwnProperty.call(patch, 'blocked_genres')) {
+        patch.blocked_genres = sanitizeFamilyGenreList(patch.blocked_genres);
+      }
+    } catch (validationErr) {
+      return res.status(400).json({ error: validationErr.message });
+    }
+    const booleanFields = FAMILY_RESTRICTION_EDITABLE_FIELDS.filter(f => f.startsWith('disable_') || f === 'block_explicit_artists');
+    for (const field of booleanFields) {
+      if (Object.prototype.hasOwnProperty.call(patch, field) && typeof patch[field] !== 'boolean') {
+        return res.status(400).json({ error: `${field} must be true or false.` });
+      }
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, 'daily_listening_limit_minutes')) {
+      if (patch.daily_listening_limit_minutes === null || patch.daily_listening_limit_minutes === '') {
+        patch.daily_listening_limit_minutes = null;
+      } else {
+        const minutes = Number(patch.daily_listening_limit_minutes);
+        if (!Number.isInteger(minutes) || minutes < 1 || minutes > 1440) {
+          return res.status(400).json({ error: 'daily_listening_limit_minutes must be between 1 and 1440.' });
+        }
+        patch.daily_listening_limit_minutes = minutes;
+      }
+    }
+    for (const field of ['bedtime_start', 'bedtime_end', 'allowed_hours_start', 'allowed_hours_end']) {
+      if (!Object.prototype.hasOwnProperty.call(patch, field)) continue;
+      if (patch[field] === '' || patch[field] === null) patch[field] = null;
+      else if (!/^([01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/.test(String(patch[field]))) {
+        return res.status(400).json({ error: `${field} must be a valid 24-hour time.` });
+      }
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, 'timezone')) {
+      if (!isValidIanaTimeZone(patch.timezone)) return res.status(400).json({ error: 'timezone must be a valid IANA time zone.' });
+      patch.timezone = patch.timezone.trim();
     }
     if (Object.keys(patch).length === 0) return res.status(400).json({ error: 'No valid fields to update.' });
 
@@ -3823,9 +4043,8 @@ app.get('/api/family/child/:username/history', requireNotChild, async (req, res)
 
 // GET /api/family/child/:username/screen-time?days=
 // Parent-facing "Screen Time" from the spec — daily listening minutes for
-// the trailing N days from family_listening_time (written by
-// POST /api/family/listening-heartbeat), zero-filled for any day with no
-// heartbeats at all so the dashboard can render a complete N-bar chart
+// the trailing N days from family_listening_time (reserved when playback
+// access is granted), zero-filled for any day with no listening time
 // rather than one with silent gaps.
 app.get('/api/family/child/:username/screen-time', requireNotChild, async (req, res) => {
   const sess = req._session;
@@ -3840,8 +4059,10 @@ app.get('/api/family/child/:username/screen-time', requireNotChild, async (req, 
     if (memErr) throw new Error(memErr.message);
     if (!membership) return res.status(404).json({ error: 'No child with that username in your family.' });
 
-    const since = new Date();
-    since.setDate(since.getDate() - (days - 1));
+    const childRestrictions = await dbGetFamilyRestrictions(childUsername);
+    const childToday = dateKeyInTimeZone(new Date(), childRestrictions?.timezone || 'UTC');
+    const since = new Date(`${childToday}T12:00:00Z`);
+    since.setUTCDate(since.getUTCDate() - (days - 1));
     const sinceStr = since.toISOString().slice(0, 10);
 
     const { data, error } = await supabase
@@ -3853,8 +4074,8 @@ app.get('/api/family/child/:username/screen-time', requireNotChild, async (req, 
     const byDate = new Map((data || []).map(r => [r.listen_date, r.seconds_listened]));
     const daysOut = [];
     for (let i = days - 1; i >= 0; i--) {
-      const d = new Date();
-      d.setDate(d.getDate() - i);
+      const d = new Date(`${childToday}T12:00:00Z`);
+      d.setUTCDate(d.getUTCDate() - i);
       const dateStr = d.toISOString().slice(0, 10);
       daysOut.push({ date: dateStr, minutes: Math.round((byDate.get(dateStr) || 0) / 60) });
     }
@@ -3899,8 +4120,8 @@ app.post('/api/family/child/:username/remove', requireNotChild, async (req, res)
 });
 
 // GET /api/family/child/:username/devices — parent-facing device list, the
-// read half of the DELETE below. Rows are populated by
-// POST /api/family/listening-heartbeat's device upsert (see that route) —
+// read half of the DELETE below. Rows are populated by the listening
+// heartbeat's device upsert —
 // so a device only appears here once it's actually sent at least one
 // heartbeat, which in practice means "played some audio while logged in,"
 // a reasonable bar for "this is a real device in use."
@@ -3950,8 +4171,17 @@ app.delete('/api/family/child/:username/devices/:deviceId', requireNotChild, asy
     if (devErr) throw new Error(devErr.message);
     if (!device) return res.status(404).json({ error: 'Device not found.' });
 
-    if (device.session_token) {
-      await supabase.from('sessions').delete().eq('token', device.session_token);
+    if (device.session_token_hash) {
+      // Device rows retain only a one-way hash of the session token. Resolve
+      // the matching child session in memory, then delete the real token
+      // from sessions without ever returning or storing it in the device UI.
+      const { data: childSessions, error: sessionErr } = await supabase.from('sessions')
+        .select('token').eq('username', childUsername);
+      if (sessionErr) throw new Error(sessionErr.message);
+      const matching = (childSessions || []).find(row =>
+        crypto.createHash('sha256').update(String(row.token || '')).digest('hex') === device.session_token_hash
+      );
+      if (matching?.token) await supabase.from('sessions').delete().eq('token', matching.token);
     }
     const { error } = await supabase.from('family_child_devices').delete().eq('id', device.id);
     if (error) throw new Error(error.message);
@@ -3995,6 +4225,35 @@ app.post('/api/family/child/:username/signout', requireNotChild, async (req, res
 // should be allowed to continue. Pure function of (restrictions,
 // secondsToday, now) so it's cheap to call on every heartbeat without
 // re-deriving anything from the DB beyond what the caller already fetched.
+function zonedClockParts(now, timeZone) {
+  const zone = isValidIanaTimeZone(timeZone) ? timeZone : 'UTC';
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+  }).formatToParts(now).reduce((acc, part) => {
+    if (part.type !== 'literal') acc[part.type] = part.value;
+    return acc;
+  }, {});
+  return {
+    dateKey: `${parts.year}-${parts.month}-${parts.day}`,
+    time: `${parts.hour}:${parts.minute}:${parts.second}`,
+    timeZone: zone,
+  };
+}
+
+function dateKeyInTimeZone(now, timeZone) {
+  return zonedClockParts(now, timeZone).dateKey;
+}
+
+function timeFallsWithinWindow(nowStr, start, end) {
+  if (!start || !end) return false;
+  const normalizedStart = String(start).padEnd(8, ':00').slice(0, 8);
+  const normalizedEnd = String(end).padEnd(8, ':00').slice(0, 8);
+  return normalizedStart <= normalizedEnd
+    ? (nowStr >= normalizedStart && nowStr < normalizedEnd)
+    : (nowStr >= normalizedStart || nowStr < normalizedEnd);
+}
+
 function evaluateListeningAllowed(restrictions, secondsListenedToday, now) {
   if (!restrictions) return { allowed: true };
 
@@ -4011,56 +4270,87 @@ function evaluateListeningAllowed(restrictions, secondsListenedToday, now) {
   // case for this feature, so the "start > end" branch below is expected,
   // not an edge case — a same-day window (e.g. 13:00 -> 14:00 "quiet hour")
   // still works via the simpler branch.
+  const clock = zonedClockParts(now, restrictions.timezone || 'UTC');
   if (restrictions.bedtime_start && restrictions.bedtime_end) {
-    const nowStr = now.toTimeString().slice(0, 8); // HH:MM:SS, matches TIME column format
-    const start = restrictions.bedtime_start;
-    const end = restrictions.bedtime_end;
-    const inWindow = start <= end
-      ? (nowStr >= start && nowStr < end)
-      : (nowStr >= start || nowStr < end); // wraps midnight
-    if (inWindow) {
+    if (timeFallsWithinWindow(clock.time, restrictions.bedtime_start, restrictions.bedtime_end)) {
       return { allowed: false, reason: 'bedtime', message: 'This account is in its bedtime hours right now.' };
     }
   }
 
-  return { allowed: true };
+  if (restrictions.allowed_hours_start && restrictions.allowed_hours_end &&
+      !timeFallsWithinWindow(clock.time, restrictions.allowed_hours_start, restrictions.allowed_hours_end)) {
+    return { allowed: false, reason: 'outside_allowed_hours', message: 'Listening is not available during these hours.' };
+  }
+
+  return {
+    allowed: true,
+    secondsListenedToday,
+    remainingSeconds: restrictions.daily_listening_limit_minutes
+      ? Math.max(0, (restrictions.daily_listening_limit_minutes * 60) - secondsListenedToday)
+      : null,
+  };
+}
+
+async function getListeningAllowanceForRequest(req, { reserveSeconds = 0 } = {}) {
+  const token = (req.headers.authorization || '').replace('Bearer ', '') || req.body?.token || req.query.token;
+  const sess = token ? await dbGetSession(token) : null;
+  if (!sess) return { allowed: true, sess: null, restrictions: null };
+  const restrictions = await dbGetEffectiveFamilyRestrictions(sess.username);
+  if (!restrictions) return { allowed: true, sess, restrictions: null };
+  const now = new Date();
+  const listenDate = dateKeyInTimeZone(now, restrictions.timezone || 'UTC');
+  const { data: usage, error } = await supabase.from('family_listening_time')
+    .select('seconds_listened').eq('username', sess.username).eq('listen_date', listenDate).maybeSingle();
+  if (error) throw new Error(error.message);
+  const usedSeconds = usage?.seconds_listened || 0;
+  const evaluation = evaluateListeningAllowed(restrictions, usedSeconds, now);
+  if (!evaluation.allowed || reserveSeconds <= 0) return { ...evaluation, sess, restrictions };
+
+  // A restricted playback URL is a short server-authorized lease. Reserve
+  // its time atomically before minting the URL so disabling the client-side
+  // heartbeat cannot bypass daily limits or screen-time accounting.
+  const requested = Math.max(1, Math.min(Math.floor(reserveSeconds), 60));
+  const leasedSeconds = evaluation.remainingSeconds == null
+    ? requested
+    : Math.min(requested, Math.floor(evaluation.remainingSeconds));
+  if (leasedSeconds <= 0) {
+    return { allowed: false, reason: 'daily_limit', message: "Today's listening time limit has been reached.", sess, restrictions };
+  }
+  const { data: newTotal, error: reserveErr } = await supabase.rpc('reserve_family_listening_seconds', {
+    p_username: sess.username,
+    p_listen_date: listenDate,
+    p_seconds: leasedSeconds,
+  });
+  if (reserveErr) throw new Error(reserveErr.message);
+  return {
+    ...evaluation,
+    secondsListenedToday: Number(newTotal) || (usedSeconds + leasedSeconds),
+    streamLeaseSeconds: leasedSeconds,
+    sess,
+    restrictions,
+  };
 }
 
 // POST /api/family/listening-heartbeat  { elapsedSeconds, deviceLabel? }
 // Called periodically by the frontend player WHILE a child account has
 // audio actively playing (not on every /api/plays call — this is about
 // wall-clock listening time for Part 6's daily limit, not play-count).
-// elapsedSeconds is the time since the caller's OWN last heartbeat
-// (client-tracked), capped server-side so a paused tab that fires one huge
-// catch-up heartbeat can't blow past the limit in a single call.
-const HEARTBEAT_MAX_ELAPSED_SECONDS = 120; // generous cap over the ~30s interval the frontend actually uses
+// Listening seconds are reserved server-side when a short-lived media URL
+// is issued. This heartbeat is advisory: it refreshes device presence and
+// tells the player to stop if a schedule/limit changed mid-session.
 app.post('/api/family/listening-heartbeat', rateLimit, async (req, res) => {
   const token = (req.headers.authorization || '').replace('Bearer ', '') || req.body?.token;
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Authentication required.' });
 
   try {
-    const isChild = await dbIsActiveChildMember(sess.username);
-    if (!isChild) return res.json({ allowed: true }); // no-op for non-child accounts — nothing to track or enforce
-
-    const restrictions = await dbGetFamilyRestrictions(sess.username);
+    const restrictions = await dbGetEffectiveFamilyRestrictions(sess.username);
+    if (!restrictions) return res.json({ allowed: true });
     const now = new Date();
-    const today = now.toISOString().slice(0, 10);
-
-    const rawElapsed = Number(req.body?.elapsedSeconds);
-    const elapsed = Number.isFinite(rawElapsed) ? Math.max(0, Math.min(rawElapsed, HEARTBEAT_MAX_ELAPSED_SECONDS)) : 0;
-
-    // Read-modify-write rather than a single atomic upsert-with-increment:
-    // this table has no RPC helper (unlike track_plays' increment_track_play_count),
-    // and heartbeat volume per child is low enough (~1 every 30s of active
-    // playback) that the race window this leaves is negligible in practice.
+    const today = dateKeyInTimeZone(now, restrictions?.timezone || 'UTC');
     const { data: existing } = await supabase
       .from('family_listening_time').select('seconds_listened').eq('username', sess.username).eq('listen_date', today).maybeSingle();
-    const newTotal = (existing?.seconds_listened || 0) + elapsed;
-    const { error: upsertErr } = await supabase.from('family_listening_time').upsert({
-      username: sess.username, listen_date: today, seconds_listened: newTotal, updated_at: now.toISOString(),
-    }, { onConflict: 'username,listen_date' });
-    if (upsertErr) throw new Error(upsertErr.message);
+    const newTotal = existing?.seconds_listened || 0;
 
     // Best-effort device tracking (Part 4's "Remove Device" needs rows to
     // remove) — upserted here since a heartbeat is a reliable "this device
@@ -4068,8 +4358,11 @@ app.post('/api/family/listening-heartbeat', rateLimit, async (req, res) => {
     // a device connected once, not that it's still being used).
     const deviceLabel = typeof req.body?.deviceLabel === 'string' ? req.body.deviceLabel.slice(0, 120) : null;
     supabase.from('family_child_devices').upsert({
-      username: sess.username, session_token: token, device_label: deviceLabel, last_seen_at: now.toISOString(),
-    }, { onConflict: 'session_token' }).then(() => {}).catch(devErr => {
+      username: sess.username,
+      session_token_hash: crypto.createHash('sha256').update(token).digest('hex'),
+      device_label: deviceLabel,
+      last_seen_at: now.toISOString(),
+    }, { onConflict: 'session_token_hash' }).then(() => {}).catch(devErr => {
       console.error('[family heartbeat] device upsert failed (non-fatal):', devErr?.message || devErr);
     });
 
@@ -5362,8 +5655,8 @@ app.post('/api/auth/signup', rateLimit, async (req, res) => {
   const key = normalizeUsername(username);
   if (!key || key.length < 2)
     return res.status(400).json({ error: 'Username must be 2+ alphanumeric chars or underscores.' });
-  if (password.length < 4)
-    return res.status(400).json({ error: 'Password must be at least 4 characters.' });
+  if (password.length < 8)
+    return res.status(400).json({ error: 'Password must be at least 8 characters.' });
 
   // Email is required going forward — it's the one identifier a Premium
   // provider (Gumroad, etc.) can actually confirm, and username alone has
@@ -5432,6 +5725,9 @@ app.post('/api/auth/signup', rateLimit, async (req, res) => {
       throw new Error('Could not finish creating your account. Please try again.');
     }
     await dbSetPlaylists(key, []);
+    if (birthdateResult.ageGroup === 'child') {
+      await syncChildPlaybackFilters(key, 'clean');
+    }
 
     // Seed premium_email from the account's login email so a brand-new
     // signup already has an email on file for provider lookups (Gumroad
@@ -5454,21 +5750,19 @@ app.post('/api/auth/signup', rateLimit, async (req, res) => {
     const expiresAt = Date.now() + TOKEN_TTL;
     await dbCreateSession(token, key, expiresAt);
 
-    // Part 8: every new account needs to verify its email. Generate the
-    // link now (same mechanism POST /api/account/verify-email/start uses)
-    // and hand it back so the frontend can trigger emailjs.send() itself —
-    // right after signup is a real browser/user-gesture context, exactly
-    // like submitVerificationClaim() does for artist verification. Not
-    // fatal if this fails — the account still exists and can request a
-    // fresh link from the verify-email banner.
-    let verifyEmailLink = null;
+    // Part 8: generate and send the verification link entirely server-side.
+    // The raw token never reaches the browser or application logs.
+    const acct = await dbGetAccount(key);
+    let verificationEmailSent = false;
+    let verifyExpiresInHours = null;
     try {
-      verifyEmailLink = await issueAccountVerificationLink(req, key);
+      const sent = await issueAndSendAccountVerification(req, acct);
+      verificationEmailSent = true;
+      verifyExpiresInHours = sent.expiresInHours;
     } catch (linkErr) {
-      console.error('[signup] could not issue verification link (non-fatal):', linkErr?.message || linkErr);
+      console.error('[signup] could not send verification email (non-fatal):', linkErr?.message || linkErr);
     }
 
-    const acct = await dbGetAccount(key);
     return res.status(201).json({
       token,
       username: key,
@@ -5483,11 +5777,14 @@ app.post('/api/auth/signup', rateLimit, async (req, res) => {
       familyControls: {
         isChildAccount: birthdateResult.ageGroup === 'child',
         parentManaged: false,
-        maxContentRating: null,
-        disabledFeatures: {},
+        maxContentRating: birthdateResult.ageGroup === 'child' ? 'clean' : null,
+        disabledFeatures: birthdateResult.ageGroup === 'child' ? {
+          radio: true, djboom: true, social_feed: true, uploads: true,
+          artist_pages: true, labs: true, premium_purchases: true,
+        } : {},
       },
-      verifyUrl: verifyEmailLink?.verifyUrl || null,
-      verifyExpiresInHours: verifyEmailLink?.expiresInHours || null,
+      verificationEmailSent,
+      verifyExpiresInHours,
     });
   } catch (err) {
     console.error('[signup]', err);
@@ -5578,11 +5875,8 @@ app.post('/api/auth/signin', rateLimit, async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 //  ACCOUNT EMAIL VERIFICATION (Part 8)
 // ═══════════════════════════════════════════════════════════════════════════
-// Same pattern as artist verification (see /api/verification/start and
-// confirmVerificationEmail above): server generates + hashes + stores a
-// token, hands back the raw verifyUrl, and the FRONTEND sends the actual
-// email via emailjs.send() in a real browser context — EmailJS's API blocks
-// server-side/non-browser sends by default. Kept as its own small module
+// Server generates, hashes, stores, and emails the token. The browser never
+// receives a raw verification link or token. Kept as its own small module
 // rather than merged into the artist-verification code above because it's
 // keyed by accounts.username, not a request row, and gates a different set
 // of actions (upload/comment/publish/artist-page-creation/premium-purchase/
@@ -5600,9 +5894,8 @@ function hashAccountVerificationToken(token) {
 }
 
 // Generates a fresh token, stores its hash + expiry on the account, and
-// returns the raw verifyUrl for the caller to hand to the frontend for
-// emailjs.send(). Used by both signup (auto-triggered) and the explicit
-// resend route below, so the two never drift out of sync.
+// returns the raw verifyUrl only to the server-side email sender. Used by
+// signup and resend so the two flows never drift out of sync.
 async function issueAccountVerificationLink(req, username) {
   const rawToken = generateAccountVerificationToken();
   const { error } = await supabase.from('accounts').update({
@@ -5614,6 +5907,25 @@ async function issueAccountVerificationLink(req, username) {
     verifyUrl: `${req.protocol}://${req.get('host')}/verify-account-email?username=${encodeURIComponent(username)}&token=${rawToken}`,
     expiresInHours: ACCOUNT_EMAIL_TOKEN_TTL_HOURS,
   };
+}
+
+async function issueAndSendAccountVerification(req, account) {
+  if (!account?.username || !account?.email) throw new Error('Account email is required.');
+  const link = await issueAccountVerificationLink(req, account.username);
+  await sendEmailJs({
+    templateId: EMAILJS_TEMPLATE_ID_ACCOUNT,
+    templateParams: {
+      email: account.email,
+      displayName: account.display_name || account.username,
+      verifyUrl: link.verifyUrl,
+      expiresInHours: String(link.expiresInHours),
+    },
+  });
+  // The raw token/link intentionally dies inside this server-side call. It
+  // is never logged and never returned to the browser, so proving control
+  // of the email inbox is a real requirement rather than a client honor
+  // system.
+  return { expiresInHours: link.expiresInHours };
 }
 
 // Shared by POST /api/account/verify-email/confirm (programmatic) and
@@ -5663,14 +5975,13 @@ app.post('/api/account/verify-email/start', rateLimit, async (req, res) => {
     if (!acct.email) return res.status(400).json({ error: 'Add an email to your account before verifying it.' });
     if (acct.email_verified_at) return res.json({ alreadyVerified: true, email: acct.email });
 
-    const { verifyUrl, expiresInHours } = await issueAccountVerificationLink(req, acct.username);
-    console.log(`[account verification link generated] ${acct.username} <${acct.email}> (${expiresInHours}h): ${verifyUrl}`);
+    const { expiresInHours } = await issueAndSendAccountVerification(req, acct);
 
     return res.json({
       email: acct.email,
       displayName: acct.display_name,
-      verifyUrl,
       expiresInHours,
+      sent: true,
     });
   } catch (err) {
     console.error('[account/verify-email/start]', err);
@@ -5694,14 +6005,13 @@ app.post('/api/account/verify-email/resend', rateLimit, async (req, res) => {
     if (!acct.email) return res.status(400).json({ error: 'Add an email to your account before verifying it.' });
     if (acct.email_verified_at) return res.json({ alreadyVerified: true, email: acct.email });
 
-    const { verifyUrl, expiresInHours } = await issueAccountVerificationLink(req, acct.username);
-    console.log(`[account verification link regenerated] ${acct.username} <${acct.email}>: ${verifyUrl}`);
+    const { expiresInHours } = await issueAndSendAccountVerification(req, acct);
 
     return res.json({
       email: acct.email,
       displayName: acct.display_name,
-      verifyUrl,
       expiresInHours,
+      sent: true,
     });
   } catch (err) {
     console.error('[account/verify-email/resend]', err);
@@ -6060,7 +6370,7 @@ setInterval(() => {
   }
 }, 300_000);
 
-app.post('/api/djboom/chat', requirePremium, djBoomRateLimit, async (req, res) => {
+app.post('/api/djboom/chat', requireFeatureAllowed('djboom'), requirePremium, djBoomRateLimit, async (req, res) => {
   if (!gemini) {
     console.error('[djboom] GEMINI_API_KEY not configured');
     return res.status(503).json({ error: 'DJ BOOM is temporarily unavailable.' });
@@ -8139,8 +8449,29 @@ async function filterBlockedArtistsForRequest(req, rows) {
   if (!restrictions) return input;
   const blockedIds = new Set(restrictions.blocked_artist_ids || []);
   const blockedGenres = new Set(restrictions.blocked_genres || []);
-  if (!blockedIds.size && !blockedGenres.size) return input;
-  return input.filter(a => !blockedIds.has(a.id) && !(a.genre && blockedGenres.has(a.genre)));
+  if (!blockedIds.size && !blockedGenres.size && !restrictions.block_explicit_artists) return input;
+
+  const adultArtistIds = new Set();
+  if (restrictions.block_explicit_artists) {
+    const artistIds = input.map(a => a.id).filter(Boolean);
+    if (artistIds.length) {
+      const { data, error } = await supabase.from('tracks')
+        .select('artist_id').in('artist_id', artistIds).eq('is_published', true).eq('content_rating', 'adult');
+      if (error) throw new Error(error.message);
+      for (const row of data || []) if (row.artist_id) adultArtistIds.add(row.artist_id);
+    }
+  }
+  return input.filter(a =>
+    !blockedIds.has(a.id) &&
+    !(a.genre && blockedGenres.has(a.genre)) &&
+    !adultArtistIds.has(a.id)
+  );
+}
+
+async function isArtistBlockedForRequest(req, artist) {
+  if (!artist) return false;
+  const visible = await filterBlockedArtistsForRequest(req, [artist]);
+  return visible.length === 0;
 }
 
 app.get('/api/discover/artists', async (req, res) => {
@@ -10012,14 +10343,26 @@ app.get('/api/tracks/:trackId/video-stream', rateLimit, async (req, res) => {
       });
     }
 
+    const listeningAllowance = await getListeningAllowanceForRequest(req, { reserveSeconds: 60 });
+    if (!listeningAllowance.allowed) {
+      return res.status(403).json({
+        error: listeningAllowance.message || 'Listening is unavailable right now.',
+        listeningRestricted: true,
+        reason: listeningAllowance.reason || null,
+      });
+    }
+
     const trackVideo = await dbGetTrackVideo(track.id);
     if (!trackVideo || !trackVideo.video_files) return res.status(404).json({ error: 'This track has no video.' });
     const videoFile = trackVideo.video_files;
     if (videoFile.upload_status !== 'ready') return res.status(404).json({ error: 'This track has no video.' });
 
+    const streamTtlSeconds = listeningAllowance.restrictions
+      ? Math.min(SIGNED_URL_TTL_SECONDS, listeningAllowance.streamLeaseSeconds || 60)
+      : SIGNED_URL_TTL_SECONDS;
     const { data, error } = await supabase.storage
       .from(VIDEO_BUCKET)
-      .createSignedUrl(videoFile.storage_path, SIGNED_URL_TTL_SECONDS);
+      .createSignedUrl(videoFile.storage_path, streamTtlSeconds);
     if (error) throw new Error(error.message);
 
     // likedByMe mirrors GET /api/discover/tracks' same token-optional
@@ -10041,7 +10384,7 @@ app.get('/api/tracks/:trackId/video-stream', rateLimit, async (req, res) => {
       artistId: track.artist_id, artistName: track.artist_name,
       thumbnailUrl: trackVideo.thumbnail_url, mimeType: videoFile.mime_type,
       duration: videoFile.duration, width: videoFile.width, height: videoFile.height,
-      url: data.signedUrl, expiresIn: SIGNED_URL_TTL_SECONDS,
+      url: data.signedUrl, expiresIn: streamTtlSeconds,
       playCount: trackVideo.play_count, likeCount: track.like_count || 0, likedByMe,
     });
   } catch (err) {
@@ -10131,6 +10474,7 @@ app.get('/api/artists/:id/videos', requireFeatureAllowed('artist_pages', { allow
   try {
     const artist = await resolveArtistFromParam(req.params.id);
     if (!artist) return res.status(404).json({ error: 'Artist not found.' });
+    if (await isArtistBlockedForRequest(req, artist)) return res.json({ videos: [] });
     const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 50);
     const allowedRatings = await getAllowedRatingsForRequest(req);
 
@@ -10144,8 +10488,9 @@ app.get('/api/artists/:id/videos', requireFeatureAllowed('artist_pages', { allow
       .limit(limit);
     if (error) throw new Error(error.message);
 
+    const visibleTracks = await filterBlockedTracksForRequest(req, (data || []).map(t => ({ ...t, artist_id: artist.id })));
     return res.json({
-      videos: (data || []).map(t => {
+      videos: visibleTracks.map(t => {
         const tv = Array.isArray(t.track_videos) ? t.track_videos[0] : t.track_videos;
         return {
           trackId: t.id, title: t.title, isExplicit: !!t.is_explicit,
@@ -10575,9 +10920,19 @@ app.get('/api/activity/feed', requireFeatureAllowed('social_feed'), async (req, 
   const limit  = Math.min(Math.max(Number(req.query.limit) || 30, 1), 100);
 
   try {
-    const events = scope === 'global'
+    const rawEvents = scope === 'global'
       ? await dbGetGlobalFeed({ limit, before })
       : await dbGetFollowingFeed(sess.username, { limit, before });
+
+    const eventRefs = rawEvents.map(e => ({
+      id: e.id,
+      track_id: e.meta?.trackId || null,
+      artist_id: e.meta?.artistId || null,
+      release_id: e.meta?.releaseId || null,
+    }));
+    const visibleRefs = await filterRestrictedPostsForRequest(req, eventRefs);
+    const visibleIds = new Set(visibleRefs.map(e => e.id));
+    const events = rawEvents.filter(e => visibleIds.has(e.id));
 
     return res.json({
       events: events.map(e => ({
@@ -10588,7 +10943,7 @@ app.get('/api/activity/feed', requireFeatureAllowed('social_feed'), async (req, 
         payload: e.meta, // DB column is `meta`; API field stays `payload` for an unchanged public contract
         createdAt: e.created_at,
       })),
-      nextCursor: events.length === limit ? events[events.length - 1].created_at : null,
+      nextCursor: rawEvents.length === limit ? rawEvents[rawEvents.length - 1].created_at : null,
     });
   } catch (err) {
     console.error('[activity feed]', err);
@@ -10629,10 +10984,10 @@ function ensureActivityRealtimeChannel() {
           // Fan out to: the target_user (if set) + the actor's followers (approximated by
           // broadcasting to everyone and letting the client filter by scope).
           // Simpler and correct: broadcast to all connected SSE clients with the new event.
-          const msg = `data: ${JSON.stringify({
-            id: row.id, type: row.event_type, actor: row.actor,
-            targetUser: row.target_user, payload: row.meta, createdAt: row.created_at,
-          })}\n\n`;
+          // Do not fan catalog metadata directly to every connected child;
+          // their authenticated feed refetch applies rating/artist/genre/
+          // track restrictions before returning any event details.
+          const msg = `data: ${JSON.stringify({ refresh: true })}\n\n`;
           for (const clients of activitySseClients.values()) {
             for (const res of clients) {
               try { res.write(msg); } catch (_) {}
@@ -10825,6 +11180,48 @@ function formatPost(p, myUsername = null) {
   };
 }
 
+// Hide posts that point at content the requester is not allowed to discover.
+// Text-only posts remain visible; a restricted track/artist/release post is
+// removed entirely so the social feed cannot act as a metadata side channel.
+async function filterRestrictedPostsForRequest(req, rows) {
+  const input = Array.isArray(rows) ? rows : [];
+  if (!input.length) return input;
+  const hiddenPostIds = new Set();
+  const allowedRatings = new Set(await getAllowedRatingsForRequest(req));
+
+  const trackIds = [...new Set(input.map(p => p.track_id).filter(Boolean))];
+  if (trackIds.length) {
+    const { data, error } = await supabase.from('tracks')
+      .select('id, artist_id, content_rating').in('id', trackIds).eq('is_published', true);
+    if (error) throw new Error(error.message);
+    const visibleTracks = await filterBlockedTracksForRequest(req, (data || []).filter(t => allowedRatings.has(t.content_rating || 'clean')));
+    const visibleIds = new Set(visibleTracks.map(t => t.id));
+    for (const post of input) if (post.track_id && !visibleIds.has(post.track_id)) hiddenPostIds.add(post.id);
+  }
+
+  const artistIds = [...new Set(input.map(p => p.artist_id).filter(Boolean))];
+  if (artistIds.length) {
+    const { data, error } = await supabase.from('artists').select('*').in('id', artistIds);
+    if (error) throw new Error(error.message);
+    const visibleArtists = await filterBlockedArtistsForRequest(req, data || []);
+    const visibleIds = new Set(visibleArtists.map(a => a.id));
+    for (const post of input) if (post.artist_id && !visibleIds.has(post.artist_id)) hiddenPostIds.add(post.id);
+  }
+
+  const releaseIds = [...new Set(input.map(p => p.release_id).filter(Boolean))];
+  if (releaseIds.length) {
+    const { data, error } = await supabase.from('artist_releases')
+      .select('id, artist_id, content_rating').in('id', releaseIds);
+    if (error) throw new Error(error.message);
+    const visibleIds = new Set((data || [])
+      .filter(r => allowedRatings.has(r.content_rating || 'clean'))
+      .map(r => r.id));
+    for (const post of input) if (post.release_id && !visibleIds.has(post.release_id)) hiddenPostIds.add(post.id);
+  }
+
+  return input.filter(post => !hiddenPostIds.has(post.id));
+}
+
 // ── Routes ───────────────────────────────────────────────────────────────────
 
 app.post('/api/posts', rateLimit, requireFeatureAllowed('social_feed'), async (req, res) => {
@@ -10920,7 +11317,8 @@ app.get('/api/posts', requireFeatureAllowed('social_feed', { allowAnonymous: tru
   const token  = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
   const sess   = token ? await dbGetSession(token) : null;
   try {
-    const posts = await dbGetPostsFeed({ before, limit });
+    const rawPosts = await dbGetPostsFeed({ before, limit });
+    const posts = await filterRestrictedPostsForRequest(req, rawPosts);
     // Batch-fetch liked status
     let likedIds = new Set();
     if (sess && posts.length) {
@@ -10931,7 +11329,7 @@ app.get('/api/posts', requireFeatureAllowed('social_feed', { allowAnonymous: tru
     }
     return res.json({
       posts: posts.map(p => ({ ...formatPost(p, sess?.username), likedByMe: likedIds.has(p.id) })),
-      hasMore: posts.length === limit,
+      hasMore: rawPosts.length === limit,
     });
   } catch (err) {
     console.error('[posts feed]', err);
@@ -10946,7 +11344,8 @@ app.get('/api/posts/user/:username', requireFeatureAllowed('social_feed', { allo
   const token    = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
   const sess     = token ? await dbGetSession(token) : null;
   try {
-    const posts = await dbGetPostsFeed({ before, limit, username });
+    const rawPosts = await dbGetPostsFeed({ before, limit, username });
+    const posts = await filterRestrictedPostsForRequest(req, rawPosts);
     let likedIds = new Set();
     if (sess && posts.length) {
       const ids = posts.map(p => p.id);
@@ -10956,7 +11355,7 @@ app.get('/api/posts/user/:username', requireFeatureAllowed('social_feed', { allo
     }
     return res.json({
       posts: posts.map(p => ({ ...formatPost(p, sess?.username), likedByMe: likedIds.has(p.id) })),
-      hasMore: posts.length === limit,
+      hasMore: rawPosts.length === limit,
     });
   } catch (err) {
     console.error('[posts user]', err);
@@ -10972,7 +11371,9 @@ app.get('/api/posts/artist/:id', requireFeatureAllowed('social_feed', { allowAno
   try {
     const artist = await resolveArtistFromParam(req.params.id);
     if (!artist) return res.status(404).json({ error: 'Artist not found.' });
-    const posts = await dbGetPostsFeed({ before, limit, artistId: artist.id, artistVoiceOnly: true });
+    if (await isArtistBlockedForRequest(req, artist)) return res.json({ posts: [], hasMore: false });
+    const rawPosts = await dbGetPostsFeed({ before, limit, artistId: artist.id, artistVoiceOnly: true });
+    const posts = await filterRestrictedPostsForRequest(req, rawPosts);
     let likedIds = new Set();
     if (sess && posts.length) {
       const ids = posts.map(p => p.id);
@@ -10982,7 +11383,7 @@ app.get('/api/posts/artist/:id', requireFeatureAllowed('social_feed', { allowAno
     }
     return res.json({
       posts: posts.map(p => ({ ...formatPost(p, sess?.username), likedByMe: likedIds.has(p.id) })),
-      hasMore: posts.length === limit,
+      hasMore: rawPosts.length === limit,
     });
   } catch (err) {
     console.error('[posts artist]', err);
@@ -10995,6 +11396,8 @@ app.get('/api/posts/:id', requireFeatureAllowed('social_feed', { allowAnonymous:
   try {
     const post = await dbGetPost(req.params.id);
     if (!post) return res.status(404).json({ error: 'Post not found.' });
+    const visiblePosts = await filterRestrictedPostsForRequest(req, [post]);
+    if (!visiblePosts.length) return res.status(404).json({ error: 'Post not found.' });
     let likedByMe = false;
     if (sess) {
       const { data } = await supabase.from('post_likes')
@@ -11154,10 +11557,7 @@ app.delete('/api/posts/:id/comments/:cid', rateLimit, async (req, res) => {
 });
 
 // Also expose artist follower count recompute as admin util (GET returns current counts)
-app.post('/api/admin/recount-artist-followers', rateLimit, async (req, res) => {
-  const { token } = req.body || {};
-  const sess = await dbGetSession(token);
-  if (!sess) return res.status(401).json({ error: 'Not authorized.' });
+app.post('/api/admin/recount-artist-followers', rateLimit, requireAdmin, async (req, res) => {
   try {
     const { data: artists } = await supabase.from('artists').select('id');
     let updated = 0;
@@ -11181,7 +11581,8 @@ app.get('/api/artists', requireFeatureAllowed('artist_pages', { allowAnonymous: 
   const offset = Math.max(Number(req.query.offset) || 0, 0);
   const search = (req.query.search || '').trim().slice(0, 100) || null;
   try {
-    const artists = await dbListArtists({ sort, limit, offset, search });
+    const rawArtists = await dbListArtists({ sort, limit, offset, search });
+    const artists = await filterBlockedArtistsForRequest(req, rawArtists);
     return res.json({
       artists: artists.map(a => ({
         id: a.id, slug: a.slug, name: a.name, avatarUrl: a.avatar_url, bannerUrl: a.banner_url,
@@ -11198,6 +11599,7 @@ app.get('/api/artists/:id', requireFeatureAllowed('artist_pages', { allowAnonymo
   try {
     const artist = await resolveArtistFromParam(req.params.id);
     if (!artist) return res.status(404).json({ error: 'Artist not found.' });
+    if (await isArtistBlockedForRequest(req, artist)) return res.status(404).json({ error: 'Artist not found.' });
 
     const token = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
     const sess  = token ? await dbGetSession(token) : null;
@@ -11244,10 +11646,12 @@ app.get('/api/artists/:id/tracks', requireFeatureAllowed('artist_pages', { allow
   try {
     const artist = await resolveArtistFromParam(req.params.id);
     if (!artist) return res.status(404).json({ error: 'Artist not found.' });
+    if (await isArtistBlockedForRequest(req, artist)) return res.json({ tracks: [] });
     const sort  = req.query.sort === 'trending' ? 'trending' : 'plays';
     const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 50);
     const allowedRatings = await getAllowedRatingsForRequest(req);
-    const tracks = await dbGetArtistTracks(artist.id, { sort, limit, allowedRatings });
+    const rawTracks = await dbGetArtistTracks(artist.id, { sort, limit, allowedRatings });
+    const tracks = await filterBlockedTracksForRequest(req, rawTracks);
     const collabsByTrack = await dbGetCollaboratorsForTracks(tracks.map(t => t.id));
     // Batched video-attached check, same shape as the search badge above —
     // backs the 🎬 badge on artist pages without an N+1 per track row.
@@ -11375,14 +11779,7 @@ app.get('/api/artists/:id/releases', requireFeatureAllowed('artist_pages', { all
   try {
     const artist = await resolveArtistFromParam(req.params.id);
     if (!artist) return res.status(404).json({ error: 'Artist not found.' });
-    // Part 6: if this artist is individually blocked, their whole release
-    // list is off-limits — checked before the owner/visibility logic below
-    // since even the artist's OWN account viewing their page as a listener
-    // (unusual, but possible) shouldn't bypass a parent's block.
-    const restrictionsForArtist = await getFamilyRestrictionsForRequest(req);
-    if (restrictionsForArtist?.blocked_artist_ids?.includes(artist.id)) {
-      return res.json({ releases: [] });
-    }
+    if (await isArtistBlockedForRequest(req, artist)) return res.json({ releases: [] });
     // Owner can see private/unlisted releases; visitors only see public.
     const token = (req.headers.authorization || '').replace('Bearer ', '') || req.query.token;
     let isOwner = false;
@@ -11426,6 +11823,11 @@ app.get('/api/artists/:id/releases/:releaseId/tracks', requireFeatureAllowed('ar
       .eq('id', req.params.releaseId)
       .maybeSingle();
     if (relErr || !release) return res.status(404).json({ error: 'Release not found.' });
+
+    const releaseArtist = await dbGetArtistById(release.artist_id);
+    if (releaseArtist && await isArtistBlockedForRequest(req, releaseArtist)) {
+      return res.status(404).json({ error: 'Release not found.' });
+    }
 
     if (release.visibility === 'private') {
       const token = (req.headers.authorization || '').replace('Bearer ', '') || req.query.token;
@@ -11485,6 +11887,7 @@ app.get('/api/artists/:id/activity', requireFeatureAllowed('artist_pages', { all
   try {
     const artist = await resolveArtistFromParam(req.params.id);
     if (!artist) return res.status(404).json({ error: 'Artist not found.' });
+    if (await isArtistBlockedForRequest(req, artist)) return res.json({ events: [], nextCursor: null });
     const limit  = Math.min(Math.max(Number(req.query.limit) || 20, 1), 50);
     const before = req.query.before || null;
 
@@ -11587,7 +11990,6 @@ app.post('/api/artists/create', rateLimit, requireFeatureAllowed('artist_pages')
         id: updated.id, slug: updated.slug, name: updated.name, isClaimed: true, merged: true,
       });
     }
-
     const slug = await dbGenerateUniqueArtistSlug(trimmedName);
     const { data: created, error } = await supabase
       .from('artists')
@@ -12351,7 +12753,7 @@ app.delete('/api/tracks/:trackId', rateLimit, async (req, res) => {
 app.get('/api/tracks/:trackId/collaborators', rateLimit, async (req, res) => {
   try {
     const track = await dbGetTrackById(req.params.trackId);
-    if (!track) return res.status(404).json({ error: 'Track not found.' });
+    if (!await isTrackVisibleForRequest(req, track)) return res.status(404).json({ error: 'Track not found.' });
     const collaborators = (await dbGetTrackCollaborators(track.id)).map(shapeCollaborator);
     return res.json({ collaborators });
   } catch (err) {
@@ -12414,7 +12816,7 @@ app.delete('/api/tracks/:trackId/collaborators/:collabId', rateLimit, requireFea
 app.get('/api/tracks/:trackId/lyrics', async (req, res) => {
   try {
     const track = await dbGetTrackById(req.params.trackId);
-    if (!track || !track.is_published) return res.status(404).json({ error: 'Track not found.' });
+    if (!await isTrackVisibleForRequest(req, track)) return res.status(404).json({ error: 'Track not found.' });
     const row = await dbGetTrackLyrics(track.id);
     return res.json({
       trackId: track.id,
@@ -12509,6 +12911,14 @@ app.get('/api/tracks/:trackId/stream', rateLimit, async (req, res) => {
         contentRestricted: true,
       });
     }
+    const listeningAllowance = await getListeningAllowanceForRequest(req, { reserveSeconds: 60 });
+    if (!listeningAllowance.allowed) {
+      return res.status(403).json({
+        error: listeningAllowance.message || 'Listening is unavailable right now.',
+        listeningRestricted: true,
+        reason: listeningAllowance.reason || null,
+      });
+    }
     // Bypasses dbGetCloudFile's owner-scoped lookup on purpose — see comment
     // above. Goes straight to the table since the publish/ownership check
     // already happened once, permanently, at publish time.
@@ -12517,9 +12927,12 @@ app.get('/api/tracks/:trackId/stream', rateLimit, async (req, res) => {
       .eq('id', track.cloud_file_id).maybeSingle();
     if (cfErr || !cloudFile) return res.status(404).json({ error: 'Track audio not found.' });
 
+    const streamTtlSeconds = listeningAllowance.restrictions
+      ? Math.min(SIGNED_URL_TTL_SECONDS, listeningAllowance.streamLeaseSeconds || 60)
+      : SIGNED_URL_TTL_SECONDS;
     const { data, error } = await supabase.storage
       .from(CLOUD_BUCKET)
-      .createSignedUrl(cloudFile.storage_path, SIGNED_URL_TTL_SECONDS);
+      .createSignedUrl(cloudFile.storage_path, streamTtlSeconds);
     if (error) throw new Error(error.message);
 
     const collaborators = (await dbGetTrackCollaborators(track.id)).map(shapeCollaborator);
@@ -12536,7 +12949,7 @@ app.get('/api/tracks/:trackId/stream', rateLimit, async (req, res) => {
     if (canvasFile && canvasFile.upload_status === 'ready') {
       const { data: canvasSigned, error: canvasErr } = await supabase.storage
         .from(MOTION_CANVAS_BUCKET)
-        .createSignedUrl(canvasFile.storage_path, SIGNED_URL_TTL_SECONDS);
+        .createSignedUrl(canvasFile.storage_path, streamTtlSeconds);
       if (!canvasErr && canvasSigned) {
         motionCanvasUrl = canvasSigned.signedUrl;
         motionCanvasMimeType = canvasFile.mime_type;
@@ -12547,7 +12960,7 @@ app.get('/api/tracks/:trackId/stream', rateLimit, async (req, res) => {
       id: track.id, title: track.title, coverUrl: track.cover_url,
       artistId: track.artist_id, artistName: track.artist_name,
       mimeType: cloudFile.mime_type, duration: cloudFile.duration,
-      url: data.signedUrl, expiresIn: SIGNED_URL_TTL_SECONDS,
+      url: data.signedUrl, expiresIn: streamTtlSeconds,
       collaborators, motionCanvasUrl, motionCanvasMimeType,
     });
   } catch (err) {
@@ -12616,7 +13029,8 @@ app.get('/api/tracks/liked', rateLimit, async (req, res) => {
 
     // Preserve like-order (most recently liked first), not the arbitrary
     // order .in() happens to return.
-    const byId = new Map((tracks || []).map(t => [t.id, t]));
+    const visibleTracks = await filterBlockedTracksForRequest(req, tracks || []);
+    const byId = new Map(visibleTracks.map(t => [t.id, t]));
     const ordered = likeRows.map(l => byId.get(l.track_id)).filter(Boolean);
 
     return res.json({
@@ -14097,6 +14511,35 @@ app.delete('/api/admin/artists/:id/verify', requireAdmin, async (req, res) => {
 // frontend ever called it — grep confirms zero call sites — so it's retired
 // outright rather than kept as a compat alias). These three routes are the
 // real "Override ratings / Lock ratings / View rating history" surface.
+
+// GET /api/admin/tracks/:trackId/rating — metadata for the moderation UI.
+// This deliberately stays admin-only even though parts of the same track
+// shape are public elsewhere: lock actor/time and reason tags are moderation
+// data, not catalog metadata.
+app.get('/api/admin/tracks/:trackId/rating', requireAdmin, async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('tracks')
+      .select('id, title, artist_id, artist_name, content_rating, content_rating_tags, content_rating_locked, content_rating_locked_by, content_rating_locked_at')
+      .eq('id', req.params.trackId).maybeSingle();
+    if (error || !data) return res.status(404).json({ error: 'Track not found.' });
+    return res.json({
+      track: {
+        id: data.id,
+        title: data.title || 'Untitled track',
+        artistId: data.artist_id || null,
+        artistName: data.artist_name || null,
+        contentRating: data.content_rating || 'clean',
+        contentRatingTags: data.content_rating_tags || [],
+        contentRatingLocked: !!data.content_rating_locked,
+        lockedBy: data.content_rating_locked_by || null,
+        lockedAt: data.content_rating_locked_at || null,
+      },
+    });
+  } catch (err) {
+    console.error('[admin rating get]', err);
+    return res.status(500).json({ error: 'Could not load track rating.' });
+  }
+});
 
 // PATCH /api/admin/tracks/:trackId/rating — admin sets content_rating
 // directly, bypassing the artist-facing content_rating_locked check in
