@@ -2233,7 +2233,7 @@ function tasteTopArtistsFromPlays(plays, { limit = 10 } = {}) {
 // surface tracks THEY played by DIFFERENT artists the requesting user
 // hasn't played much. This is plain co-occurrence — "people who listened
 // to X also listened to Y" — computed from real rows, not a trained model.
-async function dbTasteBecauseYouListened(username, { seedLimit = 3, tracksPerSeed = 6, allowedRatings = null } = {}) {
+async function dbTasteBecauseYouListened(username, { seedLimit = 3, tracksPerSeed = 6, allowedRatings = null, restrictions = null } = {}) {
   const myPlays = await dbTasteGetUserPlays(username, { days: 90 });
   if (myPlays.length < TASTE_MIN_HISTORY_ROWS) return [];
   const myArtistIds = new Set(myPlays.map(r => r.tracks.artist_id).filter(Boolean));
@@ -2273,7 +2273,7 @@ async function dbTasteBecauseYouListened(username, { seedLimit = 3, tracksPerSee
     // Part 3: drop candidates outside the requester's allowed ratings
     // before they're even counted, so a filtered-out track can't win a
     // count-based ranking slot and then get silently swapped for runner-up.
-    const eligiblePlays = tasteFilterByAllowedRatings(theirOtherPlays, allowedRatings);
+    const eligiblePlays = await tasteFilterByAllowedRatings(theirOtherPlays, allowedRatings, undefined, restrictions);
 
     const trackCounts = new Map(); // track_id -> { track, count }
     for (const row of eligiblePlays) {
@@ -2445,7 +2445,7 @@ async function dbTasteSimilarPlaylists(username, { limit = 8 } = {}) {
 // already has history with, OR sharing a genre with their top artists.
 // This is the intersection of "popular right now" and "matches your
 // taste", not just a copy of the global trending chart.
-async function dbTasteTrendingInTaste(username, { limit = 12, allowedRatings = null } = {}) {
+async function dbTasteTrendingInTaste(username, { limit = 12, allowedRatings = null, restrictions = null } = {}) {
   const myPlays = await dbTasteGetUserPlays(username, { days: 90 });
   if (myPlays.length < TASTE_MIN_HISTORY_ROWS) return [];
   const myArtistIds = new Set(myPlays.map(r => r.tracks.artist_id).filter(Boolean));
@@ -2465,15 +2465,27 @@ async function dbTasteTrendingInTaste(username, { limit = 12, allowedRatings = n
     .limit(80); // bounded candidate pool from the trending edge, then filtered down to taste-matches
   if (error) { console.error('[db] tasteTrendingInTaste:', error.message); return []; }
 
-  return (trending || [])
-    .filter(t => myArtistIds.has(t.artist_id) || (t.artists?.genre && myGenres.has(t.artists.genre)))
-    .slice(0, limit)
-    .map(t => ({
-      id: t.id, title: t.title, artistId: t.artist_id, artistName: t.artist_name,
-      coverUrl: t.cover_url, platform: t.platform, originalUrl: t.original_url,
-      playCount7d: t.play_count_7d, isExplicit: !!t.is_explicit,
-      contentRating: t.content_rating || 'clean',
-    }));
+  const tasteMatched = (trending || [])
+    .filter(t => myArtistIds.has(t.artist_id) || (t.artists?.genre && myGenres.has(t.artists.genre)));
+
+  // Part 6: blocked artist/genre/track, same as every other Taste Graph
+  // module — applied after the taste-match filter (cheaper: only checks
+  // the rows that would actually be returned) but before the limit slice,
+  // so a blocked track never occupies a slot a legitimate one should fill.
+  const genreCache = new Map();
+  const eligible = [];
+  for (const t of tasteMatched) {
+    const blocked = restrictions ? await isTrackBlockedByRestrictions(t, restrictions, genreCache) : false;
+    if (!blocked) eligible.push(t);
+    if (eligible.length >= limit) break;
+  }
+
+  return eligible.map(t => ({
+    id: t.id, title: t.title, artistId: t.artist_id, artistName: t.artist_name,
+    coverUrl: t.cover_url, platform: t.platform, originalUrl: t.original_url,
+    playCount7d: t.play_count_7d, isExplicit: !!t.is_explicit,
+    contentRating: t.content_rating || 'clean',
+  }));
 }
 
 // Shared recency-bucket helper for "recently rediscovered" and "recently
@@ -2482,7 +2494,7 @@ async function dbTasteTrendingInTaste(username, { limit = 12, allowedRatings = n
 // of the same two buckets (played-then-quiet-then-played-again vs
 // played-a-lot-then-gone-quiet). Centralizing the two-window fetch avoids
 // four near-identical Supabase calls across the two functions below.
-async function dbTasteGetPlayBuckets(username, { recentDays = 14, olderDays = 120, allowedRatings = null } = {}) {
+async function dbTasteGetPlayBuckets(username, { recentDays = 14, olderDays = 120, allowedRatings = null, restrictions = null } = {}) {
   const recentSince = new Date(Date.now() - recentDays * 24 * 60 * 60 * 1000).toISOString();
   const olderSince  = new Date(Date.now() - olderDays  * 24 * 60 * 60 * 1000).toISOString();
   const [{ data: recent, error: e1 }, { data: older, error: e2 }] = await Promise.all([
@@ -2499,8 +2511,8 @@ async function dbTasteGetPlayBuckets(username, { recentDays = 14, olderDays = 12
   // (unlike dbTasteGetUserPlays) they ARE filtered against the requester's
   // current allowed ratings before being handed to either module below.
   return {
-    recent: tasteFilterByAllowedRatings((recent || []).filter(r => r.tracks), allowedRatings),
-    older:  tasteFilterByAllowedRatings((older  || []).filter(r => r.tracks), allowedRatings),
+    recent: await tasteFilterByAllowedRatings((recent || []).filter(r => r.tracks), allowedRatings, undefined, restrictions),
+    older:  await tasteFilterByAllowedRatings((older  || []).filter(r => r.tracks), allowedRatings, undefined, restrictions),
   };
 }
 
@@ -2508,8 +2520,8 @@ async function dbTasteGetPlayBuckets(username, { recentDays = 14, olderDays = 12
 // (no plays at all in the gap between older and recent), then got played
 // again in the RECENT window. A real "oh, this again!" pattern rather than
 // just "played twice recently".
-async function dbTasteRecentlyRediscovered(username, { limit = 10, allowedRatings = null } = {}) {
-  const { recent, older } = await dbTasteGetPlayBuckets(username, { recentDays: 14, olderDays: 150, allowedRatings });
+async function dbTasteRecentlyRediscovered(username, { limit = 10, allowedRatings = null, restrictions = null } = {}) {
+  const { recent, older } = await dbTasteGetPlayBuckets(username, { recentDays: 14, olderDays: 150, allowedRatings, restrictions });
   if (recent.length < 2 || older.length < 2) return [];
   // "Went quiet in between" is approximated by requiring the older play to
   // be from ≥30 days before the recent one — a true gap-detection would
@@ -2538,8 +2550,8 @@ async function dbTasteRecentlyRediscovered(username, { limit = 10, allowedRating
 // explicitly via track_likes, or implicitly via heavy play volume in the
 // older window) that have had ZERO plays in the recent window. The
 // opposite question from rediscovered: "you used to love this, where'd it go?"
-async function dbTasteRecentlyForgotten(username, { limit = 10, allowedRatings = null } = {}) {
-  const { recent, older } = await dbTasteGetPlayBuckets(username, { recentDays: 21, olderDays: 180, allowedRatings });
+async function dbTasteRecentlyForgotten(username, { limit = 10, allowedRatings = null, restrictions = null } = {}) {
+  const { recent, older } = await dbTasteGetPlayBuckets(username, { recentDays: 21, olderDays: 180, allowedRatings, restrictions });
   const recentTrackIds = new Set(recent.map(r => r.track_id));
 
   // Older-window play counts per track — "heavy" is relative to this
@@ -2567,7 +2579,7 @@ async function dbTasteRecentlyForgotten(username, { limit = 10, allowedRatings =
     .from('track_likes').select('track_id, tracks(id, title, artist_id, artist_name, cover_url, platform, original_url, is_explicit, content_rating)')
     .eq('username', username).limit(200);
   if (error) console.error('[db] tasteRecentlyForgotten likes:', error.message);
-  const eligibleLikedRows = tasteFilterByAllowedRatings((likedRows || []).filter(row => row.tracks), allowedRatings);
+  const eligibleLikedRows = await tasteFilterByAllowedRatings((likedRows || []).filter(row => row.tracks), allowedRatings, undefined, restrictions);
   const forgottenFromLikes = eligibleLikedRows
     .filter(row => !recentTrackIds.has(row.tracks.id))
     .map(row => ({ track: row.tracks, count: null }));
@@ -2604,13 +2616,34 @@ function tasteShapeTrack(t) {
 // embed above) since Supabase JS can't reliably push a filter onto an
 // embedded/joined table's column across client versions — filtering the
 // flat array after fetch is the safe, version-independent approach.
-function tasteFilterByAllowedRatings(rows, allowedRatings, trackAccessor = r => r.tracks) {
-  if (!allowedRatings) return rows;
-  const allowed = new Set(allowedRatings);
-  return rows.filter(row => {
-    const t = trackAccessor(row);
-    return t && allowed.has(t.content_rating || 'clean');
-  });
+// Part 3 rating filter AND Part 6 blocked artist/genre/track filter, in one
+// pass — every Taste Graph module already funnels its candidate rows
+// through this single function, so this is the one place both restrictions
+// need to be threaded through rather than duplicating the check at each of
+// the 5 call sites below. `restrictions` is optional and additive: passing
+// null (the non-child default) skips the blocked-content pass entirely and
+// this behaves exactly as it did before, rating-filter only.
+async function tasteFilterByAllowedRatings(rows, allowedRatings, trackAccessor = r => r.tracks, restrictions = null) {
+  let filtered = rows;
+  if (allowedRatings) {
+    const allowed = new Set(allowedRatings);
+    filtered = filtered.filter(row => {
+      const t = trackAccessor(row);
+      return t && allowed.has(t.content_rating || 'clean');
+    });
+  }
+  if (restrictions) {
+    const genreCache = new Map();
+    const kept = [];
+    for (const row of filtered) {
+      const t = trackAccessor(row);
+      if (!t) continue;
+      const blocked = await isTrackBlockedByRestrictions(t, restrictions, genreCache);
+      if (!blocked) kept.push(row);
+    }
+    filtered = kept;
+  }
+  return filtered;
 }
 
 async function dbGetFollowedArtistIds(username) {
@@ -2627,7 +2660,7 @@ async function dbGetFollowedArtistIds(username) {
 // track they like because they weren't in the mood, not because they
 // dislike it) and treating it as strong negative signal would be a
 // confident claim the data doesn't support.
-async function dbTasteRecentlySkipped(username, { limit = 10, days = 30, allowedRatings = null } = {}) {
+async function dbTasteRecentlySkipped(username, { limit = 10, days = 30, allowedRatings = null, restrictions = null } = {}) {
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
   const { data, error } = await supabase
     .from('track_plays')
@@ -2635,7 +2668,7 @@ async function dbTasteRecentlySkipped(username, { limit = 10, days = 30, allowed
     .eq('username', username).eq('completed', false)
     .gte('played_at', since).order('played_at', { ascending: false }).limit(limit * 3);
   if (error) { console.error('[db] tasteRecentlySkipped:', error.message); return []; }
-  const eligible = tasteFilterByAllowedRatings((data || []).filter(r => r.tracks), allowedRatings);
+  const eligible = await tasteFilterByAllowedRatings((data || []).filter(r => r.tracks), allowedRatings, undefined, restrictions);
   const seen = new Set();
   const out = [];
   for (const row of eligible) {
@@ -3155,21 +3188,69 @@ async function getAllowedRatingsForRequest(req) {
 // isFeatureDisabledForRequest above.
 async function isTrackBlockedForRequest(req, track) {
   if (!track) return false;
+  const restrictions = await getFamilyRestrictionsForRequest(req);
+  if (!restrictions) return false;
+  return await isTrackBlockedByRestrictions(track, restrictions);
+}
+
+// Shared by isTrackBlockedForRequest and filterBlockedTracksForRequest so
+// the two never resolve "which restrictions apply to this request" two
+// different ways. Returns null for non-child requests / children with no
+// restrictions row yet, same fast-path as dbGetFamilyRestrictions's own
+// callers elsewhere.
+async function getFamilyRestrictionsForRequest(req) {
   const token = (req.headers.authorization || '').replace('Bearer ', '') || req.body?.token || req.query.token;
   const sess = token ? await dbGetSession(token) : null;
-  if (!sess) return false;
-  const restrictions = await dbGetFamilyRestrictions(sess.username);
-  if (!restrictions) return false;
+  if (!sess) return null;
+  return await dbGetFamilyRestrictions(sess.username);
+}
 
+// Pure check against an already-resolved restrictions row — split out from
+// isTrackBlockedForRequest so the batch filter below can resolve
+// restrictions ONCE per request and reuse this per-row, rather than
+// re-fetching family_restrictions once per track in a list of 50.
+async function isTrackBlockedByRestrictions(track, restrictions, genreCache) {
+  if (!restrictions) return false;
   if (Array.isArray(restrictions.blocked_track_ids) && restrictions.blocked_track_ids.includes(track.id)) return true;
   if (track.artist_id && Array.isArray(restrictions.blocked_artist_ids) && restrictions.blocked_artist_ids.includes(track.artist_id)) return true;
 
   if (Array.isArray(restrictions.blocked_genres) && restrictions.blocked_genres.length && track.artist_id) {
-    const { data: artistRow } = await supabase.from('artists').select('genre').eq('id', track.artist_id).maybeSingle();
-    if (artistRow?.genre && restrictions.blocked_genres.includes(artistRow.genre)) return true;
+    let genre;
+    if (genreCache && genreCache.has(track.artist_id)) {
+      genre = genreCache.get(track.artist_id);
+    } else {
+      const { data: artistRow } = await supabase.from('artists').select('genre').eq('id', track.artist_id).maybeSingle();
+      genre = artistRow?.genre || null;
+      if (genreCache) genreCache.set(track.artist_id, genre);
+    }
+    if (genre && restrictions.blocked_genres.includes(genre)) return true;
   }
-
   return false;
+}
+
+// Batch counterpart for list surfaces (Charts, Discover) — rows need an
+// `id` and `artist_id` field, which every tracks-table row already carries.
+// Non-child requests short-circuit to the input array unchanged (same
+// "restrictions are additive, never assumed" philosophy as
+// isFeatureDisabledForRequest), so this is a safe no-op wrapper to add
+// around any existing list endpoint without behavior change for the
+// overwhelming majority of requests.
+async function filterBlockedTracksForRequest(req, rows) {
+  const input = Array.isArray(rows) ? rows : [];
+  if (!input.length) return input;
+  const restrictions = await getFamilyRestrictionsForRequest(req);
+  if (!restrictions) return input;
+
+  const hasAnyBlockList = (restrictions.blocked_track_ids?.length || restrictions.blocked_artist_ids?.length || restrictions.blocked_genres?.length);
+  if (!hasAnyBlockList) return input;
+
+  const genreCache = new Map(); // artist_id -> genre, reused across every row in this one request
+  const kept = [];
+  for (const row of input) {
+    const blocked = await isTrackBlockedByRestrictions(row, restrictions, genreCache);
+    if (!blocked) kept.push(row);
+  }
+  return kept;
 }
 
 // Relational playlists keep track payloads as JSON so they can also contain
@@ -3681,6 +3762,108 @@ app.patch('/api/family/child/:username/restrictions', requireNotChild, async (re
   } catch (err) {
     console.error('[family restrictions patch]', err);
     return res.status(500).json({ error: 'Could not update restrictions.' });
+  }
+});
+
+// GET /api/family/child/:username/history?limit=&before=
+// Parent-facing "Playback History" from the spec — raw track_plays rows for
+// this child, most recent first, joined against tracks for a title/artist
+// to show (a play row with no matching track — deleted/unpublished since —
+// still appears, just with a fallback label, since a parent reviewing
+// history shouldn't have entries silently vanish underneath them).
+// Cursor-paginated via `before` (an ISO timestamp) rather than offset, same
+// reasoning as everywhere else in this codebase that paginates played_at-
+// ordered rows: stable under concurrent inserts, no page-drift.
+const FAMILY_HISTORY_MAX_LIMIT = 100;
+app.get('/api/family/child/:username/history', requireNotChild, async (req, res) => {
+  const sess = req._session;
+  const childUsername = normalizeUsername(req.params.username);
+  const limit = Math.min(Math.max(Number(req.query.limit) || 30, 1), FAMILY_HISTORY_MAX_LIMIT);
+  const before = req.query.before && !Number.isNaN(Date.parse(req.query.before)) ? req.query.before : null;
+  try {
+    const family = await dbGetFamilyByParent(sess.username);
+    if (!family) return res.status(404).json({ error: 'You do not have a family.' });
+
+    const { data: membership, error: memErr } = await supabase
+      .from('family_members').select('*').eq('family_id', family.id).eq('username', childUsername).eq('role', 'child').eq('status', 'active').maybeSingle();
+    if (memErr) throw new Error(memErr.message);
+    if (!membership) return res.status(404).json({ error: 'No child with that username in your family.' });
+
+    let query = supabase
+      .from('track_plays')
+      .select('id, track_id, played_at, source, completed, tracks(title, artist_name, cover_url, content_rating)')
+      .eq('username', childUsername)
+      .order('played_at', { ascending: false })
+      .limit(limit);
+    if (before) query = query.lt('played_at', before);
+    const { data, error } = await query;
+    if (error) throw new Error(error.message);
+
+    return res.json({
+      plays: (data || []).map(p => ({
+        id: p.id,
+        playedAt: p.played_at,
+        source: p.source,
+        completed: p.completed,
+        // tracks is null for a play whose track row no longer exists
+        // (unpublished/deleted since) — surfaced honestly rather than
+        // dropped, per this route's header comment.
+        title: p.tracks?.title || 'Unknown track',
+        artistName: p.tracks?.artist_name || null,
+        coverUrl: p.tracks?.cover_url || null,
+        contentRating: p.tracks?.content_rating || null,
+      })),
+      hasMore: (data || []).length === limit,
+    });
+  } catch (err) {
+    console.error('[family child history]', err);
+    return res.status(500).json({ error: 'Could not load playback history.' });
+  }
+});
+
+// GET /api/family/child/:username/screen-time?days=
+// Parent-facing "Screen Time" from the spec — daily listening minutes for
+// the trailing N days from family_listening_time (written by
+// POST /api/family/listening-heartbeat), zero-filled for any day with no
+// heartbeats at all so the dashboard can render a complete N-bar chart
+// rather than one with silent gaps.
+app.get('/api/family/child/:username/screen-time', requireNotChild, async (req, res) => {
+  const sess = req._session;
+  const childUsername = normalizeUsername(req.params.username);
+  const days = Math.min(Math.max(Number(req.query.days) || 7, 1), 30);
+  try {
+    const family = await dbGetFamilyByParent(sess.username);
+    if (!family) return res.status(404).json({ error: 'You do not have a family.' });
+
+    const { data: membership, error: memErr } = await supabase
+      .from('family_members').select('*').eq('family_id', family.id).eq('username', childUsername).eq('role', 'child').eq('status', 'active').maybeSingle();
+    if (memErr) throw new Error(memErr.message);
+    if (!membership) return res.status(404).json({ error: 'No child with that username in your family.' });
+
+    const since = new Date();
+    since.setDate(since.getDate() - (days - 1));
+    const sinceStr = since.toISOString().slice(0, 10);
+
+    const { data, error } = await supabase
+      .from('family_listening_time').select('listen_date, seconds_listened')
+      .eq('username', childUsername).gte('listen_date', sinceStr)
+      .order('listen_date', { ascending: true });
+    if (error) throw new Error(error.message);
+
+    const byDate = new Map((data || []).map(r => [r.listen_date, r.seconds_listened]));
+    const daysOut = [];
+    for (let i = days - 1; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const dateStr = d.toISOString().slice(0, 10);
+      daysOut.push({ date: dateStr, minutes: Math.round((byDate.get(dateStr) || 0) / 60) });
+    }
+    const totalMinutes = daysOut.reduce((sum, d) => sum + d.minutes, 0);
+
+    return res.json({ days: daysOut, totalMinutes, averageMinutesPerDay: Math.round(totalMinutes / days) });
+  } catch (err) {
+    console.error('[family child screen-time]', err);
+    return res.status(500).json({ error: 'Could not load screen time.' });
   }
 });
 
@@ -7435,6 +7618,11 @@ app.get('/api/taste', async (req, res) => {
     // recommendation module below (similarArtists excluded — it returns
     // artists, not tracks, and has no content_rating of its own to check).
     const allowedRatings = await getAllowedRatingsForRequest(req);
+    // Part 6: same one-resolve-per-request pattern for blocked
+    // artist/genre/track — null for non-child requests, which every taste
+    // module already treats as "nothing to filter" via tasteFilterByAllowedRatings
+    // and isTrackBlockedByRestrictions's own null-checks.
+    const restrictions = await getFamilyRestrictionsForRequest(req);
 
     const recentPlays = await dbTasteGetUserPlays(sess.username, { days: 90, limit: 20 });
     const hasEnoughHistory = recentPlays.length >= TASTE_MIN_HISTORY_ROWS;
@@ -7453,13 +7641,13 @@ app.get('/api/taste', async (req, res) => {
       becauseYouListened, similarArtists, similarPlaylists,
       trendingInTaste, recentlyRediscovered, recentlyForgotten, recentlySkipped,
     ] = await Promise.all([
-      dbTasteBecauseYouListened(sess.username, { allowedRatings }),
+      dbTasteBecauseYouListened(sess.username, { allowedRatings, restrictions }),
       dbTasteSimilarArtists(sess.username),
       dbTasteSimilarPlaylists(sess.username),
-      dbTasteTrendingInTaste(sess.username, { allowedRatings }),
-      dbTasteRecentlyRediscovered(sess.username, { allowedRatings }),
-      dbTasteRecentlyForgotten(sess.username, { allowedRatings }),
-      dbTasteRecentlySkipped(sess.username, { allowedRatings }),
+      dbTasteTrendingInTaste(sess.username, { allowedRatings, restrictions }),
+      dbTasteRecentlyRediscovered(sess.username, { allowedRatings, restrictions }),
+      dbTasteRecentlyForgotten(sess.username, { allowedRatings, restrictions }),
+      dbTasteRecentlySkipped(sess.username, { allowedRatings, restrictions }),
     ]);
 
     return res.json({
@@ -7762,7 +7950,10 @@ app.get('/api/charts/tracks', async (req, res) => {
   const limit  = Math.min(Math.max(Number(req.query.limit) || 50, 1), CHARTS_MAX_LIMIT);
   try {
     const allowedRatings = await getAllowedRatingsForRequest(req);
-    const rows = await dbGetTopTracks({ window, limit, allowedRatings });
+    const rawRows = await dbGetTopTracks({ window, limit, allowedRatings });
+    // Part 6: specific artist/genre/track blocks on top of the rating
+    // ceiling — a chart-topping track can still be individually blocked.
+    const rows = await filterBlockedTracksForRequest(req, rawRows);
     const collabsByTrack = await dbGetCollaboratorsForTracks(rows.map(t => t.id));
     return res.json({
       window,
@@ -7889,8 +8080,11 @@ app.get('/api/discover/tracks', async (req, res) => {
       ? query.order('published_at', { ascending: false, nullsFirst: false })
       : query.order('play_count', { ascending: false });
 
-    const { data, error } = await query.limit(limit);
+    const { data: rawData, error } = await query.limit(limit);
     if (error) throw new Error(error.message);
+    // Part 6: specific artist/genre/track blocks on top of the rating
+    // ceiling above.
+    const data = await filterBlockedTracksForRequest(req, rawData || []);
 
     // Batch-fetch liked status for the signed-in user
     let likedIds = new Set();
@@ -7933,6 +8127,22 @@ app.get('/api/discover/tracks', async (req, res) => {
 // Unauthenticated-friendly like every other Discovery route — same
 // philosophy as Charts, this is meant to work for a visitor browsing
 // before signing in.
+// Companion to filterBlockedTracksForRequest for ARTIST-shaped rows (the
+// row itself is the artist, not a track referencing one) — Discover
+// Artists needs blocked_artist_ids/blocked_genres checked against `id`/
+// `genre` directly rather than `artist_id`. blocked_track_ids doesn't apply
+// here at all, an artist listing has no individual track to check.
+async function filterBlockedArtistsForRequest(req, rows) {
+  const input = Array.isArray(rows) ? rows : [];
+  if (!input.length) return input;
+  const restrictions = await getFamilyRestrictionsForRequest(req);
+  if (!restrictions) return input;
+  const blockedIds = new Set(restrictions.blocked_artist_ids || []);
+  const blockedGenres = new Set(restrictions.blocked_genres || []);
+  if (!blockedIds.size && !blockedGenres.size) return input;
+  return input.filter(a => !blockedIds.has(a.id) && !(a.genre && blockedGenres.has(a.genre)));
+}
+
 app.get('/api/discover/artists', async (req, res) => {
   const mode  = ['trending', 'new', 'search'].includes(req.query.mode) ? req.query.mode : 'trending';
   const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), DISCOVER_MAX_LIMIT);
@@ -7942,7 +8152,10 @@ app.get('/api/discover/artists', async (req, res) => {
     if (await isFeatureDisabledForRequest(req, 'discover')) {
       return res.json({ mode, artists: [] });
     }
-    const rows = await dbDiscoverArtists({ mode, limit, query });
+    const rawRows = await dbDiscoverArtists({ mode, limit, query });
+    // Part 6: specific artist/genre blocks — dbDiscoverArtists selects `*`
+    // so `genre` is already on each row; see filterBlockedArtistsForRequest.
+    const rows = await filterBlockedArtistsForRequest(req, rawRows);
     return res.json({
       mode,
       artists: rows.map(a => {
@@ -9790,6 +10003,14 @@ app.get('/api/tracks/:trackId/video-stream', rateLimit, async (req, res) => {
         contentRestricted: true,
       });
     }
+    // Part 6: specific artist/genre/track blocks — same final boundary as
+    // the audio stream route.
+    if (await isTrackBlockedForRequest(req, track)) {
+      return res.status(403).json({
+        error: 'This track is restricted by your account settings.',
+        contentRestricted: true,
+      });
+    }
 
     const trackVideo = await dbGetTrackVideo(track.id);
     if (!trackVideo || !trackVideo.video_files) return res.status(404).json({ error: 'This track has no video.' });
@@ -9853,6 +10074,9 @@ app.post('/api/tracks/:trackId/video/watch-event', rateLimit, async (req, res) =
     if (!track || !track.is_published) return res.status(404).json({ error: 'Track not found.' });
     const allowedRatings = await getAllowedRatingsForRequest(req);
     if (!allowedRatings.includes(track.content_rating || 'clean')) {
+      return res.status(403).json({ error: 'This track is restricted by your account settings.', contentRestricted: true });
+    }
+    if (await isTrackBlockedForRequest(req, track)) {
       return res.status(403).json({ error: 'This track is restricted by your account settings.', contentRestricted: true });
     }
     const trackVideo = await dbGetTrackVideo(track.id);
@@ -9972,8 +10196,11 @@ app.get('/api/discover/videos', async (req, res) => {
       query = query.order('created_at', { referencedTable: 'track_videos', ascending: false });
     }
 
-    const { data, error } = await query.limit(limit);
+    const { data: rawData, error } = await query.limit(limit);
     if (error) throw new Error(error.message);
+    // Part 6: specific artist/genre/track blocks on top of the rating
+    // ceiling above — a video track can still be individually blocked.
+    const data = await filterBlockedTracksForRequest(req, rawData || []);
 
     return res.json({
       mode,
@@ -11148,6 +11375,14 @@ app.get('/api/artists/:id/releases', requireFeatureAllowed('artist_pages', { all
   try {
     const artist = await resolveArtistFromParam(req.params.id);
     if (!artist) return res.status(404).json({ error: 'Artist not found.' });
+    // Part 6: if this artist is individually blocked, their whole release
+    // list is off-limits — checked before the owner/visibility logic below
+    // since even the artist's OWN account viewing their page as a listener
+    // (unusual, but possible) shouldn't bypass a parent's block.
+    const restrictionsForArtist = await getFamilyRestrictionsForRequest(req);
+    if (restrictionsForArtist?.blocked_artist_ids?.includes(artist.id)) {
+      return res.json({ releases: [] });
+    }
     // Owner can see private/unlisted releases; visitors only see public.
     const token = (req.headers.authorization || '').replace('Bearer ', '') || req.query.token;
     let isOwner = false;
@@ -11202,7 +11437,11 @@ app.get('/api/artists/:id/releases/:releaseId/tracks', requireFeatureAllowed('ar
     }
 
     const allowedRatings = await getAllowedRatingsForRequest(req);
-    const tracks = await dbGetReleaseTracks(req.params.releaseId, { allowedRatings });
+    const rawTracks = await dbGetReleaseTracks(req.params.releaseId, { allowedRatings });
+    // Part 6: specific artist/genre/track blocks on top of the rating
+    // ceiling — an individual track within an otherwise-visible release can
+    // still be blocked.
+    const tracks = await filterBlockedTracksForRequest(req, rawTracks);
     const collabsByTrack = await dbGetCollaboratorsForTracks(tracks.map(t => t.id));
     // Batched video-attached check — backs the 🎬 badge on release
     // tracklists (album/EP/single pages) per spec.
@@ -12331,6 +12570,9 @@ app.post('/api/tracks/:trackId/like', rateLimit, async (req, res) => {
     const track = await dbGetTrackById(req.params.trackId);
     const allowedRatings = await getAllowedRatingsForRequest(req);
     if (!track?.is_published || !allowedRatings.includes(track.content_rating || 'clean')) {
+      return res.status(403).json({ error: 'This track is restricted by your account settings.', contentRestricted: true });
+    }
+    if (await isTrackBlockedForRequest(req, track)) {
       return res.status(403).json({ error: 'This track is restricted by your account settings.', contentRestricted: true });
     }
     const { error } = await supabase.from('track_likes')
