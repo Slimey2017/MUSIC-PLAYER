@@ -1019,6 +1019,40 @@ body.local-player-active #embedContainer{display:none;}
 .mp-play-btn{background:linear-gradient(135deg,#c950ff,#f36be7);border:none;color:#100016;font-family:'Unbounded',sans-serif;font-size:.4rem;font-weight:800;padding:6px 9px;border-radius:var(--radius);cursor:pointer;white-space:nowrap;}
 .mp-play-btn:hover{filter:brightness(1.1);}
 
+/* ─── Musi-Shop · Phase 2 ──────────────────────────────────────────────── */
+.musi-shop-panel{max-width:760px;max-height:88vh;overflow-y:auto;}
+.musi-shop-wallet{display:flex;align-items:center;gap:12px;padding:12px;border:1px solid rgba(217,86,255,.34);border-radius:var(--radius);background:linear-gradient(135deg,rgba(119,24,205,.18),rgba(242,73,225,.06));margin:10px 0;}
+.musi-shop-wallet img{width:52px;height:52px;object-fit:contain;flex:0 0 auto;}
+.musi-shop-tabs{display:flex;gap:6px;margin:10px 0 12px;}
+.musi-shop-tab{flex:1;background:var(--surface2);border:1px solid var(--border);color:var(--text-muted);font-family:'Space Mono',monospace;font-size:.44rem;text-transform:uppercase;letter-spacing:.06em;padding:7px;border-radius:var(--radius);cursor:pointer;}
+.musi-shop-tab.active{border-color:#d85cff;color:#ed91ff;background:rgba(184,63,255,.1);}
+.musi-shop-section-title{font-family:'Unbounded',sans-serif;font-size:.55rem;color:var(--text);margin:14px 0 8px;}
+.musi-shop-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;}
+.musi-shop-item{display:flex;flex-direction:column;min-height:190px;padding:12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface2);position:relative;overflow:hidden;}
+.musi-shop-item::after{content:'';position:absolute;width:90px;height:90px;border-radius:50%;right:-45px;top:-45px;background:rgba(202,78,255,.08);pointer-events:none;}
+.musi-shop-item-icon{font-size:1.35rem;line-height:1;margin-bottom:9px;}
+.musi-shop-item-name{font-family:'Unbounded',sans-serif;font-size:.48rem;font-weight:800;color:var(--text);line-height:1.5;}
+.musi-shop-item-badge{align-self:flex-start;font-size:.34rem;color:#ed91ff;border:1px solid rgba(216,92,255,.4);border-radius:999px;padding:2px 6px;margin:5px 0;}
+.musi-shop-item-desc{font-size:.4rem;color:var(--text-muted);line-height:1.6;flex:1;margin:5px 0 10px;}
+.musi-shop-item-price{font-family:'Unbounded',sans-serif;font-size:.55rem;color:#ed91ff;margin-bottom:8px;}
+.musi-shop-buy{width:100%;background:linear-gradient(135deg,#c950ff,#f36be7);border:none;color:#100016;font-family:'Unbounded',sans-serif;font-size:.38rem;font-weight:800;padding:8px;border-radius:var(--radius);cursor:pointer;}
+.musi-shop-buy:disabled{filter:none;opacity:.42;cursor:default;}
+.musi-shop-access{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:10px 0;}
+.musi-shop-access-card{border:1px solid var(--border);background:var(--surface2);border-radius:var(--radius);padding:9px 10px;font-size:.42rem;color:var(--text-muted);line-height:1.65;}
+.musi-shop-access-card strong{display:block;color:var(--text);font-size:.48rem;margin-bottom:2px;}
+.musi-shop-confirm{display:none;border:1px solid rgba(216,92,255,.45);border-radius:var(--radius);background:var(--surface2);padding:12px;margin:10px 0;}
+.musi-shop-confirm.open{display:block;}
+.musi-shop-confirm-actions{display:flex;gap:7px;margin-top:10px;}
+.musi-shop-confirm-actions button{flex:1;}
+.mp-history-row{display:grid;grid-template-columns:1fr auto;gap:4px 12px;padding:9px 2px;border-bottom:1px solid var(--border);}
+.mp-history-title{font-size:.46rem;color:var(--text);}
+.mp-history-meta{font-size:.37rem;color:var(--text-muted);}
+.mp-history-amount{grid-row:1/3;grid-column:2;font-family:'Unbounded',sans-serif;font-size:.46rem;align-self:center;}
+.mp-history-amount.positive{color:var(--accent3);}.mp-history-amount.negative{color:#ed91ff;}
+.shop-access-pill{font-size:.36rem;color:#ed91ff;border:1px solid rgba(216,92,255,.4);padding:2px 6px;border-radius:999px;white-space:nowrap;}
+@media(max-width:720px){.musi-shop-grid{grid-template-columns:1fr 1fr;}}
+@media(max-width:480px){.musi-shop-grid,.musi-shop-access{grid-template-columns:1fr;}}
+
 /* ─── Footer ──────────────────────────────────────────────────────── */
 footer{text-align:center;padding:7px;font-size:0.47rem;color:var(--text-muted);letter-spacing:0.12em;border-top:1px solid var(--border);background:var(--surface);position:relative;z-index:10;}
 .footer-support-btn{background:none;border:none;color:var(--accent3);font-family:'Space Mono',monospace;font-size:0.47rem;cursor:pointer;letter-spacing:0.08em;text-decoration:underline;padding:0 2px;transition:color 0.15s;}
@@ -3120,6 +3154,7 @@ body.oled-mode {
     <button class="header-tag" id="lyricsBtn" style="cursor:pointer;background:none;" title="Lyrics">♪ Lyrics</button>
     <button class="header-tag" id="audioQualityBtn" style="cursor:pointer;background:none;" title="Audio Quality & EQ">⚙ Audio</button>
     <button class="header-tag" id="oledToggleBtn" style="cursor:pointer;background:none;" title="OLED True Black Mode">⬛ OLED</button>
+    <button class="header-tag" id="musiShopBtn" onclick="openMusiShop()" style="display:none;cursor:pointer;background:none;color:#ed91ff;border-color:rgba(216,92,255,.4);" title="Musi-Shop — spend Musi-Pixels">🛍 Musi-Shop</button>
     <button class="mp-balance-chip" id="mpBalanceChip" title="Your Musi-Pixels wallet">
       <img src="ddda265d-0aee-44a4-a4b3-048300e58be0.png" alt="Musi-Pixels" onerror="this.style.display='none'" />
       <span id="mpBalanceHeader">0 MP</span>
@@ -5547,15 +5582,67 @@ body.oled-mode {
   </div>
 </div>
 
+<!-- ─── Musi-Shop · Phase 2 ────────────────────────────────────────────────
+     Catalog values come from Supabase through the existing FREQ server.
+     The browser never computes prices, changes balances, or grants access. -->
+<div class="lyrics-overlay" id="musiShopOverlay">
+  <div class="lyrics-panel musi-shop-panel">
+    <div class="lyrics-title">🛍 Musi-Shop</div>
+    <div class="lyrics-artist">Spend Musi-Pixels on DJ BOOM message packs and Radio Passes.</div>
+
+    <div class="musi-shop-wallet">
+      <img src="ddda265d-0aee-44a4-a4b3-048300e58be0.png" alt="Musi-Pixels" onerror="this.style.display='none'" />
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:.38rem;color:var(--text-muted);letter-spacing:.1em;text-transform:uppercase;">Available balance</div>
+        <div class="mp-wallet-value" id="musiShopBalance">0 MP</div>
+      </div>
+      <button class="mp-play-btn" onclick="closeMusiShop();openListenToEarn()">Earn MP</button>
+    </div>
+
+    <div class="musi-shop-access" id="musiShopAccessSummary">
+      <div class="musi-shop-access-card"><strong>🤖 DJ BOOM</strong><span id="musiShopDjAccess">No message pack</span></div>
+      <div class="musi-shop-access-card"><strong>📻 Real-Life Radio</strong><span id="musiShopRadioAccess">No active pass</span></div>
+    </div>
+
+    <div class="musi-shop-tabs">
+      <button class="musi-shop-tab active" id="musiShopCatalogTab" onclick="setMusiShopTab('catalog')">Shop</button>
+      <button class="musi-shop-tab" id="musiShopHistoryTab" onclick="setMusiShopTab('history')">Transaction History</button>
+    </div>
+
+    <div id="musiShopCatalogPane">
+      <div id="musiShopCatalog"><div class="empty-panel">Loading Musi-Shop…</div></div>
+      <div class="musi-shop-confirm" id="musiShopConfirm">
+        <div style="font-family:'Unbounded',sans-serif;font-size:.52rem;color:var(--text);" id="musiShopConfirmTitle">Confirm purchase</div>
+        <div style="font-size:.42rem;color:var(--text-muted);line-height:1.7;margin-top:6px;" id="musiShopConfirmText"></div>
+        <div class="musi-shop-confirm-actions">
+          <button class="pco-btn-secondary" style="margin:0;" onclick="cancelMusiShopPurchase()">Cancel</button>
+          <button class="musi-shop-buy" id="musiShopConfirmBtn" onclick="confirmMusiShopPurchase()">Buy</button>
+        </div>
+      </div>
+      <div style="font-size:.36rem;color:var(--text-muted);line-height:1.7;margin-top:12px;">Premium includes unlimited DJ BOOM and Real-Life Radio. Radio Pass time begins immediately; active passes extend. DJ BOOM messages stack and do not expire.</div>
+    </div>
+
+    <div id="musiShopHistoryPane" style="display:none;">
+      <div id="musiShopHistory"><div class="empty-panel">Open this tab to load transactions.</div></div>
+      <button class="pco-btn-secondary" id="musiShopHistoryMore" style="display:none;width:100%;" onclick="loadMusiShopHistory(true)">Load more</button>
+    </div>
+
+    <button class="support-close-btn" onclick="closeMusiShop()" style="margin-top:16px;">Close</button>
+  </div>
+</div>
+
 <!-- ─── DJ BOOM Overlay — Premium AI assistant ──────────────────────────────
      Real chat, wired to POST /api/djboom/chat (server-side Google call,
-     gated by requirePremium). Non-Premium accounts see the same panel with
+     gated by Premium or a Musi-Shop message pack). Locked accounts see the same panel with
      the chat body blurred+disabled and an upgrade card on top, per the
      "show it, don't hide it" requirement — not a separate stub page. -->
 <div class="lyrics-overlay" id="djBoomOverlay">
   <div class="lyrics-panel" style="max-width:480px;">
     <div class="lyrics-title">🤖 DJ BOOM</div>
-    <div class="lyrics-artist" style="margin-bottom:12px;">Your AI assistant for lyrics, titles, release planning, and playlist ideas.</div>
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:12px;">
+      <div class="lyrics-artist">Your AI assistant for lyrics, titles, release planning, and playlist ideas.</div>
+      <span class="shop-access-pill" id="djBoomAccessPill">Premium</span>
+    </div>
 
     <div class="premium-lock-wrap" id="djBoomLockWrap">
       <div class="premium-lock-target" id="djBoomBody">
@@ -5577,8 +5664,9 @@ body.oled-mode {
       </div>
       <div class="premium-lock-card" id="djBoomLockCard" style="display:none;">
         <div class="lock-icon">🔒</div>
-        <div class="lock-msg">DJ BOOM is available with FREQ Premium.</div>
-        <button class="premium-upgrade-btn" onclick="closeDjBoomOverlay(); openPremiumHubOverlay();">See Premium</button>
+        <div class="lock-msg">DJ BOOM requires Premium or a message pack.</div>
+        <button class="premium-upgrade-btn" id="djBoomShopAccessBtn" onclick="closeDjBoomOverlay(); openMusiShop();">Get a Message Pack</button>
+        <button class="pco-btn-secondary" id="djBoomPremiumAccessBtn" style="margin-top:0;" onclick="closeDjBoomOverlay(); openPremiumHubOverlay();">See Premium</button>
       </div>
     </div>
 
@@ -5686,7 +5774,10 @@ body.oled-mode {
 <div class="lyrics-overlay" id="radioOverlay">
   <div class="lyrics-panel radio-panel">
     <div class="lyrics-title">📡 Real-Life Radio <span class="ptb-tag">PTB</span></div>
-    <div class="lyrics-artist" style="margin-bottom:4px;">Browse and play real internet radio stations, right inside FREQ.</div>
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px;">
+      <div class="lyrics-artist">Browse and play real internet radio stations, right inside FREQ.</div>
+      <span class="shop-access-pill" id="radioAccessPill">Premium</span>
+    </div>
 
     <div class="radio-experimental-banner">
       <span class="ptb-tag">PTB</span>
@@ -5755,8 +5846,9 @@ body.oled-mode {
       </div>
       <div class="premium-lock-card" id="radioLockCard" style="display:none;">
         <div class="lock-icon">🔒</div>
-        <div class="lock-msg">Real-Life Radio is available with FREQ Premium.</div>
-        <button class="premium-upgrade-btn" onclick="closeRadioOverlay(); openPremiumHubOverlay();">See Premium</button>
+        <div class="lock-msg">Real-Life Radio requires Premium or a Radio Pass.</div>
+        <button class="premium-upgrade-btn" id="radioShopAccessBtn" onclick="closeRadioOverlay(); openMusiShop();">Get a Radio Pass</button>
+        <button class="pco-btn-secondary" id="radioPremiumAccessBtn" style="margin-top:0;" onclick="closeRadioOverlay(); openPremiumHubOverlay();">See Premium</button>
       </div>
     </div>
 
@@ -6371,7 +6463,10 @@ body.oled-mode {
           <div class="mp-wallet-value" id="mpWalletBalance">0 MP</div>
           <div class="mp-wallet-meta"><span id="mpWalletEarned">0 earned</span> · <span id="mpWalletSpent">0 spent</span></div>
         </div>
-        <button class="mp-play-btn" type="button" onclick="openListenToEarn()">Earn MP</button>
+        <div style="display:flex;flex-direction:column;gap:5px;">
+          <button class="mp-play-btn" type="button" onclick="openMusiShop()">Shop</button>
+          <button class="mp-play-btn" type="button" onclick="openListenToEarn()">Earn MP</button>
+        </div>
       </div>
       <div class="auth-saved-playlists">
         <div class="aq-section-title" style="margin-bottom:10px;">Saved Playlists</div>
@@ -6866,6 +6961,28 @@ const MP_STATE = {
   heartbeatInFlight: false,
 };
 
+const MUSI_SHOP_STATE = {
+  enabled: true,
+  catalog: [],
+  entitlements: {
+    premiumUnlimited: false,
+    djBoomMessagesRemaining: 0,
+    djBoomAccess: false,
+    radioPassExpiresAt: null,
+    radioPassActive: false,
+    radioAccess: false,
+  },
+  loadedFor: null,
+  loading: null,
+  selectedSku: null,
+  pendingIdempotencyKey: null,
+  purchaseInFlight: false,
+  history: [],
+  historyLoaded: false,
+  historyLoading: false,
+  historyNextBefore: null,
+};
+
 function formatMp(value) {
   return `${Math.max(0, Number(value) || 0).toLocaleString()} MP`;
 }
@@ -6876,6 +6993,7 @@ function renderMpWallet() {
   if (chip) chip.style.display = visible ? 'inline-flex' : 'none';
   if ($('mpBalanceHeader')) $('mpBalanceHeader').textContent = formatMp(MP_STATE.balanceMp);
   if ($('mpWalletBalance')) $('mpWalletBalance').textContent = formatMp(MP_STATE.balanceMp);
+  if ($('musiShopBalance')) $('musiShopBalance').textContent = formatMp(MP_STATE.balanceMp);
   if ($('mpWalletEarned')) $('mpWalletEarned').textContent = `${(Number(MP_STATE.lifetimeEarnedMp) || 0).toLocaleString()} earned`;
   if ($('mpWalletSpent')) $('mpWalletSpent').textContent = `${(Number(MP_STATE.lifetimeSpentMp) || 0).toLocaleString()} spent`;
 }
@@ -6914,6 +7032,294 @@ async function refreshMpWallet(force = false) {
     }
   })();
   return MP_STATE.loading;
+}
+
+// ─── Musi-Shop · Phase 2 ─────────────────────────────────────────────────
+// The catalog is render-only client state. The server/database re-resolve
+// the SKU, price, balance, Premium status, and grant inside one transaction.
+function canUseDjBoom() {
+  return !!AUTH.isPremium || Math.max(0, Number(MUSI_SHOP_STATE.entitlements.djBoomMessagesRemaining) || 0) > 0;
+}
+
+function canUseRadio() {
+  if (AUTH.isPremium) return true;
+  const expiry = MUSI_SHOP_STATE.entitlements.radioPassExpiresAt;
+  return !!expiry && new Date(expiry).getTime() > Date.now();
+}
+
+function formatShopExpiry(value) {
+  if (!value) return 'No active pass';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime()) || date.getTime() <= Date.now()) return 'No active pass';
+  return `Pass active until ${date.toLocaleString([], { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' })}`;
+}
+
+function renderMusiShopAccess() {
+  const ent = MUSI_SHOP_STATE.entitlements;
+  const premium = !!AUTH.isPremium || !!ent.premiumUnlimited;
+  const messages = Math.max(0, Number(ent.djBoomMessagesRemaining) || 0);
+  if ($('musiShopDjAccess')) {
+    $('musiShopDjAccess').textContent = premium ? 'Unlimited with Premium' : messages ? `${messages.toLocaleString()} message${messages === 1 ? '' : 's'} remaining` : 'No message pack';
+  }
+  if ($('musiShopRadioAccess')) {
+    $('musiShopRadioAccess').textContent = premium ? 'Unlimited with Premium' : formatShopExpiry(ent.radioPassExpiresAt);
+  }
+  if ($('djBoomAccessPill')) {
+    $('djBoomAccessPill').textContent = premium ? 'Premium · Unlimited' : messages ? `${messages} message${messages === 1 ? '' : 's'}` : 'Locked';
+  }
+  if ($('radioAccessPill')) {
+    $('radioAccessPill').textContent = premium ? 'Premium · Unlimited' : canUseRadio() ? 'Radio Pass active' : 'Locked';
+  }
+
+  const djBtn = $('djBoomBtn');
+  if (djBtn) djBtn.innerHTML = canUseDjBoom() ? '🤖 DJ BOOM' : '🤖 DJ BOOM 🔒';
+  const radioBtn = $('radioBtn');
+  if (radioBtn) radioBtn.innerHTML = `${canUseRadio() ? '📡 Radio' : '📡 Radio 🔒'} <span class="ptb-tag">PTB</span>`;
+  const shopBtn = $('musiShopBtn');
+  if (shopBtn) shopBtn.style.display = AUTH.loggedIn ? '' : 'none';
+}
+
+function resetMusiShopLocal() {
+  MUSI_SHOP_STATE.enabled = true;
+  MUSI_SHOP_STATE.catalog = [];
+  MUSI_SHOP_STATE.entitlements = {
+    premiumUnlimited: false, djBoomMessagesRemaining: 0, djBoomAccess: false,
+    radioPassExpiresAt: null, radioPassActive: false, radioAccess: false,
+  };
+  MUSI_SHOP_STATE.loadedFor = null;
+  MUSI_SHOP_STATE.loading = null;
+  MUSI_SHOP_STATE.selectedSku = null;
+  MUSI_SHOP_STATE.pendingIdempotencyKey = null;
+  MUSI_SHOP_STATE.history = [];
+  MUSI_SHOP_STATE.historyLoaded = false;
+  MUSI_SHOP_STATE.historyNextBefore = null;
+  renderMusiShopAccess();
+}
+
+function applyMusiShopPayload(data, usernameAtStart = AUTH.username) {
+  if (!data || !AUTH.loggedIn || AUTH.username !== usernameAtStart) return;
+  MUSI_SHOP_STATE.enabled = data.enabled !== false;
+  MUSI_SHOP_STATE.catalog = Array.isArray(data.catalog) ? data.catalog : MUSI_SHOP_STATE.catalog;
+  if (data.entitlements) MUSI_SHOP_STATE.entitlements = { ...MUSI_SHOP_STATE.entitlements, ...data.entitlements };
+  if (data.wallet) {
+    MP_STATE.balanceMp = Number(data.wallet.balanceMp) || 0;
+    MP_STATE.lifetimeEarnedMp = Number(data.wallet.lifetimeEarnedMp) || 0;
+    MP_STATE.lifetimeSpentMp = Number(data.wallet.lifetimeSpentMp) || 0;
+    MP_STATE.loadedFor = usernameAtStart;
+  }
+  MUSI_SHOP_STATE.loadedFor = usernameAtStart;
+  renderMpWallet();
+  renderMusiShopAccess();
+  renderMusiShopCatalog();
+}
+
+async function refreshMusiShop(force = false) {
+  if (!AUTH.loggedIn || !AUTH.token) { resetMusiShopLocal(); return null; }
+  if (!force && MUSI_SHOP_STATE.loadedFor === AUTH.username) return MUSI_SHOP_STATE;
+  if (MUSI_SHOP_STATE.loading) return MUSI_SHOP_STATE.loading;
+  const usernameAtStart = AUTH.username;
+  MUSI_SHOP_STATE.loading = (async () => {
+    try {
+      const res = await fetch('/api/mp/shop', { headers: authHeaders() });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Could not load Musi-Shop.');
+      applyMusiShopPayload(data, usernameAtStart);
+      return data;
+    } catch (err) {
+      console.error('[Musi-Shop]', err);
+      if ($('musiShopCatalog')) $('musiShopCatalog').innerHTML = '<div class="empty-panel">Musi-Shop is unavailable right now.</div>';
+      return null;
+    } finally {
+      MUSI_SHOP_STATE.loading = null;
+    }
+  })();
+  return MUSI_SHOP_STATE.loading;
+}
+
+async function openMusiShop(tab = 'catalog') {
+  if (!AUTH.loggedIn || !AUTH.token) {
+    $('authOverlay')?.classList.add('open');
+    showToast('Sign in required', 'Sign in to open the Musi-Shop.', 'info');
+    return;
+  }
+  $('authOverlay')?.classList.remove('open');
+  $('musiShopOverlay')?.classList.add('open');
+  setMusiShopTab(tab);
+  await refreshMusiShop(true);
+}
+
+function closeMusiShop() {
+  $('musiShopOverlay')?.classList.remove('open');
+  cancelMusiShopPurchase();
+}
+
+function setMusiShopTab(tab) {
+  const history = tab === 'history';
+  $('musiShopCatalogTab')?.classList.toggle('active', !history);
+  $('musiShopHistoryTab')?.classList.toggle('active', history);
+  if ($('musiShopCatalogPane')) $('musiShopCatalogPane').style.display = history ? 'none' : '';
+  if ($('musiShopHistoryPane')) $('musiShopHistoryPane').style.display = history ? '' : 'none';
+  if (history && !MUSI_SHOP_STATE.historyLoaded) loadMusiShopHistory(false);
+}
+
+function renderMusiShopCatalog() {
+  const root = $('musiShopCatalog');
+  if (!root) return;
+  if (!MUSI_SHOP_STATE.enabled) {
+    root.innerHTML = '<div class="empty-panel">Musi-Shop is temporarily closed.</div>';
+    return;
+  }
+  if (!MUSI_SHOP_STATE.catalog.length) {
+    root.innerHTML = '<div class="empty-panel">No shop items are available right now.</div>';
+    return;
+  }
+  const labels = { dj_boom_pack: '🤖 DJ BOOM Message Packs', radio_pass: '📻 Radio Passes' };
+  const groups = new Map();
+  MUSI_SHOP_STATE.catalog.forEach(item => {
+    if (!groups.has(item.category)) groups.set(item.category, []);
+    groups.get(item.category).push(item);
+  });
+  root.innerHTML = [...groups.entries()].map(([category, items]) => `
+    <div class="musi-shop-section-title">${escapeHtml(labels[category] || category.replace(/_/g, ' '))}</div>
+    <div class="musi-shop-grid">
+      ${items.map(item => {
+        const premiumIncluded = !!AUTH.isPremium && ['dj_boom_messages','radio_access'].includes(item.entitlementType);
+        const affordable = MP_STATE.balanceMp >= Number(item.priceMp);
+        const disabled = premiumIncluded || !affordable || MUSI_SHOP_STATE.purchaseInFlight;
+        const buttonText = premiumIncluded ? 'Included with Premium' : affordable ? 'Buy with MP' : `Need ${formatMp(Number(item.priceMp) - MP_STATE.balanceMp)}`;
+        return `<div class="musi-shop-item">
+          <div class="musi-shop-item-icon">${escapeHtml(item.icon || '🟣')}</div>
+          <div class="musi-shop-item-name">${escapeHtml(item.name)}</div>
+          ${item.badge ? `<span class="musi-shop-item-badge">${escapeHtml(item.badge)}</span>` : ''}
+          <div class="musi-shop-item-desc">${escapeHtml(item.description || '')}</div>
+          <div class="musi-shop-item-price">${formatMp(item.priceMp)}</div>
+          <button class="musi-shop-buy" data-shop-sku="${escapeHtml(item.sku)}" ${disabled ? 'disabled' : ''} onclick="beginMusiShopPurchase(this.dataset.shopSku)">${buttonText}</button>
+        </div>`;
+      }).join('')}
+    </div>`).join('');
+}
+
+function beginMusiShopPurchase(sku) {
+  const item = MUSI_SHOP_STATE.catalog.find(row => row.sku === sku);
+  if (!item || MUSI_SHOP_STATE.purchaseInFlight) return;
+  if (MUSI_SHOP_STATE.selectedSku !== sku || !MUSI_SHOP_STATE.pendingIdempotencyKey) {
+    MUSI_SHOP_STATE.pendingIdempotencyKey = newMusiShopIdempotencyKey();
+  }
+  MUSI_SHOP_STATE.selectedSku = sku;
+  if ($('musiShopConfirmTitle')) $('musiShopConfirmTitle').textContent = item.name;
+  if ($('musiShopConfirmText')) $('musiShopConfirmText').textContent = `Spend ${formatMp(item.priceMp)}? Your balance after purchase will be ${formatMp(MP_STATE.balanceMp - item.priceMp)}. ${item.description || ''}`;
+  if ($('musiShopConfirmBtn')) $('musiShopConfirmBtn').textContent = `Buy · ${formatMp(item.priceMp)}`;
+  $('musiShopConfirm')?.classList.add('open');
+  $('musiShopConfirm')?.scrollIntoView({ behavior:'smooth', block:'nearest' });
+}
+
+function cancelMusiShopPurchase() {
+  if (MUSI_SHOP_STATE.purchaseInFlight) return;
+  MUSI_SHOP_STATE.selectedSku = null;
+  MUSI_SHOP_STATE.pendingIdempotencyKey = null;
+  $('musiShopConfirm')?.classList.remove('open');
+}
+
+function newMusiShopIdempotencyKey() {
+  if (window.crypto?.randomUUID) return window.crypto.randomUUID();
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = Math.floor(Math.random() * 16);
+    return (c === 'x' ? r : (r & 3) | 8).toString(16);
+  });
+}
+
+async function confirmMusiShopPurchase() {
+  const sku = MUSI_SHOP_STATE.selectedSku;
+  const item = MUSI_SHOP_STATE.catalog.find(row => row.sku === sku);
+  if (!item || MUSI_SHOP_STATE.purchaseInFlight) return;
+  MUSI_SHOP_STATE.purchaseInFlight = true;
+  const btn = $('musiShopConfirmBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Purchasing…'; }
+  renderMusiShopCatalog();
+  try {
+    const res = await fetch('/api/mp/shop/purchase', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ sku, idempotencyKey: MUSI_SHOP_STATE.pendingIdempotencyKey || newMusiShopIdempotencyKey() }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw Object.assign(new Error(data.error || 'Purchase failed.'), { data });
+    if (data.wallet) {
+      MP_STATE.balanceMp = Number(data.wallet.balanceMp) || 0;
+      MP_STATE.lifetimeEarnedMp = Number(data.wallet.lifetimeEarnedMp) || 0;
+      MP_STATE.lifetimeSpentMp = Number(data.wallet.lifetimeSpentMp) || 0;
+      MP_STATE.loadedFor = AUTH.username;
+    }
+    if (data.entitlements) MUSI_SHOP_STATE.entitlements = { ...MUSI_SHOP_STATE.entitlements, ...data.entitlements };
+    MUSI_SHOP_STATE.loadedFor = AUTH.username;
+    MUSI_SHOP_STATE.history = [];
+    MUSI_SHOP_STATE.historyLoaded = false;
+    MUSI_SHOP_STATE.historyNextBefore = null;
+    MUSI_SHOP_STATE.selectedSku = null;
+    MUSI_SHOP_STATE.pendingIdempotencyKey = null;
+    $('musiShopConfirm')?.classList.remove('open');
+    renderMpWallet();
+    renderMusiShopAccess();
+    showToast('Purchase complete', `${item.name} is ready. Balance: ${formatMp(MP_STATE.balanceMp)}`, 'success');
+  } catch (err) {
+    if (err.data && Number.isFinite(Number(err.data.balanceMp))) {
+      MP_STATE.balanceMp = Number(err.data.balanceMp);
+      renderMpWallet();
+    }
+    showToast('Purchase not completed', err.message || 'Please try again.', 'error');
+  } finally {
+    MUSI_SHOP_STATE.purchaseInFlight = false;
+    if (btn) btn.disabled = false;
+    renderMusiShopCatalog();
+    if (MUSI_SHOP_STATE.selectedSku) beginMusiShopPurchase(MUSI_SHOP_STATE.selectedSku);
+  }
+}
+
+function renderMusiShopHistory() {
+  const root = $('musiShopHistory');
+  if (!root) return;
+  if (!MUSI_SHOP_STATE.history.length) {
+    root.innerHTML = '<div class="empty-panel">No MP transactions yet.</div>';
+    return;
+  }
+  const labels = {
+    listen_to_earn: 'Listen to Earn', shop_purchase: 'Musi-Shop purchase',
+    gift_sent: 'Gift sent', gift_received: 'Gift received', admin_grant: 'MP grant',
+    admin_deduction: 'MP adjustment', refund: 'Refund',
+  };
+  root.innerHTML = MUSI_SHOP_STATE.history.map(tx => {
+    const amount = Number(tx.amountMp) || 0;
+    const when = new Date(tx.createdAt);
+    const dateLabel = Number.isNaN(when.getTime()) ? '' : when.toLocaleString([], { month:'short', day:'numeric', year:'numeric', hour:'numeric', minute:'2-digit' });
+    return `<div class="mp-history-row">
+      <div class="mp-history-title">${escapeHtml(tx.note || labels[tx.reason] || String(tx.reason || '').replace(/_/g, ' '))}</div>
+      <div class="mp-history-meta">${escapeHtml(dateLabel)} · Balance ${formatMp(tx.balanceAfterMp)}</div>
+      <div class="mp-history-amount ${amount >= 0 ? 'positive' : 'negative'}">${amount > 0 ? '+' : ''}${amount.toLocaleString()} MP</div>
+    </div>`;
+  }).join('');
+}
+
+async function loadMusiShopHistory(loadMore = false) {
+  if (!AUTH.loggedIn || !AUTH.token || MUSI_SHOP_STATE.historyLoading) return;
+  MUSI_SHOP_STATE.historyLoading = true;
+  if (!loadMore && $('musiShopHistory')) $('musiShopHistory').innerHTML = '<div class="empty-panel">Loading transactions…</div>';
+  try {
+    const before = loadMore && MUSI_SHOP_STATE.historyNextBefore ? `&before=${encodeURIComponent(MUSI_SHOP_STATE.historyNextBefore)}` : '';
+    const res = await fetch(`/api/mp/ledger?limit=40${before}`, { headers: authHeaders() });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Could not load transactions.');
+    MUSI_SHOP_STATE.history = loadMore
+      ? MUSI_SHOP_STATE.history.concat(data.transactions || [])
+      : (data.transactions || []);
+    MUSI_SHOP_STATE.historyNextBefore = data.nextBefore || null;
+    MUSI_SHOP_STATE.historyLoaded = true;
+    renderMusiShopHistory();
+    if ($('musiShopHistoryMore')) $('musiShopHistoryMore').style.display = data.nextBefore ? '' : 'none';
+  } catch (err) {
+    if ($('musiShopHistory')) $('musiShopHistory').innerHTML = `<div class="empty-panel">${escapeHtml(err.message || 'Could not load transactions.')}</div>`;
+  } finally {
+    MUSI_SHOP_STATE.historyLoading = false;
+  }
 }
 
 function openListenToEarn() {
@@ -6989,6 +7395,7 @@ async function sendMpEarnHeartbeat({ final = false, positionOverride = null } = 
       MP_STATE.lifetimeEarnedMp += Number(data.mpAwarded) || 0;
       MP_STATE.loadedFor = AUTH.username;
       renderMpWallet();
+      renderMusiShopCatalog();
       if (MP_STATE.activeEarn?.sessionId === active.sessionId) stopMpEarnSession({ notifyServer: false });
       showToast(`🟣 +${Number(data.mpAwarded) || active.mpPerTrack} MP`, `You earned Musi-Pixels! Balance: ${formatMp(MP_STATE.balanceMp)}`, 'success');
       mpEarnOffersLoaded = false;
@@ -7043,8 +7450,7 @@ function beginMpEarnSession(start, item) {
 }
 
 $('mpBalanceChip')?.addEventListener('click', () => {
-  $('authOverlay')?.classList.add('open');
-  refreshMpWallet(true);
+  openMusiShop();
 });
 
 const FAMILY_FEATURE_LABELS = {
@@ -7654,16 +8060,19 @@ function updateAuthUI() {
   // Show/hide admin footer entry
   const adminEntry = $('adminFooterEntry');
   if (adminEntry) adminEntry.style.display = AUTH.isAdmin ? '' : 'none';
-  // DJ BOOM header button reflects lock state at a glance
-  const djBtn = $('djBoomBtn');
-  if (djBtn) djBtn.innerHTML = AUTH.isPremium ? '🤖 DJ BOOM' : '🤖 DJ BOOM 🔒';
   renderPremiumStatus();
   renderMpWallet();
+  renderMusiShopAccess();
   if (AUTH.loggedIn && MP_STATE.loadedFor !== AUTH.username && !MP_STATE.loading) {
     queueMicrotask(() => refreshMpWallet());
   } else if (!AUTH.loggedIn) {
     if (MP_STATE.activeEarn) stopMpEarnSession({ notifyServer: false });
     if (MP_STATE.loadedFor || MP_STATE.balanceMp) resetMpWalletLocal();
+  }
+  if (AUTH.loggedIn && MUSI_SHOP_STATE.loadedFor !== AUTH.username && !MUSI_SHOP_STATE.loading) {
+    queueMicrotask(() => refreshMusiShop());
+  } else if (!AUTH.loggedIn && (MUSI_SHOP_STATE.loadedFor || MUSI_SHOP_STATE.catalog.length)) {
+    resetMusiShopLocal();
   }
 }
 
@@ -8396,19 +8805,23 @@ function closeDiscoverOverlay() {
 let djBoomHistory = []; // [{role:'user'|'assistant', content:'...'}]
 let djBoomSending = false;
 
-function openDjBoomOverlay() {
+async function openDjBoomOverlay() {
   if (guardFamilyFeature('djboom')) return;
   $('djBoomOverlay')?.classList.add('open');
-  const locked = !AUTH.isPremium;
-  $('djBoomLockCard').style.display = locked ? 'flex' : 'none';
-  $('djBoomBody').classList.toggle('premium-lock-target', locked);
   if (!AUTH.loggedIn) {
     $('djBoomLockCard').style.display = 'flex';
     $('djBoomBody').classList.add('premium-lock-target');
-    $('djBoomLockCard').querySelector('.lock-msg').textContent = 'Sign in with a FREQ Premium account to use DJ BOOM.';
-  } else {
-    $('djBoomLockCard').querySelector('.lock-msg').textContent = 'DJ BOOM is available with FREQ Premium.';
+    $('djBoomLockCard').querySelector('.lock-msg').textContent = 'Sign in to use Premium or a DJ BOOM message pack.';
+    if ($('djBoomShopAccessBtn')) $('djBoomShopAccessBtn').textContent = 'Sign In to Shop';
+    return;
   }
+  if (!AUTH.isPremium && MUSI_SHOP_STATE.loadedFor !== AUTH.username) await refreshMusiShop();
+  const locked = !canUseDjBoom();
+  $('djBoomLockCard').style.display = locked ? 'flex' : 'none';
+  $('djBoomBody').classList.toggle('premium-lock-target', locked);
+  $('djBoomLockCard').querySelector('.lock-msg').textContent = 'DJ BOOM requires FREQ Premium or a DJ BOOM message pack.';
+  if ($('djBoomShopAccessBtn')) $('djBoomShopAccessBtn').textContent = 'Get a Message Pack';
+  renderMusiShopAccess();
 }
 
 function closeDjBoomOverlay() {
@@ -8498,7 +8911,8 @@ async function djBoomFetchLikedSongsSample() {
 
 async function djBoomSend() {
   if (djBoomSending) return;
-  if (!AUTH.loggedIn || !AUTH.isPremium) { openPremiumHubOverlay(); return; }
+  if (!AUTH.loggedIn) { $('authOverlay')?.classList.add('open'); return; }
+  if (!canUseDjBoom()) { openMusiShop(); return; }
   const input = $('djBoomInput');
   const text = (input.value || '').trim();
   if (!text) return;
@@ -8527,8 +8941,19 @@ async function djBoomSend() {
     const data = await res.json();
     $('djBoomTyping')?.remove();
     if (!res.ok) {
+      if (data.code === 'dj_boom_pack_required') {
+        MUSI_SHOP_STATE.entitlements.djBoomMessagesRemaining = 0;
+        MUSI_SHOP_STATE.entitlements.djBoomAccess = false;
+        renderMusiShopAccess();
+        showToast('Message pack empty', 'Get another DJ BOOM message pack in the Musi-Shop.', 'info');
+      }
       djBoomAppendMessage('assistant', data.error || 'DJ BOOM is temporarily unavailable.');
       return;
+    }
+    if (data.access && !data.access.premiumUnlimited) {
+      MUSI_SHOP_STATE.entitlements.djBoomMessagesRemaining = Math.max(0, Number(data.access.djBoomMessagesRemaining) || 0);
+      MUSI_SHOP_STATE.entitlements.djBoomAccess = MUSI_SHOP_STATE.entitlements.djBoomMessagesRemaining > 0;
+      renderMusiShopAccess();
     }
     djBoomAppendMessage('assistant', data.reply || '…');
     djBoomHistory.push({ role: 'assistant', content: data.reply || '' });
@@ -8775,22 +9200,37 @@ const RADIO = {
 function radioAuthedFetch(url, options = {}) {
   const hasQuery = url.includes('?');
   const withToken = AUTH.token ? `${url}${hasQuery ? '&' : '?'}token=${encodeURIComponent(AUTH.token)}` : url;
-  return fetch(withToken, options);
+  return fetch(withToken, options).then(async res => {
+    if (res.status === 403) {
+      const body = await res.clone().json().catch(() => ({}));
+      if (body.code === 'radio_pass_required') {
+        MUSI_SHOP_STATE.entitlements.radioPassActive = false;
+        MUSI_SHOP_STATE.entitlements.radioAccess = false;
+        renderMusiShopAccess();
+        showToast('Radio Pass required', 'Your Radio Pass is inactive. Open the Musi-Shop to get another pass.', 'info');
+      }
+    }
+    return res;
+  });
 }
 
-function openRadioOverlay() {
+async function openRadioOverlay() {
   if (guardFamilyFeature('radio')) return;
   $('radioOverlay')?.classList.add('open');
-  const locked = !AUTH.isPremium;
-  $('radioLockCard').style.display = locked ? 'flex' : 'none';
-  $('radioBody').classList.toggle('premium-lock-target', locked);
   if (!AUTH.loggedIn) {
     $('radioLockCard').style.display = 'flex';
     $('radioBody').classList.add('premium-lock-target');
-    $('radioLockCard').querySelector('.lock-msg').textContent = 'Sign in with a FREQ Premium account to use Real-Life Radio.';
+    $('radioLockCard').querySelector('.lock-msg').textContent = 'Sign in to use Premium or an active Radio Pass.';
+    if ($('radioShopAccessBtn')) $('radioShopAccessBtn').textContent = 'Sign In to Shop';
     return;
   }
-  $('radioLockCard').querySelector('.lock-msg').textContent = 'Real-Life Radio is available with FREQ Premium.';
+  if (!AUTH.isPremium && MUSI_SHOP_STATE.loadedFor !== AUTH.username) await refreshMusiShop();
+  const locked = !canUseRadio();
+  $('radioLockCard').style.display = locked ? 'flex' : 'none';
+  $('radioBody').classList.toggle('premium-lock-target', locked);
+  $('radioLockCard').querySelector('.lock-msg').textContent = 'Real-Life Radio requires FREQ Premium or an active Radio Pass.';
+  if ($('radioShopAccessBtn')) $('radioShopAccessBtn').textContent = 'Get a Radio Pass';
+  renderMusiShopAccess();
   if (locked) return;
 
   if (!RADIO.homeLoaded) {
@@ -21250,7 +21690,9 @@ document.addEventListener('keydown', e => {
   if ($('settingsOverlay')?.classList.contains('open'))  { closeSettingsModal(); return; }
   if ($('lyricsOverlay')?.classList.contains('open'))    { closeLyricsModal(); return; }
   if ($('discoverOverlay')?.classList.contains('open'))  { closeDiscoverOverlay(); return; }
+  if ($('musiShopOverlay')?.classList.contains('open'))  { closeMusiShop(); return; }
   if ($('djBoomOverlay')?.classList.contains('open'))     { closeDjBoomOverlay(); return; }
+  if ($('radioOverlay')?.classList.contains('open'))      { closeRadioOverlay(); return; }
   if ($('premiumHubOverlay')?.classList.contains('open')) { closePremiumHubOverlay(); return; }
   if ($('premiumCheckoutOverlay')?.classList.contains('open')) { closePremiumCheckout(); return; }
   if ($('premiumManageOverlay')?.classList.contains('open')) { closePremiumManageOverlay(); return; }
@@ -22302,6 +22744,9 @@ const CMD_PALETTE_ACTIONS = [
   { label: 'Toggle Mini Sidebar',      keywords: 'collapse layout',       run: () => miniBtn.click() },
   { label: 'Toggle Fullscreen',        keywords: 'expand player',         run: () => fullscreenBtn.click() },
   { label: 'Audio Quality & Effects',  keywords: 'eq equalizer settings volume speed', run: () => $('audioQualityBtn').click() },
+  { label: 'Open Musi-Shop',           keywords: 'mp musi pixels shop purchase radio pass dj boom pack', run: () => openMusiShop() },
+  { label: 'MP Transaction History',   keywords: 'wallet ledger purchases earnings', run: () => openMusiShop('history') },
+  { label: 'Listen to Earn',           keywords: 'earn mp musi pixels discovery', run: () => openListenToEarn() },
   { label: 'Keyboard Shortcuts',       keywords: 'help hotkeys',          run: () => $('shortcutsOverlay').classList.add('open') },
   { label: 'Support & Feedback',       keywords: 'help contact bug report', run: () => openSupportModal() },
   { label: 'About FREQ',               keywords: 'info version',          run: () => openAboutModal() },
