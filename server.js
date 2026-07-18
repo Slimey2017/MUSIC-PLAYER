@@ -51,6 +51,11 @@
  * GET    /api/playlists/liked                  ?token=    → playlists I've liked
  *
  * POST   /api/plays                            { originalUrl, platform?, title?, token? }
+ * GET    /api/mp/wallet                        Authenticated Musi-Pixels balance
+ * GET    /api/mp/ledger                        Authenticated immutable MP transaction ledger
+ * GET    /api/mp/listen-to-earn/offers         Authenticated eligible discovery tracks
+ * POST   /api/mp/listen-to-earn/heartbeat      Authenticated server-verified playback heartbeat
+ * POST   /api/mp/listen-to-earn/stop           Ends an incomplete earning attempt
  * GET    /api/premium/status                   ?token=   → { isPremium, premiumStatus }  (checkout-return polling)
  * POST   /api/premium/verify                   Authenticated. Live provider lookup — activates Premium if an active
  *                                               membership is found for this account. No webhook dependency.
@@ -2043,7 +2048,8 @@ setInterval(() => {
   for (const [key, t] of recentPlayKeys) if (t < cutoff) recentPlayKeys.delete(key);
 }, 120_000);
 
-const PLAY_SOURCES = ['direct', 'discover', 'chart', 'search', 'dj_boom', 'artist_page', 'playlist', 'shared_link', 'demo'];
+const PLAY_SOURCES = ['direct', 'discover', 'listen_to_earn', 'chart', 'search', 'dj_boom', 'artist_page', 'playlist', 'shared_link', 'demo'];
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 async function dbLogPlay(originalUrl, { platform, title, username, listenerKey, artistName, publishedTrackId, source }) {
   const trackId = await dbGetOrCreateTrack(originalUrl, platform, title, artistName, publishedTrackId);
@@ -2098,6 +2104,195 @@ async function dbMarkPlayOutcome(playRowId, username, completed) {
     .update({ completed: !!completed })
     .eq('id', playRowId)
     .eq('username', username || null);
+}
+
+// ─── Musi-Pixels · wallet + Listen to Earn (Phase 1) ──────────────────────
+// FREQ already owns authentication, canonical tracks, play history, family
+// filtering, and Supabase access. MP deliberately builds on those systems:
+// usernames remain the wallet owner key, tracks.id/artist_id remain the
+// reward identity, and only the server-side service-role client can touch
+// economy rows. The browser never receives database credentials or writes a
+// balance directly.
+const MP_CONFIG_DEFAULTS = Object.freeze({
+  enabled: true,
+  mpPerTrack: 150,
+  minPercentPlayed: 90,
+  minSecondsFloor: 45,
+  maxTracksPerArtistPerDay: 5,
+  maxArtistsPerDay: 10,
+  eligibleLifetimePlayCeiling: 20,
+  eligibleRecencyDays: 30,
+  heartbeatIntervalSeconds: 12,
+  heartbeatGraceSeconds: 90,
+  maxRewardPlaybackRate: 2,
+});
+let mpConfigCache = { value: MP_CONFIG_DEFAULTS, expiresAt: 0 };
+
+function mpConfigNumber(value, fallback, min, max) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, parsed));
+}
+
+async function dbGetMpConfig({ force = false } = {}) {
+  if (!force && mpConfigCache.expiresAt > Date.now()) return mpConfigCache.value;
+  const { data, error } = await supabase.from('app_config')
+    .select('key, value').like('key', 'listen_to_earn.%');
+  if (error) {
+    console.error('[mp config]', error.message);
+    return mpConfigCache.value;
+  }
+  const values = new Map((data || []).map(row => [row.key, row.value]));
+  const cfg = {
+    enabled: values.has('listen_to_earn.enabled')
+      ? values.get('listen_to_earn.enabled') !== false
+      : MP_CONFIG_DEFAULTS.enabled,
+    mpPerTrack: mpConfigNumber(values.get('listen_to_earn.mp_per_track'), 150, 1, 1000000),
+    minPercentPlayed: mpConfigNumber(values.get('listen_to_earn.min_percent_played'), 90, 1, 100),
+    minSecondsFloor: mpConfigNumber(values.get('listen_to_earn.min_seconds_floor'), 45, 1, 86400),
+    maxTracksPerArtistPerDay: mpConfigNumber(values.get('listen_to_earn.max_tracks_per_artist_per_day'), 5, 1, 100),
+    maxArtistsPerDay: mpConfigNumber(values.get('listen_to_earn.max_artists_per_day'), 10, 1, 100),
+    eligibleLifetimePlayCeiling: mpConfigNumber(values.get('listen_to_earn.eligible_lifetime_play_ceiling'), 20, 1, 1000000),
+    eligibleRecencyDays: mpConfigNumber(values.get('listen_to_earn.eligible_recency_days'), 30, 1, 3650),
+    heartbeatIntervalSeconds: mpConfigNumber(values.get('listen_to_earn.heartbeat_interval_seconds'), 12, 5, 60),
+    heartbeatGraceSeconds: mpConfigNumber(values.get('listen_to_earn.heartbeat_grace_seconds'), 90, 15, 600),
+    maxRewardPlaybackRate: mpConfigNumber(values.get('listen_to_earn.max_reward_playback_rate'), 2, 0.25, 4),
+  };
+  mpConfigCache = { value: Object.freeze(cfg), expiresAt: Date.now() + 60_000 };
+  return mpConfigCache.value;
+}
+
+async function dbGetMpWallet(username) {
+  const { data, error } = await supabase.from('wallet_balances')
+    .select('balance_mp, lifetime_earned_mp, lifetime_spent_mp, updated_at')
+    .eq('username', username).maybeSingle();
+  if (error) throw new Error(error.message);
+  return {
+    balanceMp: Number(data?.balance_mp) || 0,
+    lifetimeEarnedMp: Number(data?.lifetime_earned_mp) || 0,
+    lifetimeSpentMp: Number(data?.lifetime_spent_mp) || 0,
+    updatedAt: data?.updated_at || null,
+  };
+}
+
+async function dbGetMpLedger(username, { limit = 30, before = null } = {}) {
+  let query = supabase.from('wallet_transactions')
+    .select('id, amount_mp, balance_after_mp, reason, ref_type, ref_id, note, created_at')
+    .eq('username', username)
+    .order('created_at', { ascending: false })
+    .order('id', { ascending: false })
+    .limit(limit);
+  if (before) query = query.lt('created_at', before);
+  const { data, error } = await query;
+  if (error) throw new Error(error.message);
+  return (data || []).map(row => ({
+    id: row.id,
+    amountMp: Number(row.amount_mp),
+    balanceAfterMp: Number(row.balance_after_mp),
+    reason: row.reason,
+    refType: row.ref_type,
+    refId: row.ref_id,
+    note: row.note,
+    createdAt: row.created_at,
+  }));
+}
+
+function mpRequestIdentity(req, username, clientDeviceId) {
+  // HMACs make the stored anti-abuse identifiers useful for correlation
+  // without retaining a session token, user-agent, or device id. IP is not
+  // stored or used as a hard signal: legitimate Wi-Fi/mobile changes must
+  // not invalidate a background listen.
+  const secret = process.env.MP_ABUSE_SECRET || process.env.SUPABASE_SERVICE_KEY || 'freq-mp-local-development';
+  const ua = String(req.headers['user-agent'] || '').slice(0, 300);
+  const device = String(clientDeviceId || '').slice(0, 128);
+  const hmac = value => crypto.createHmac('sha256', secret).update(value).digest('hex');
+  return {
+    deviceHash: hmac(`${username}|${device}|${ua}`),
+    ipHash: null,
+  };
+}
+
+async function dbGetListenToEarnOffers(username, allowedRatings, limit) {
+  const config = await dbGetMpConfig();
+  if (!config.enabled) return { config, offers: [], dailyArtistsUsed: 0 };
+
+  const today = new Date().toISOString().slice(0, 10); // UTC, same day key used by the payout RPC
+  const [{ data: candidateRows, error: candidateErr }, { data: paidRows, error: paidErr }] = await Promise.all([
+    supabase.from('tracks')
+      .select('id, original_url, title, artist_id, artist_name, platform, cover_url, content_rating, is_explicit, play_count, published_at, cloud_file_id')
+      .eq('is_published', true)
+      .not('artist_id', 'is', null)
+      .not('cloud_file_id', 'is', null)
+      .in('content_rating', allowedRatings)
+      .order('published_at', { ascending: false, nullsFirst: false })
+      .limit(150),
+    supabase.from('listen_to_earn_daily_payouts')
+      .select('artist_id, track_id, payout_date')
+      .eq('username', username),
+  ]);
+  if (candidateErr) throw new Error(candidateErr.message);
+  if (paidErr) throw new Error(paidErr.message);
+
+  const candidates = candidateRows || [];
+  if (!candidates.length) return { config, offers: [], dailyArtistsUsed: 0 };
+
+  const artistIds = [...new Set(candidates.map(row => row.artist_id).filter(Boolean))];
+  const cloudIds = [...new Set(candidates.map(row => row.cloud_file_id).filter(Boolean))];
+  const [artistsResult, cloudResult, artistTracksResult] = await Promise.all([
+    supabase.from('artists').select('id, account_id').in('id', artistIds),
+    supabase.from('cloud_files').select('id, duration').in('id', cloudIds),
+    supabase.from('tracks').select('id, artist_id').in('artist_id', artistIds),
+  ]);
+  if (artistsResult.error) throw new Error(artistsResult.error.message);
+  if (cloudResult.error) throw new Error(cloudResult.error.message);
+  if (artistTracksResult.error) throw new Error(artistTracksResult.error.message);
+
+  const ownerByArtist = new Map((artistsResult.data || []).map(row => [row.id, row.account_id]));
+  const durationByCloud = new Map((cloudResult.data || []).map(row => [String(row.id), Number(row.duration)]));
+  const historyTrackRows = artistTracksResult.data || [];
+  const historyTrackIds = historyTrackRows.map(row => row.id);
+  const artistByTrack = new Map(historyTrackRows.map(row => [row.id, row.artist_id]));
+
+  let historyRows = [];
+  if (historyTrackIds.length) {
+    const { data, error } = await supabase.from('track_plays')
+      .select('track_id, played_at')
+      .eq('username', username)
+      .in('track_id', historyTrackIds);
+    if (error) throw new Error(error.message);
+    historyRows = data || [];
+  }
+
+  const historyByArtist = new Map();
+  for (const play of historyRows) {
+    const artistId = artistByTrack.get(play.track_id);
+    if (!artistId) continue;
+    const current = historyByArtist.get(artistId) || { count: 0, lastPlayedAt: null };
+    current.count += 1;
+    if (!current.lastPlayedAt || play.played_at > current.lastPlayedAt) current.lastPlayedAt = play.played_at;
+    historyByArtist.set(artistId, current);
+  }
+
+  const paidTrackIds = new Set((paidRows || []).map(row => row.track_id));
+  const todayPaidRows = (paidRows || []).filter(row => String(row.payout_date) === today);
+  const dailyArtistCounts = new Map();
+  for (const row of todayPaidRows) dailyArtistCounts.set(row.artist_id, (dailyArtistCounts.get(row.artist_id) || 0) + 1);
+  const dailyArtists = new Set(todayPaidRows.map(row => row.artist_id));
+  const recencyCutoff = Date.now() - config.eligibleRecencyDays * 86400_000;
+
+  const offers = candidates.filter(track => {
+    if (ownerByArtist.get(track.artist_id) === username) return false;
+    const duration = durationByCloud.get(String(track.cloud_file_id));
+    if (!Number.isFinite(duration) || duration < config.minSecondsFloor) return false;
+    if (paidTrackIds.has(track.id)) return false;
+    if ((dailyArtistCounts.get(track.artist_id) || 0) >= config.maxTracksPerArtistPerDay) return false;
+    if (dailyArtists.size >= config.maxArtistsPerDay && !dailyArtists.has(track.artist_id)) return false;
+    const history = historyByArtist.get(track.artist_id) || { count: 0, lastPlayedAt: null };
+    return history.count < config.eligibleLifetimePlayCeiling ||
+      !history.lastPlayedAt || new Date(history.lastPlayedAt).getTime() < recencyCutoff;
+  }).slice(0, limit);
+
+  return { config, offers, dailyArtistsUsed: dailyArtists.size, dailyArtistCounts, durationByCloud };
 }
 
 // ─── Creator Insights ──────────────────────────────────────────────────────
@@ -8134,7 +8329,10 @@ app.get('/api/playlists/:id', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 app.post('/api/plays', rateLimit, async (req, res) => {
-  const { originalUrl, platform, title, artist, token, trackId, source, previousPlay } = req.body || {};
+  const {
+    originalUrl, platform, title, artist, token, trackId, source, previousPlay,
+    listenToEarn, mpDeviceId,
+  } = req.body || {};
   if (!originalUrl || typeof originalUrl !== 'string') {
     return res.status(400).json({ error: '"originalUrl" is required.' });
   }
@@ -8148,7 +8346,6 @@ app.post('/api/plays', rateLimit, async (req, res) => {
   // trusted to identify these rows. Must be a syntactically valid uuid or
   // we ignore it and fall back to the legacy originalUrl flow, rather than
   // letting a malformed value reach the database as a no-op filter.
-  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const publishedTrackId = (typeof trackId === 'string' && UUID_RE.test(trackId)) ? trackId : null;
   try {
     const sess = token ? await dbGetSession(token) : null;
@@ -8197,10 +8394,174 @@ app.post('/api/plays', rateLimit, async (req, res) => {
       dbMarkPlayOutcome(previousPlay.rowId, sess.username, previousPlay.completed).catch(() => {});
     }
 
-    return res.json({ counted: result.counted, playCount: result.playCount ?? null, playRowId: result.playRowId ?? null });
+    // Listen to Earn starts through the existing canonical play request so
+    // eligibility is checked against the exact tracks.id/track_plays row
+    // already created above. It is opt-in only from Discovery's Earn MP
+    // source; ordinary Charts, playlists, artist pages, Radio, DJ BOOM, and
+    // arbitrary URL plays continue to behave exactly as before.
+    let listenToEarnResult = null;
+    if (listenToEarn === true && safeSource === 'listen_to_earn' && sess && publishedTrackId) {
+      const identity = mpRequestIdentity(req, sess.username, mpDeviceId);
+      const { data: earnData, error: earnError } = await supabase.rpc('start_listen_to_earn_session', {
+        p_username: sess.username,
+        p_track_id: publishedTrackId,
+        p_play_row_id: result.playRowId || null,
+        p_device_hash: identity.deviceHash,
+        p_ip_hash: identity.ipHash,
+      });
+      if (earnError) {
+        console.error('[mp listen start]', earnError.message);
+        listenToEarnResult = { eligible: false, reason: 'unavailable', message: 'Listen to Earn could not start.' };
+      } else {
+        listenToEarnResult = earnData || { eligible: false, reason: 'unavailable' };
+      }
+    }
+
+    return res.json({
+      counted: result.counted,
+      playCount: result.playCount ?? null,
+      playRowId: result.playRowId ?? null,
+      listenToEarn: listenToEarnResult,
+    });
   } catch (err) {
     console.error('[plays log]', err);
     return res.status(500).json({ error: 'Could not log play.' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  MUSI-PIXELS · PHASE 1
+//  GET  /api/mp/wallet
+//  GET  /api/mp/ledger?limit=&before=
+//  GET  /api/mp/listen-to-earn/offers?limit=
+//  POST /api/mp/listen-to-earn/heartbeat
+//  POST /api/mp/listen-to-earn/stop
+//
+//  All routes resolve the existing FREQ session token. No Supabase browser
+//  auth, second account model, or client-writable balance is introduced.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+app.get('/api/mp/wallet', rateLimit, async (req, res) => {
+  const token = (req.headers.authorization || '').replace('Bearer ', '') || req.query.token;
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Authentication required.' });
+  try {
+    const wallet = await dbGetMpWallet(sess.username);
+    return res.json({ currency: 'MP', ...wallet });
+  } catch (err) {
+    console.error('[mp wallet]', err);
+    return res.status(500).json({ error: 'Could not load your Musi-Pixels wallet.' });
+  }
+});
+
+app.get('/api/mp/ledger', rateLimit, async (req, res) => {
+  const token = (req.headers.authorization || '').replace('Bearer ', '') || req.query.token;
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Authentication required.' });
+  const limit = Math.min(Math.max(Number(req.query.limit) || 30, 1), 100);
+  const beforeCandidate = req.query.before ? new Date(String(req.query.before)) : null;
+  const before = beforeCandidate && !Number.isNaN(beforeCandidate.getTime()) ? beforeCandidate.toISOString() : null;
+  try {
+    const transactions = await dbGetMpLedger(sess.username, { limit, before });
+    return res.json({
+      currency: 'MP',
+      transactions,
+      nextBefore: transactions.length === limit ? transactions[transactions.length - 1].createdAt : null,
+    });
+  } catch (err) {
+    console.error('[mp ledger]', err);
+    return res.status(500).json({ error: 'Could not load your Musi-Pixels ledger.' });
+  }
+});
+
+app.get('/api/mp/listen-to-earn/offers', rateLimit, requireFeatureAllowed('discover'), async (req, res) => {
+  const sess = req._session;
+  const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 50);
+  try {
+    const allowedRatings = await getAllowedRatingsForRequest(req);
+    const result = await dbGetListenToEarnOffers(sess.username, allowedRatings, Math.min(limit * 3, 100));
+    // Family Controls' explicit track/artist/genre blocks are applied after
+    // the rarity/daily-cap filter, exactly like Charts and Track Finder.
+    const visible = (await filterBlockedTracksForRequest(req, result.offers)).slice(0, limit);
+    return res.json({
+      enabled: result.config.enabled,
+      currency: 'MP',
+      rewardMp: result.config.mpPerTrack,
+      rules: {
+        minPercentPlayed: result.config.minPercentPlayed,
+        minSecondsFloor: result.config.minSecondsFloor,
+        maxTracksPerArtistPerDay: result.config.maxTracksPerArtistPerDay,
+        maxArtistsPerDay: result.config.maxArtistsPerDay,
+        eligibleLifetimePlayCeiling: result.config.eligibleLifetimePlayCeiling,
+        eligibleRecencyDays: result.config.eligibleRecencyDays,
+        heartbeatIntervalSeconds: result.config.heartbeatIntervalSeconds,
+      },
+      dailyArtistsUsed: result.dailyArtistsUsed,
+      offers: visible.map(track => ({
+        id: track.id,
+        originalUrl: track.original_url,
+        title: track.title || 'Untitled',
+        artistId: track.artist_id,
+        artistName: track.artist_name || 'Unknown Artist',
+        platform: 'cloud',
+        coverUrl: track.cover_url || null,
+        contentRating: track.content_rating || 'clean',
+        isExplicit: !!track.is_explicit,
+        durationSeconds: result.durationByCloud.get(String(track.cloud_file_id)) || null,
+        rewardMp: result.config.mpPerTrack,
+        remainingForArtistToday: Math.max(0, result.config.maxTracksPerArtistPerDay - (result.dailyArtistCounts.get(track.artist_id) || 0)),
+      })),
+    });
+  } catch (err) {
+    console.error('[mp offers]', err);
+    return res.status(500).json({ error: 'Could not load Listen to Earn offers.' });
+  }
+});
+
+app.post('/api/mp/listen-to-earn/heartbeat', rateLimit, async (req, res) => {
+  const token = (req.headers.authorization || '').replace('Bearer ', '') || req.body?.token;
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Authentication required.' });
+  const { sessionId, currentTimeSeconds, playbackRate, mpDeviceId } = req.body || {};
+  const position = Number(currentTimeSeconds);
+  const rate = Number(playbackRate);
+  if (!UUID_RE.test(String(sessionId || '')) || !Number.isFinite(position) || position < 0 ||
+      !Number.isFinite(rate) || rate < 0.25 || rate > 16) {
+    return res.status(400).json({ error: 'Invalid Listen to Earn heartbeat.' });
+  }
+  try {
+    const identity = mpRequestIdentity(req, sess.username, mpDeviceId);
+    const { data, error } = await supabase.rpc('record_listen_to_earn_heartbeat', {
+      p_username: sess.username,
+      p_session_id: sessionId,
+      p_position_seconds: position,
+      p_playback_rate: rate,
+      p_device_hash: identity.deviceHash,
+      p_ip_hash: identity.ipHash,
+    });
+    if (error) throw new Error(error.message);
+    return res.json(data || { active: false, rewarded: false, reason: 'unavailable' });
+  } catch (err) {
+    console.error('[mp heartbeat]', err);
+    return res.status(500).json({ error: 'Could not verify this Listen to Earn heartbeat.' });
+  }
+});
+
+app.post('/api/mp/listen-to-earn/stop', rateLimit, async (req, res) => {
+  const token = (req.headers.authorization || '').replace('Bearer ', '') || req.body?.token;
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Authentication required.' });
+  const { sessionId } = req.body || {};
+  if (!UUID_RE.test(String(sessionId || ''))) return res.status(400).json({ error: 'Invalid Listen to Earn session.' });
+  try {
+    const { error } = await supabase.from('listen_to_earn_sessions')
+      .update({ status: 'expired', deny_reason: 'playback_stopped', completed_at: new Date().toISOString() })
+      .eq('id', sessionId).eq('username', sess.username).eq('status', 'active');
+    if (error) throw new Error(error.message);
+    return res.json({ success: true });
+  } catch (err) {
+    console.error('[mp stop]', err);
+    return res.status(500).json({ error: 'Could not stop the Listen to Earn session.' });
   }
 });
 
@@ -11069,7 +11430,6 @@ app.get('/api/activity/feed/realtime', requireFeatureAllowed('social_feed'), asy
 // it at the route layer (rather than in dbGetArtist itself) keeps the DB
 // helpers' contracts narrow and testable, and keeps this dual-lookup
 // concern in exactly one place.
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 async function resolveArtistFromParam(idParam) {
   const raw = decodeURIComponent(idParam || '').trim();
   if (!raw) return null;
