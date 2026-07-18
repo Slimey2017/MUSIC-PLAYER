@@ -30,20 +30,6 @@
       PUBLIC_KEY:  'pYuzWgI7zierUF20O',
     };
   </script>
-  <!-- EmailJS — FREQ Account Email Verification (Part 8). Same service/key
-       as Artist Verification above (one EmailJS account, several templates)
-       but its OWN template (template_524i64l) — this is a "confirm your
-       FREQ account" email, not an artist-claim confirmation, so the copy/
-       subject read differently. Template expects these variables: email,
-       displayName, verifyUrl, expiresInHours — see
-       sendAccountVerificationEmail() for exactly what's passed. -->
-  <script>
-    const FREQ_ACCOUNT_EMAILJS = {
-      SERVICE_ID:  'service_gfpf5hf',
-      TEMPLATE_ID: 'template_524i64l',
-      PUBLIC_KEY:  'pYuzWgI7zierUF20O',
-    };
-  </script>
   <!-- Gumroad — FREQ Premium checkout overlay. Binds to any
        a.gumroad-button in the page (see #pcoGumroadLink) and opens
        Gumroad's hosted checkout in an in-page overlay instead of
@@ -3868,6 +3854,11 @@ body.oled-mode {
         </div>
       </div>
 
+      <div class="support-section" id="familyPendingSection" style="display:none;">
+        <div class="support-section-title">Pending Approval</div>
+        <div id="familyPendingList"></div>
+      </div>
+
       <div class="support-section">
         <div class="support-section-title">Children</div>
         <div id="familyChildrenList"><div class="empty-panel" style="font-size:0.5rem;padding:14px;text-align:center;color:var(--text-muted);">No children yet — send an invite code above.</div></div>
@@ -3896,6 +3887,18 @@ body.oled-mode {
       </div>
 
       <div class="support-section">
+        <div class="support-section-title">Content Blocks</div>
+        <label class="family-feature-toggle-row" style="cursor:pointer;">
+          <span>Block artists with 18+ releases</span>
+          <input type="checkbox" id="familyEditBlockExplicitArtists" style="accent-color:var(--accent);" />
+        </label>
+        <textarea class="support-field" id="familyEditBlockedArtists" rows="2" placeholder="Blocked artist IDs — comma or line separated" style="resize:vertical;"></textarea>
+        <textarea class="support-field" id="familyEditBlockedTracks" rows="2" placeholder="Blocked track IDs — comma or line separated" style="resize:vertical;"></textarea>
+        <textarea class="support-field" id="familyEditBlockedGenres" rows="2" placeholder="Blocked genres — comma or line separated" style="resize:vertical;"></textarea>
+        <div style="font-size:0.42rem;color:var(--text-muted);line-height:1.6;">Use the IDs shown in FREQ artist and track links. Matching content is removed from search, discovery, playlists, radio, and playback.</div>
+      </div>
+
+      <div class="support-section">
         <div class="support-section-title">Daily Listening Limit</div>
         <input type="number" class="support-field" id="familyEditDailyLimit" placeholder="Minutes per day (blank = no limit)" min="1" />
       </div>
@@ -3907,6 +3910,16 @@ body.oled-mode {
           <input type="time" class="support-field" id="familyEditBedtimeEnd" style="flex:1;" />
         </div>
         <div style="font-size:0.44rem;color:var(--text-muted);margin-top:4px;">Leave blank to disable bedtime restriction.</div>
+      </div>
+
+      <div class="support-section">
+        <div class="support-section-title">Allowed Listening Hours</div>
+        <div style="display:flex;gap:8px;">
+          <input type="time" class="support-field" id="familyEditAllowedStart" style="flex:1;" />
+          <input type="time" class="support-field" id="familyEditAllowedEnd" style="flex:1;" />
+        </div>
+        <input type="text" class="support-field" id="familyEditTimezone" placeholder="Time zone, e.g. America/Chicago" maxlength="64" />
+        <div style="font-size:0.44rem;color:var(--text-muted);margin-top:4px;">Leave both times blank for all-day listening. The time zone controls daily limits, bedtime, and allowed hours.</div>
       </div>
 
       <button class="support-send-btn" id="familySaveRestrictionsBtn">SAVE CHANGES</button>
@@ -4676,6 +4689,7 @@ body.oled-mode {
       <button class="admin-dash-tab"         id="adminTabDismissed" onclick="setAdminTab('dismissed')">Dismissed</button>
       <button class="admin-dash-tab"         id="adminTabPresence" onclick="setAdminTab('presence')">Presence</button>
       <button class="admin-dash-tab"         id="adminTabVerification" onclick="setAdminTab('verification')">Verification</button>
+      <button class="admin-dash-tab"         id="adminTabRatings" onclick="setAdminTab('ratings')">Ratings</button>
     </div>
     <div id="adminReportsList"><div class="empty-panel">Loading…</div></div>
     <div id="adminReportsLoadMore" style="display:none;margin-top:10px;">
@@ -4713,6 +4727,36 @@ body.oled-mode {
       </div>
       <div id="adminVerificationQueue"><div class="empty-panel">Loading…</div></div>
       <div id="adminVerificationDetail" style="display:none;"></div>
+    </div>
+    <div id="adminRatingsPanel" style="display:none;">
+      <div class="support-section">
+        <div class="support-section-title">Track Rating Review</div>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <input type="text" class="support-field" id="adminRatingTrackId" placeholder="Track UUID" style="flex:1;margin:0;" />
+          <button class="family-child-edit-btn" onclick="adminLoadTrackRating()">LOAD</button>
+        </div>
+        <div id="adminRatingTrackMeta" style="font-size:0.46rem;color:var(--text-muted);line-height:1.7;margin-top:10px;">Enter a track ID from a report, track link, or artist catalog.</div>
+      </div>
+      <div id="adminRatingEditor" style="display:none;">
+        <div class="support-section">
+          <div class="support-section-title">Override Rating</div>
+          <select class="support-field" id="adminRatingSelect">
+            <option value="clean">🟢 Clean</option>
+            <option value="parental_guidance">🟡 Parental Guidance</option>
+            <option value="adult">🔴 18+</option>
+          </select>
+          <textarea class="support-field" id="adminRatingReason" maxlength="500" rows="3" placeholder="Moderation reason (recommended)…" style="resize:vertical;"></textarea>
+          <div style="display:flex;gap:8px;">
+            <button class="support-send-btn" onclick="adminOverrideTrackRating()" style="flex:1;margin:0;">SAVE OVERRIDE</button>
+            <button class="support-close-btn" id="adminRatingLockBtn" onclick="adminToggleTrackRatingLock()" style="flex:1;margin:0;">LOCK RATING</button>
+          </div>
+          <div id="adminRatingStatus" style="font-size:0.44rem;color:var(--text-muted);margin-top:8px;min-height:1.4em;"></div>
+        </div>
+        <div class="support-section">
+          <div class="support-section-title">Rating History</div>
+          <div id="adminRatingHistory"><div class="empty-panel">No history loaded.</div></div>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -6741,7 +6785,7 @@ function authHeaders() {
 }
 
 const FAMILY_FEATURE_LABELS = {
-  radio: 'Radio', discover: 'Discover', social_feed: 'Social Feed',
+  radio: 'Radio', djboom: 'DJ BOOM', discover: 'Discover', social_feed: 'Social Feed',
   following: 'Following', uploads: 'Uploads', artist_pages: 'Artist Pages',
   labs: 'Experimental Labs', premium_purchases: 'Premium purchases',
 };
@@ -6776,6 +6820,7 @@ function guardFamilyFeature(feature) {
 const FAMILY_STATE = {
   family: null,
   children: [],
+  pendingChildren: [],
   editingUsername: null,
   editingRestrictions: null,
   historyBefore: null, // cursor for Playback History "load more" pagination
@@ -6852,6 +6897,7 @@ async function loadFamilyModalData() {
     if (!res.ok) { showToast('Family', data.error || 'Could not load family.', 'error'); familySwitchView('familyViewNone'); return; }
     FAMILY_STATE.family = data.family;
     FAMILY_STATE.children = data.children || [];
+    FAMILY_STATE.pendingChildren = data.pendingChildren || [];
     if (data.family) {
       familySwitchView('familyViewParent');
       renderFamilyDashboard();
@@ -6878,6 +6924,25 @@ function renderFamilyChildSummary() {
 
 function renderFamilyDashboard() {
   $('familyDashName').textContent = FAMILY_STATE.family?.name || 'My Family';
+  const pendingSection = $('familyPendingSection');
+  const pendingList = $('familyPendingList');
+  if (pendingSection && pendingList) {
+    pendingSection.style.display = FAMILY_STATE.pendingChildren.length ? '' : 'none';
+    pendingList.innerHTML = FAMILY_STATE.pendingChildren.map(child => `
+      <div class="family-child-card">
+        <div class="family-child-card-top">
+          <div>
+            <div class="family-child-name">${escapeHtml(child.displayName || child.username)}</div>
+            <div class="family-child-meta">@${escapeHtml(child.username)} · waiting for approval</div>
+          </div>
+          <div style="display:flex;gap:6px;">
+            <button class="family-child-edit-btn" onclick="approveFamilyChild('${escapeHtml(child.username)}')">APPROVE</button>
+            <button class="family-child-edit-btn" onclick="rejectFamilyChild('${escapeHtml(child.username)}')" style="border-color:var(--accent2);color:var(--accent2);">REJECT</button>
+          </div>
+        </div>
+      </div>
+    `).join('');
+  }
   const list = $('familyChildrenList');
   if (!FAMILY_STATE.children.length) {
     list.innerHTML = '<div class="empty-panel" style="font-size:0.5rem;padding:14px;text-align:center;color:var(--text-muted);">No children yet — send an invite code above.</div>';
@@ -6898,6 +6963,27 @@ function renderFamilyDashboard() {
       </div>
     `;
   }).join('');
+}
+
+async function decideFamilyChild(username, decision) {
+  const action = decision === 'approve' ? 'approve' : 'reject';
+  try {
+    const res = await fetch(`/api/family/child/${encodeURIComponent(username)}/${action}`, {
+      method: 'POST', headers: authHeaders(),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { showToast('Family', data.error || `Could not ${action} request.`, 'error'); return; }
+    showToast(action === 'approve' ? 'Child approved' : 'Request rejected', `@${username}`, action === 'approve' ? 'success' : 'info');
+    await loadFamilyModalData();
+  } catch (_) {
+    showToast('Family', 'Network error updating the request.', 'error');
+  }
+}
+
+function approveFamilyChild(username) { return decideFamilyChild(username, 'approve'); }
+function rejectFamilyChild(username) {
+  if (!confirm(`Reject the family request from "${username}"?`)) return;
+  return decideFamilyChild(username, 'reject');
 }
 
 $('familyCreateBtn')?.addEventListener('click', async () => {
@@ -6930,15 +7016,7 @@ $('familyJoinBtn')?.addEventListener('click', async () => {
     const data = await res.json().catch(() => ({}));
     if (!res.ok) { errEl.textContent = data.error || 'Could not join family.'; errEl.classList.add('show'); return; }
     errEl.classList.remove('show');
-    showToast('Joined family!', 'Your account is now managed by a parent or guardian.', 'success');
-    // Refresh the capability summary immediately so enforcement (and this
-    // modal's own view routing) reflects the new membership right away
-    // rather than waiting for the next sign-in/token-refresh cycle.
-    try {
-      const refreshRes = await fetch('/api/auth/token-refresh', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: AUTH.token }) });
-      const refreshData = await refreshRes.json().catch(() => ({}));
-      if (refreshRes.ok) setFamilyControls(refreshData.familyControls);
-    } catch (_) {}
+    showToast('Request sent', 'A parent or guardian must approve this child account before family management begins.', 'success');
     closeFamilyModal();
     updateAuthUI();
   } catch (err) {
@@ -7116,6 +7194,13 @@ function renderFamilyEditForm() {
   $('familyEditDailyLimit').value = r.daily_listening_limit_minutes || '';
   $('familyEditBedtimeStart').value = r.bedtime_start ? String(r.bedtime_start).slice(0, 5) : '';
   $('familyEditBedtimeEnd').value = r.bedtime_end ? String(r.bedtime_end).slice(0, 5) : '';
+  $('familyEditAllowedStart').value = r.allowed_hours_start ? String(r.allowed_hours_start).slice(0, 5) : '';
+  $('familyEditAllowedEnd').value = r.allowed_hours_end ? String(r.allowed_hours_end).slice(0, 5) : '';
+  $('familyEditTimezone').value = r.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  $('familyEditBlockExplicitArtists').checked = !!r.block_explicit_artists;
+  $('familyEditBlockedArtists').value = (r.blocked_artist_ids || []).join('\n');
+  $('familyEditBlockedTracks').value = (r.blocked_track_ids || []).join('\n');
+  $('familyEditBlockedGenres').value = (r.blocked_genres || []).join('\n');
 }
 
 function setFamilyEditRating(el, rating) {
@@ -7147,6 +7232,15 @@ $('familySaveRestrictionsBtn')?.addEventListener('click', async () => {
     const bedtimeEnd = $('familyEditBedtimeEnd').value || '';
     patch.bedtime_start = bedtimeStart || null;
     patch.bedtime_end = bedtimeEnd || null;
+    patch.allowed_hours_start = $('familyEditAllowedStart').value || null;
+    patch.allowed_hours_end = $('familyEditAllowedEnd').value || null;
+    patch.timezone = ($('familyEditTimezone').value || '').trim() || 'UTC';
+    patch.block_explicit_artists = !!$('familyEditBlockExplicitArtists').checked;
+    const splitIds = value => value.split(/[\s,]+/).map(v => v.trim()).filter(Boolean);
+    const splitLabels = value => value.split(/[\n,]+/).map(v => v.trim()).filter(Boolean);
+    patch.blocked_artist_ids = splitIds($('familyEditBlockedArtists').value || '');
+    patch.blocked_track_ids = splitIds($('familyEditBlockedTracks').value || '');
+    patch.blocked_genres = splitLabels($('familyEditBlockedGenres').value || '');
 
     const res = await fetch(`/api/family/child/${encodeURIComponent(username)}/restrictions`, {
       method: 'PATCH', headers: authHeaders(), body: JSON.stringify(patch),
@@ -8010,6 +8104,7 @@ let djBoomHistory = []; // [{role:'user'|'assistant', content:'...'}]
 let djBoomSending = false;
 
 function openDjBoomOverlay() {
+  if (guardFamilyFeature('djboom')) return;
   $('djBoomOverlay')?.classList.add('open');
   const locked = !AUTH.isPremium;
   $('djBoomLockCard').style.display = locked ? 'flex' : 'none';
@@ -8251,7 +8346,9 @@ const DJ_BOOM_ACTION_HANDLERS = {
     if (!seed) { showToast('DJ BOOM', 'Play something first so FREQ Radio has a seed.', 'info'); return; }
     try {
       const params = new URLSearchParams({ q: seed, limit: '15' });
-      const res = await fetch(`/api/discover/tracks?${params}`);
+      const res = await fetch(`/api/discover/tracks?${params}`, {
+        headers: AUTH.token ? { 'Authorization': `Bearer ${AUTH.token}` } : {},
+      });
       const data = await res.json();
       const tracks = (data.tracks || []).filter(t => t.id !== item.freqTrackId);
       if (!tracks.length) { showToast('DJ BOOM', 'Could not find similar tracks for FREQ Radio.', 'info'); return; }
@@ -13330,32 +13427,125 @@ function setAdminTab(status) {
   adminCurrentTab = status;
   adminCurrentOffset = 0;
   document.querySelectorAll('.admin-dash-tab').forEach(t => t.classList.remove('active'));
-  const tabIds = { pending: 'adminTabPending', reviewed: 'adminTabReviewed', action_taken: 'adminTabActioned', dismissed: 'adminTabDismissed', presence: 'adminTabPresence', verification: 'adminTabVerification' };
+  const tabIds = { pending: 'adminTabPending', reviewed: 'adminTabReviewed', action_taken: 'adminTabActioned', dismissed: 'adminTabDismissed', presence: 'adminTabPresence', verification: 'adminTabVerification', ratings: 'adminTabRatings' };
   $(tabIds[status])?.classList.add('active');
 
   const reportsList = $('adminReportsList');
   const reportsLoadMore = $('adminReportsLoadMore');
   const presencePanel = $('adminPresencePanel');
   const verificationPanel = $('adminVerificationPanel');
+  const ratingsPanel = $('adminRatingsPanel');
   if (status === 'presence') {
     if (reportsList) reportsList.style.display = 'none';
     if (reportsLoadMore) reportsLoadMore.style.display = 'none';
     if (presencePanel) presencePanel.style.display = '';
     if (verificationPanel) verificationPanel.style.display = 'none';
+    if (ratingsPanel) ratingsPanel.style.display = 'none';
     loadAdminPresenceOnline();
   } else if (status === 'verification') {
     if (reportsList) reportsList.style.display = 'none';
     if (reportsLoadMore) reportsLoadMore.style.display = 'none';
     if (presencePanel) presencePanel.style.display = 'none';
     if (verificationPanel) verificationPanel.style.display = '';
+    if (ratingsPanel) ratingsPanel.style.display = 'none';
     showVerificationQueue();
     loadAdminVerificationQueue();
+  } else if (status === 'ratings') {
+    if (reportsList) reportsList.style.display = 'none';
+    if (reportsLoadMore) reportsLoadMore.style.display = 'none';
+    if (presencePanel) presencePanel.style.display = 'none';
+    if (verificationPanel) verificationPanel.style.display = 'none';
+    if (ratingsPanel) ratingsPanel.style.display = '';
   } else {
     if (reportsList) reportsList.style.display = '';
     if (presencePanel) presencePanel.style.display = 'none';
     if (verificationPanel) verificationPanel.style.display = 'none';
+    if (ratingsPanel) ratingsPanel.style.display = 'none';
     loadAdminReports(false);
   }
+}
+
+let adminRatingTrack = null;
+
+function renderAdminRatingTrack(track) {
+  adminRatingTrack = track;
+  $('adminRatingEditor').style.display = track ? '' : 'none';
+  if (!track) return;
+  $('adminRatingSelect').value = track.contentRating || 'clean';
+  $('adminRatingTrackMeta').innerHTML = `
+    <strong style="color:var(--text);">${escapeHtml(track.title || 'Untitled track')}</strong><br>
+    ${escapeHtml(track.artistName || track.artistId || 'Unknown artist')} · ${escapeHtml(track.id)}<br>
+    Tags: ${escapeHtml((track.contentRatingTags || []).join(', ') || 'none')} · ${track.contentRatingLocked ? `Locked by ${escapeHtml(track.lockedBy || 'admin')}` : 'Unlocked'}
+  `;
+  $('adminRatingLockBtn').textContent = track.contentRatingLocked ? 'UNLOCK RATING' : 'LOCK RATING';
+}
+
+async function adminLoadTrackRating() {
+  const trackId = ($('adminRatingTrackId').value || '').trim();
+  if (!trackId) { $('adminRatingStatus').textContent = 'Enter a track ID.'; return; }
+  $('adminRatingTrackMeta').textContent = 'Loading…';
+  try {
+    const [trackRes, historyRes] = await Promise.all([
+      fetch(`/api/admin/tracks/${encodeURIComponent(trackId)}/rating`, { headers: authHeaders() }),
+      fetch(`/api/admin/tracks/${encodeURIComponent(trackId)}/rating-history`, { headers: authHeaders() }),
+    ]);
+    const trackData = await trackRes.json().catch(() => ({}));
+    const historyData = await historyRes.json().catch(() => ({}));
+    if (!trackRes.ok) throw new Error(trackData.error || 'Could not load track.');
+    renderAdminRatingTrack(trackData.track);
+    renderAdminRatingHistory(historyRes.ok ? historyData.history || [] : []);
+    $('adminRatingStatus').textContent = '';
+  } catch (err) {
+    adminRatingTrack = null;
+    $('adminRatingEditor').style.display = 'none';
+    $('adminRatingTrackMeta').textContent = err.message || 'Could not load track.';
+  }
+}
+
+function renderAdminRatingHistory(history) {
+  const el = $('adminRatingHistory');
+  if (!history.length) { el.innerHTML = '<div class="empty-panel">No rating changes recorded.</div>'; return; }
+  el.innerHTML = history.map(item => `
+    <div style="padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface2);margin-bottom:6px;">
+      <div style="font-size:0.48rem;color:var(--text);">${escapeHtml(String(item.action || '').replace(/_/g, ' '))}</div>
+      <div style="font-size:0.42rem;color:var(--text-muted);margin-top:3px;">${escapeHtml(item.previousRating || '—')} → ${escapeHtml(item.newRating || '—')} · ${escapeHtml(item.actor || 'system')} · ${adminFormatTimestamp(item.createdAt)}</div>
+      ${item.reason ? `<div style="font-size:0.42rem;color:var(--text-dim);margin-top:4px;">${escapeHtml(item.reason)}</div>` : ''}
+    </div>
+  `).join('');
+}
+
+async function adminOverrideTrackRating() {
+  if (!adminRatingTrack) return;
+  const status = $('adminRatingStatus');
+  status.textContent = 'Saving…';
+  try {
+    const res = await fetch(`/api/admin/tracks/${encodeURIComponent(adminRatingTrack.id)}/rating`, {
+      method: 'PATCH', headers: authHeaders(), body: JSON.stringify({
+        contentRating: $('adminRatingSelect').value,
+        reason: ($('adminRatingReason').value || '').trim(),
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Could not update rating.');
+    status.textContent = 'Rating updated and album rating recalculated.';
+    await adminLoadTrackRating();
+  } catch (err) { status.textContent = err.message || 'Could not update rating.'; }
+}
+
+async function adminToggleTrackRatingLock() {
+  if (!adminRatingTrack) return;
+  const locked = !adminRatingTrack.contentRatingLocked;
+  const status = $('adminRatingStatus');
+  status.textContent = locked ? 'Locking…' : 'Unlocking…';
+  try {
+    const res = await fetch(`/api/admin/tracks/${encodeURIComponent(adminRatingTrack.id)}/rating-lock`, {
+      method: 'PATCH', headers: authHeaders(), body: JSON.stringify({ locked }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Could not change rating lock.');
+    status.textContent = locked ? 'Rating locked.' : 'Rating unlocked.';
+    await adminLoadTrackRating();
+  } catch (err) { status.textContent = err.message || 'Could not change rating lock.'; }
 }
 
 async function loadAdminStats() {
@@ -15937,6 +16127,15 @@ function activitySseConnect() {
   activitySse.addEventListener('message', (e) => {
     try {
       const event = JSON.parse(e.data);
+      if (event.refresh) {
+        if (state.sidebarView === 'activity') {
+          activityCursor = null;
+          loadActivityFeed(false);
+        } else {
+          setActivityBadge(activityUnreadCount + 1);
+        }
+        return;
+      }
       // If the activity panel is open and showing the right scope, prepend live
       if (state.sidebarView === 'activity') {
         // Check if this event belongs to the current scope
@@ -16207,7 +16406,7 @@ $('signupSubmit').addEventListener('click', async () => {
   if (!email) { errEl.textContent = 'Email is required.'; errEl.classList.add('show'); return; }
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { errEl.textContent = 'Please enter a valid email address.'; errEl.classList.add('show'); return; }
   if (!pw || pw !== conf) { errEl.textContent = pw ? 'Passwords do not match.' : 'Password required.'; errEl.classList.add('show'); return; }
-  if (pw.length < 4) { errEl.textContent = 'Password must be at least 4 characters.'; errEl.classList.add('show'); return; }
+  if (pw.length < 8) { errEl.textContent = 'Password must be at least 8 characters.'; errEl.classList.add('show'); return; }
   if (!birthdate) { errEl.textContent = 'Birthdate is required.'; errEl.classList.add('show'); return; }
   if (new Date(birthdate) > new Date()) { errEl.textContent = 'Birthdate cannot be in the future.'; errEl.classList.add('show'); return; }
   if (!country) { errEl.textContent = 'Please select your country.'; errEl.classList.add('show'); return; }
@@ -16240,20 +16439,10 @@ $('signupSubmit').addEventListener('click', async () => {
     $('signupTerms').checked = false;
     $('signupPrivacy').checked = false;
     showToast('Account created!', 'Welcome, ' + AUTH.name, 'success');
-    // Part 8 — send the first verification email right away. Signup is a
-    // real user-gesture/browser context, exactly like submitVerificationClaim()
-    // for artist verification, so this is the one place emailjs.send() can
-    // fire immediately rather than waiting for the person to click the
-    // "Verify Email" pill themselves.
-    if (data.verifyUrl) {
-      sendAccountVerificationEmail({
-        email: data.email || email,
-        displayName: AUTH.name,
-        verifyUrl: data.verifyUrl,
-        expiresInHours: data.verifyExpiresInHours,
-      }).then(result => {
-        if (result.sent) showToast('Verify your email', `Check ${data.email || email} to confirm your account.`, 'info');
-      });
+    if (data.verificationEmailSent) {
+      showToast('Verify your email', `Check ${data.email || email} to confirm your account.`, 'info');
+    } else {
+      showToast('Email not sent', 'Use the Verify Email button to try again.', 'warning');
     }
   } catch (err) {
     errEl.textContent = 'Network error — is the server running?'; errEl.classList.add('show');
@@ -16348,40 +16537,6 @@ $('addBirthdateSubmit')?.addEventListener('click', async () => {
 });
 
 // ─── Account Email Verification (Part 8) ───────────────────────────────────
-// Mirrors submitVerificationClaim()/resendVerificationEmail() in
-// verification_frontend.js exactly: the SERVER generates + hashes + stores
-// the token and hands back a verifyUrl; the FRONTEND sends the actual email
-// via emailjs.send() since that's the only path that works client-side
-// (EmailJS blocks server-side/non-browser sends by default). One shared
-// function here covers both the auto-send-on-signup case and the manual
-// "Verify Email" pill/resend case — same emailjs call, same failure
-// handling, just a different trigger.
-async function sendAccountVerificationEmail({ email, displayName, verifyUrl, expiresInHours }) {
-  if (!verifyUrl) return { sent: false };
-  try {
-    await emailjs.send(
-      FREQ_ACCOUNT_EMAILJS.SERVICE_ID,
-      FREQ_ACCOUNT_EMAILJS.TEMPLATE_ID,
-      {
-        email,
-        displayName: displayName || 'there',
-        verifyUrl,
-        expiresInHours: String(expiresInHours || 24),
-      },
-      { publicKey: FREQ_ACCOUNT_EMAILJS.PUBLIC_KEY }
-    );
-    return { sent: true };
-  } catch (emailErr) {
-    // Non-fatal by design — same reasoning as the artist-verification flow:
-    // the account/token already exists server-side either way, so a
-    // delivery hiccup (or, right now, the TEMPLATE_ID_TODO placeholder —
-    // see the <head> comment) shouldn't block anything. The person can
-    // always hit "Verify Email" again once a real template is wired up.
-    console.error('[account verification email] EmailJS send failed:', emailErr);
-    return { sent: false, error: emailErr };
-  }
-}
-
 $('authVerifyEmailPill')?.addEventListener('click', async () => {
   const pill = $('authVerifyEmailPill');
   if (pill) { pill.disabled = true; pill.textContent = '…'; }
@@ -16398,11 +16553,10 @@ $('authVerifyEmailPill')?.addEventListener('click', async () => {
       showToast('Already verified', 'Your email is already confirmed.', 'info');
       return;
     }
-    const result = await sendAccountVerificationEmail(data);
-    if (result.sent) {
+    if (data.sent) {
       showToast('Verification sent', `Check ${data.email} for the link.`, 'success');
     } else {
-      showToast('Started, but email may not have sent', 'You can try again from this button.', 'warning');
+      showToast('Could not send', 'You can try again from this button.', 'warning');
     }
   } catch (err) {
     showToast('Network error', 'Could not reach the server.', 'error');
