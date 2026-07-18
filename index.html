@@ -3890,6 +3890,11 @@ body.oled-mode {
       <button class="support-send-btn" id="familySaveRestrictionsBtn">SAVE CHANGES</button>
       <div class="auth-error" id="familyEditError"></div>
 
+      <div class="support-section">
+        <div class="support-section-title">Devices</div>
+        <div id="familyEditDevicesList"><div style="font-size:0.46rem;color:var(--text-muted);padding:6px 0;">Loading…</div></div>
+      </div>
+
       <div class="support-section" style="margin-top:18px;">
         <div class="support-section-title" style="color:var(--accent2);border-color:rgba(255,71,87,0.2);">Danger Zone</div>
         <button class="support-close-btn" id="familySignOutChildBtn" style="border-color:var(--accent3);color:var(--accent3);">Sign Out This Child (all devices)</button>
@@ -6752,6 +6757,43 @@ function closeFamilyModal() {
 }
 $('authFamilyPill')?.addEventListener('click', () => { playSfx?.('click'); openFamilyModal(); });
 
+// ─── Listening-Time Heartbeat (Part 6 — daily limit / bedtime enforcement) ──
+// Deliberately a standalone interval rather than hooking into
+// PlaybackManager's internals — this only needs to know "is audio actively
+// playing right now," which localAudio.paused already answers cleanly, so
+// there's no reason to couple to (and risk destabilizing) the playback
+// state machine for something this self-contained. No-ops entirely for
+// non-child accounts (the server would also no-op, but checking client-side
+// first avoids a pointless request every 30s for the other 99% of users).
+const FAMILY_HEARTBEAT_INTERVAL_MS = 30 * 1000;
+let familyHeartbeatLastFireAt = null;
+async function familyListeningHeartbeat() {
+  if (!AUTH.loggedIn || !AUTH.familyControls?.isChildAccount) { familyHeartbeatLastFireAt = null; return; }
+  if (!localAudio || localAudio.paused) { familyHeartbeatLastFireAt = null; return; }
+
+  const now = Date.now();
+  const elapsedSeconds = familyHeartbeatLastFireAt ? Math.round((now - familyHeartbeatLastFireAt) / 1000) : 0;
+  familyHeartbeatLastFireAt = now;
+  if (elapsedSeconds <= 0) return; // first tick after a pause/resume — nothing elapsed yet to report
+
+  try {
+    const res = await fetch('/api/family/listening-heartbeat', {
+      method: 'POST', headers: authHeaders(),
+      body: JSON.stringify({ elapsedSeconds, deviceLabel: navigator.userAgent.slice(0, 120) }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (data && data.allowed === false) {
+      PlaybackManager?.requestPause?.();
+      showToast('Listening Time', data.message || 'A parent or guardian has restricted listening right now.', 'error');
+    }
+  } catch (err) {
+    // Silent — a missed heartbeat just means this interval's elapsed
+    // seconds go unlogged; the next successful tick resumes normally. Never
+    // interrupt playback over a network hiccup on a background beacon.
+  }
+}
+setInterval(familyListeningHeartbeat, FAMILY_HEARTBEAT_INTERVAL_MS);
+
 function familySwitchView(view) {
   ['familyViewNone', 'familyViewParent', 'familyViewChildEdit', 'familyViewChild'].forEach(id => {
     const el = $(id);
@@ -6894,6 +6936,48 @@ function openFamilyChildEdit(username) {
   $('familyEditChildName').textContent = child.displayName;
   familySwitchView('familyViewChildEdit');
   renderFamilyEditForm();
+  loadFamilyChildDevices(username);
+}
+
+async function loadFamilyChildDevices(username) {
+  const list = $('familyEditDevicesList');
+  if (!list) return;
+  list.innerHTML = '<div style="font-size:0.46rem;color:var(--text-muted);padding:6px 0;">Loading…</div>';
+  try {
+    const res = await fetch(`/api/family/child/${encodeURIComponent(username)}/devices`, { headers: authHeaders() });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { list.innerHTML = '<div style="font-size:0.46rem;color:var(--text-muted);padding:6px 0;">Could not load devices.</div>'; return; }
+    const devices = data.devices || [];
+    if (!devices.length) {
+      list.innerHTML = '<div style="font-size:0.46rem;color:var(--text-muted);padding:6px 0;">No devices seen yet — this fills in once the account plays some audio.</div>';
+      return;
+    }
+    list.innerHTML = devices.map(d => {
+      const lastSeen = d.last_seen_at ? new Date(d.last_seen_at).toLocaleString() : 'Unknown';
+      const label = d.device_label ? escapeHtml(d.device_label.slice(0, 60)) : 'Unlabeled device';
+      return `
+        <div class="family-feature-toggle-row">
+          <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:70%;" title="${label}">${label}<br/><span style="color:var(--text-muted);font-size:0.42rem;">Last seen: ${lastSeen}</span></span>
+          <button class="family-child-edit-btn" style="border-color:var(--accent2);color:var(--accent2);" onclick="removeFamilyChildDevice('${escapeHtml(username)}','${escapeHtml(d.id)}')">REMOVE</button>
+        </div>
+      `;
+    }).join('');
+  } catch (err) {
+    list.innerHTML = '<div style="font-size:0.46rem;color:var(--text-muted);padding:6px 0;">Network error loading devices.</div>';
+  }
+}
+
+async function removeFamilyChildDevice(username, deviceId) {
+  if (!confirm('Remove this device? It will be signed out immediately.')) return;
+  try {
+    const res = await fetch(`/api/family/child/${encodeURIComponent(username)}/devices/${encodeURIComponent(deviceId)}`, { method: 'DELETE', headers: authHeaders() });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { showToast('Family', data.error || 'Could not remove device.', 'error'); return; }
+    showToast('Device removed', '', 'success');
+    loadFamilyChildDevices(username);
+  } catch (err) {
+    showToast('Family', 'Network error.', 'error');
+  }
 }
 
 function renderFamilyEditForm() {
