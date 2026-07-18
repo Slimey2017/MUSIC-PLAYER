@@ -1435,15 +1435,15 @@ async function dbUpdateArtist(artistId, patch) {
 // fabricate a number, likeCount is always 0 here until a track-like feature
 // ships; the field exists in the response shape now so the frontend/API
 // contract doesn't change later, only the value starts becoming real.
-async function dbGetArtistTracks(artistId, { sort = 'plays', limit = 20 } = {}) {
+async function dbGetArtistTracks(artistId, { sort = 'plays', limit = 20, allowedRatings = null } = {}) {
   const col = sort === 'trending' ? 'play_count_7d' : 'play_count';
-  const { data, error } = await supabase
+  let query = supabase
     .from('tracks')
-    .select('id, original_url, platform, title, description, play_count, play_count_7d, last_played_at, cover_url, cloud_file_id, published_at, like_count, is_explicit')
+    .select('id, original_url, platform, title, description, play_count, play_count_7d, last_played_at, cover_url, cloud_file_id, published_at, like_count, is_explicit, content_rating, content_rating_tags, content_rating_locked')
     .eq('artist_id', artistId)
-    .eq('is_published', true)
-    .order(col, { ascending: false })
-    .limit(limit);
+    .eq('is_published', true);
+  if (allowedRatings) query = query.in('content_rating', allowedRatings);
+  const { data, error } = await query.order(col, { ascending: false }).limit(limit);
   if (error) { console.error('[db] getArtistTracks:', error.message); return []; }
   return data || [];
 }
@@ -1493,9 +1493,10 @@ async function dbIsFollowingArtist(followerUsername, artistId) {
 }
 
 // ── Artist releases (discography) ───────────────────────────────────────────
-async function dbGetArtistReleases(artistId, { type = null, includeNonPublic = false } = {}) {
+async function dbGetArtistReleases(artistId, { type = null, includeNonPublic = false, allowedRatings = null } = {}) {
   let q = supabase.from('artist_releases').select('*').eq('artist_id', artistId);
   if (type) q = q.eq('release_type', type);
+  if (allowedRatings) q = q.in('content_rating', allowedRatings);
   // Visitors only see public releases; owner dashboard passes includeNonPublic:true
   if (!includeNonPublic) q = q.eq('visibility', 'public');
   const { data, error } = await q.order('release_date', { ascending: false, nullsFirst: false });
@@ -1628,14 +1629,17 @@ async function dbRemoveTrackFromRelease(releaseId, trackId) {
   await recomputeReleaseContentRating(releaseId);
 }
 
-async function dbGetReleaseTracks(releaseId) {
+async function dbGetReleaseTracks(releaseId, { allowedRatings = null } = {}) {
   const { data, error } = await supabase
     .from('artist_release_tracks')
-    .select('position, tracks(id, original_url, platform, title, play_count, cover_url, cloud_file_id, artist_id, artist_name)')
+    .select('position, tracks(id, original_url, platform, title, play_count, cover_url, cloud_file_id, artist_id, artist_name, is_explicit, content_rating, content_rating_tags)')
     .eq('release_id', releaseId)
     .order('position', { ascending: true });
   if (error) { console.error('[db] getReleaseTracks:', error.message); return []; }
-  return (data || []).filter(r => r.tracks).map(r => ({ ...r.tracks, position: r.position }));
+  const allowed = allowedRatings ? new Set(allowedRatings) : null;
+  return (data || [])
+    .filter(r => r.tracks && (!allowed || allowed.has(r.tracks.content_rating || 'clean')))
+    .map(r => ({ ...r.tracks, position: r.position }));
 }
 
 // ── Track Lyrics ────────────────────────────────────────────────────────────
@@ -3043,10 +3047,9 @@ async function dbGetSession(token) {
 // playlists, the stream route itself, and anything downstream of it like
 // DJ BOOM's frontend-executed actions) is meant to respect per Part 3's
 // "Everything should respect these settings." is_parent_enforced exists for
-// Phase 4 (Family Accounts) to flip on for a child account, at which point
-// only the parent — not the child — can change these; that enforcement isn't
-// implemented yet since Family Accounts doesn't exist until Phase 4, but the
-// column is already here so this phase doesn't need a follow-up migration.
+// Family Accounts flips on for a managed child account, at which point only
+// the parent — not the child — can change these. The getter below repairs any
+// drift from family_restrictions before returning effective settings.
 
 // Returns { allowClean, allowParentalGuidance, allowAdult } for a username,
 // creating nothing — a user who's never touched their settings simply gets
@@ -3056,7 +3059,36 @@ async function dbGetPlaybackFilterSettings(username) {
   const { data, error } = await supabase
     .from('playback_filter_settings').select('*').eq('username', username).maybeSingle();
   if (error) { console.error('[db] getPlaybackFilterSettings:', error.message); return { allowClean: true, allowParentalGuidance: true, allowAdult: true }; }
-  if (!data) return { allowClean: true, allowParentalGuidance: true, allowAdult: true };
+
+  // Family restrictions are authoritative. Reading the effective playback
+  // settings is also a repair point so an interrupted parent-dashboard write,
+  // an older row, or a direct database update cannot leave the two tables out
+  // of sync. This deliberately happens server-side; the child client never
+  // gets a window in which it can submit looser values of its own.
+  const restrictions = await dbGetEffectiveFamilyRestrictions(username);
+  if (restrictions) {
+    const enforced = playbackSettingsForMaximumRating(restrictions.max_content_rating);
+    const hasDrift = !data ||
+      data.allow_clean !== enforced.allowClean ||
+      data.allow_parental_guidance !== enforced.allowParentalGuidance ||
+      data.allow_adult !== enforced.allowAdult ||
+      data.is_parent_enforced !== true;
+    if (hasDrift) await syncChildPlaybackFilters(username, restrictions.max_content_rating);
+    return { ...enforced, isParentEnforced: true };
+  }
+
+  // If a child leaves a family, do not leave the old parent lock stuck on the
+  // account forever. Preserve the last allowed-rating choices but return
+  // control of them to the account owner.
+  if (data?.is_parent_enforced) {
+    const { error: unlockError } = await supabase.from('playback_filter_settings')
+      .update({ is_parent_enforced: false, updated_at: new Date().toISOString() })
+      .eq('username', username);
+    if (unlockError) console.error('[db] unlockPlaybackFilterSettings:', unlockError.message);
+    data.is_parent_enforced = false;
+  }
+
+  if (!data) return { allowClean: true, allowParentalGuidance: true, allowAdult: true, isParentEnforced: false };
   return {
     allowClean: data.allow_clean !== false,
     allowParentalGuidance: data.allow_parental_guidance !== false,
@@ -3101,9 +3133,620 @@ function allowedRatingsFromSettings(settings) {
 async function getAllowedRatingsForRequest(req) {
   const token = (req.headers.authorization || '').replace('Bearer ', '') || req.body?.token || req.query.token;
   const sess = token ? await dbGetSession(token) : null;
+  // A supplied-but-invalid token is not the same thing as a signed-out
+  // visitor. Fail to the safest catalog view during expiry/race windows so
+  // stale sessions cannot momentarily inherit anonymous all-rating access.
+  if (token && !sess) return ['clean'];
   const settings = await dbGetPlaybackFilterSettings(sess?.username || null);
   return allowedRatingsFromSettings(settings);
 }
+
+// Relational playlists keep track payloads as JSON so they can also contain
+// external providers. Only published FREQ ids have authoritative rating rows;
+// batch-resolve those ids and remove blocked ones before returning the
+// playlist. The stream route remains the final backstop for stale clients.
+async function filterPlaylistTracksForRequest(req, rows) {
+  const input = Array.isArray(rows) ? rows : [];
+  const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const freqIds = [...new Set(input
+    .map(row => row?.track_data)
+    .filter(track => track?.platform === 'freq' && uuidRe.test(track.id || ''))
+    .map(track => track.id))];
+  if (!freqIds.length) return input;
+
+  const allowedRatings = await getAllowedRatingsForRequest(req);
+  const { data, error } = await supabase.from('tracks')
+    .select('id, content_rating')
+    .in('id', freqIds)
+    .eq('is_published', true);
+  if (error) throw new Error(error.message);
+
+  const ratingById = new Map((data || []).map(track => [track.id, track.content_rating || 'clean']));
+  const allowed = new Set(allowedRatings);
+  return input.filter(row => {
+    const track = row?.track_data;
+    if (track?.platform !== 'freq' || !uuidRe.test(track.id || '')) return true;
+    const rating = ratingById.get(track.id);
+    return rating ? allowed.has(rating) : false;
+  });
+}
+
+// ─── Family Accounts / Age-Gating (Phase 4, Parts 4-6) ─────────────────────
+// family_restrictions is keyed 1:1 by username (one row per CHILD account,
+// not per family) — see the table's own primary key. A row's mere existence
+// means "this account is under parent-managed restrictions"; there's no
+// separate is_child flag on accounts because family_members.role already
+// carries that ('parent'/'child'), and a child's family_restrictions row is
+// what the parent dashboard actually edits.
+
+// Returns the family_restrictions row for a username, or null if the
+// account isn't under any family's restrictions (either it's not a child,
+// or a child account whose parent hasn't configured restrictions yet —
+// treated as null either way since the caller's job is just "is this
+// account restricted right now," not "should it be").
+async function dbGetFamilyRestrictions(username) {
+  if (!username) return null;
+  const { data, error } = await supabase
+    .from('family_restrictions').select('*').eq('username', username).maybeSingle();
+  if (error) { console.error('[db] getFamilyRestrictions:', error.message); return null; }
+  return data || null;
+}
+
+// True if this username is an ACTIVE child member of some family — the
+// thing every "children cannot..." rule in Part 5 actually needs to check.
+// Deliberately keyed off family_members.role/status rather than
+// accounts.age_group: age_group is just a derived fact about a birthdate,
+// but family membership is the real authorization boundary Part 4/5 draws
+// ("Child accounts cannot change... Only parent can"). A teen or adult
+// could theoretically be added as a family "child" member for parental
+// oversight even though their own age_group says otherwise — the family
+// relationship, not the raw age bracket, is what's enforced here.
+async function dbIsActiveChildMember(username) {
+  if (!username) return false;
+  const { data, error } = await supabase
+    .from('family_members').select('role, status').eq('username', username).eq('role', 'child').eq('status', 'active').maybeSingle();
+  if (error) { console.error('[db] isActiveChildMember:', error.message); return false; }
+  return !!data;
+}
+
+// A restriction row is effective only while the account is an active child
+// member. Checking both tables prevents a stale family_restrictions row from
+// disabling features after removal from a family.
+async function dbGetEffectiveFamilyRestrictions(username) {
+  if (!username) return null;
+  const [isChildMember, restrictions] = await Promise.all([
+    dbIsActiveChildMember(username),
+    dbGetFamilyRestrictions(username),
+  ]);
+  return isChildMember ? restrictions : null;
+}
+
+function playbackSettingsForMaximumRating(rawMaximum) {
+  const maximum = ['clean', 'parental_guidance', 'adult'].includes(rawMaximum)
+    ? rawMaximum
+    : 'clean';
+  return {
+    allowClean: true,
+    allowParentalGuidance: maximum === 'parental_guidance' || maximum === 'adult',
+    allowAdult: maximum === 'adult',
+  };
+}
+
+// Pushes family_restrictions.max_content_rating down into
+// playback_filter_settings for a child account, with is_parent_enforced
+// locked on — this is the sync the Part 3 doc comment on
+// dbGetPlaybackFilterSettings calls this whenever it detects drift, so
+// playback_filter_settings — which content-serving routes actually read —
+// converges immediately to the parent-configured maximum.
+async function syncChildPlaybackFilters(username, maxContentRating) {
+  const { allowClean, allowParentalGuidance, allowAdult } = playbackSettingsForMaximumRating(maxContentRating);
+  const { error } = await supabase.from('playback_filter_settings').upsert({
+    username,
+    allow_clean: allowClean,
+    allow_parental_guidance: allowParentalGuidance,
+    allow_adult: allowAdult,
+    is_parent_enforced: true,
+    updated_at: new Date().toISOString(),
+  }, { onConflict: 'username' });
+  if (error) throw new Error(error.message);
+}
+
+// Middleware: blocks the CURRENT session's account from self-modifying
+// anything Part 5 reserves for a parent — content restrictions, birthdate,
+// family membership, parent relationship. Birthdate is already immutable
+// for everyone once set (see POST /api/account/birthdate) and content
+// restrictions already check is_parent_enforced directly (see PATCH
+// /api/playback-filters) — this middleware exists for the OTHER
+// family-membership-shaped actions (leaving a family, changing an invite,
+// etc.) where "is this account a locked-down child" is the whole check,
+// with no other business logic to fold it into inline.
+async function requireNotChild(req, res, next) {
+  const token = (req.headers.authorization || '').replace('Bearer ', '') || req.body?.token || req.query.token;
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Authentication required.' });
+  // age_group is derived from the immutable birthdate and is the primary
+  // age gate. Active family membership is also honored so a parent can keep
+  // supervising a teen account without inventing a second account type.
+  const isChild = sess.ageGroup === 'child' || await dbIsActiveChildMember(sess.username);
+  if (isChild) {
+    return res.status(403).json({ error: 'This action is managed by a parent or guardian and can\'t be done from a child account.', childAccountRestricted: true });
+  }
+  req._session = sess;
+  next();
+}
+
+// Middleware factory: blocks a child account from a specific FEATURE per
+// the disable_* columns on family_restrictions (Part 6 — "Disable Radio /
+// Discover / Social Feed / Following / Uploads / Artist Pages / Labs /
+// Premium purchases"). Non-child accounts, and child accounts with no
+// family_restrictions row yet (parent hasn't configured anything),
+// pass through untouched — a family_restrictions row only ever RESTRICTS,
+// it never grants extra access, so its absence is just "nothing to
+// enforce," not an error.
+//
+// featureKey must match one of the disable_* columns below, with the
+// disable_ prefix stripped off (e.g. 'radio' checks disable_radio).
+const FAMILY_FEATURE_COLUMNS = {
+  radio: 'disable_radio',
+  discover: 'disable_discover',
+  social_feed: 'disable_social_feed',
+  following: 'disable_following',
+  uploads: 'disable_uploads',
+  artist_pages: 'disable_artist_pages',
+  labs: 'disable_labs',
+  premium_purchases: 'disable_premium_purchases',
+};
+function requireFeatureAllowed(featureKey, { allowAnonymous = false } = {}) {
+  const column = FAMILY_FEATURE_COLUMNS[featureKey];
+  if (!column) throw new Error(`requireFeatureAllowed: unknown featureKey "${featureKey}"`);
+  return async function (req, res, next) {
+    const token = (req.headers.authorization || '').replace('Bearer ', '') || req.body?.token || req.query.token;
+    const sess = req._session || (token ? await dbGetSession(token) : null);
+    if (!sess) {
+      if (allowAnonymous && !token) return next();
+      return res.status(401).json({ error: 'Authentication required.' });
+    }
+    const restrictions = Object.prototype.hasOwnProperty.call(req, '_effectiveFamilyRestrictions')
+      ? req._effectiveFamilyRestrictions
+      : await dbGetEffectiveFamilyRestrictions(sess.username);
+    req._effectiveFamilyRestrictions = restrictions;
+    if (restrictions && restrictions[column]) {
+      return res.status(403).json({
+        error: 'This feature has been disabled by a parent or guardian on this account.',
+        childAccountRestricted: true,
+        feature: featureKey,
+      });
+    }
+    req._session = sess;
+    next();
+  };
+}
+
+// Non-middleware counterpart to requireFeatureAllowed, for routes like
+// Discover that stay open to logged-out visitors (so a hard 401/403
+// middleware would wrongly block anonymous browsing). Resolves whatever
+// session is present the same way getAllowedRatingsForRequest does — no
+// session just means "nothing to restrict," same reasoning as
+// requireFeatureAllowed's own fallthrough for a child with no
+// family_restrictions row yet.
+async function isFeatureDisabledForRequest(req, featureKey) {
+  const column = FAMILY_FEATURE_COLUMNS[featureKey];
+  if (!column) return false;
+  const token = (req.headers.authorization || '').replace('Bearer ', '') || req.body?.token || req.query.token;
+  const sess = req._session || (token ? await dbGetSession(token) : null);
+  if (!sess) return !!token;
+  req._session = sess;
+  const restrictions = Object.prototype.hasOwnProperty.call(req, '_effectiveFamilyRestrictions')
+    ? req._effectiveFamilyRestrictions
+    : await dbGetEffectiveFamilyRestrictions(sess.username);
+  req._effectiveFamilyRestrictions = restrictions;
+  return !!(restrictions && restrictions[column]);
+}
+
+async function isFeatureDisabledForUsername(username, featureKey) {
+  const column = FAMILY_FEATURE_COLUMNS[featureKey];
+  if (!column || !username) return false;
+  const restrictions = await dbGetEffectiveFamilyRestrictions(username);
+  return !!restrictions?.[column];
+}
+
+// Safe, client-facing summary used by the existing auth restore responses.
+// It intentionally exposes only capability booleans, never family ids,
+// parent identity, invite data, blocked-item lists, or other private rows.
+async function dbGetFamilyGateSummary(username) {
+  if (!username) return { isChildAccount: false, parentManaged: false, maxContentRating: null, disabledFeatures: {} };
+  const [isChildMember, rawRestrictions, account] = await Promise.all([
+    dbIsActiveChildMember(username),
+    dbGetFamilyRestrictions(username),
+    dbGetAccount(username),
+  ]);
+  const restrictions = isChildMember ? rawRestrictions : null;
+  const isChildAccount = isChildMember || account?.age_group === 'child';
+  const disabledFeatures = {};
+  for (const [feature, column] of Object.entries(FAMILY_FEATURE_COLUMNS)) {
+    disabledFeatures[feature] = !!restrictions?.[column];
+  }
+  return {
+    isChildAccount,
+    parentManaged: !!restrictions,
+    maxContentRating: restrictions?.max_content_rating || null,
+    disabledFeatures,
+  };
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  FAMILY ACCOUNTS — CRUD (Phase 4, Parts 4-5)
+// ═══════════════════════════════════════════════════════════════════════════
+// Everything above this point (dbGetFamilyRestrictions, requireFeatureAllowed,
+// syncChildPlaybackFilters, etc.) is the ENFORCEMENT layer and already reads
+// these tables. This block is what actually WRITES families/family_members/
+// family_invites/family_restrictions — until now nothing populated them.
+//
+// One adult account can be the parent of at most one family in this first
+// pass (mirrors the spec's "Adult creates: Family" — singular). A family's
+// membership roster lives in family_members; families itself just holds the
+// name + owning parent_username.
+
+function generateFamilyInviteCode() {
+  // 8 chars, uppercase alphanumeric minus visually-ambiguous chars (0/O, 1/I/L)
+  // — this gets typed by hand on a second device, so legibility matters more
+  // than keyspace size. ~30 bits of entropy, plenty for a 7-day-expiring,
+  // single-use, rate-limited code.
+  const ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+  let code = '';
+  for (let i = 0; i < 8; i++) code += ALPHABET[crypto.randomInt(ALPHABET.length)];
+  return code;
+}
+
+async function dbGetFamilyByParent(parentUsername) {
+  const { data, error } = await supabase.from('families').select('*').eq('parent_username', parentUsername).maybeSingle();
+  if (error) { console.error('[db] getFamilyByParent:', error.message); return null; }
+  return data || null;
+}
+
+async function dbGetFamilyMembership(username) {
+  const { data, error } = await supabase.from('family_members').select('*').eq('username', username).eq('status', 'active').maybeSingle();
+  if (error) { console.error('[db] getFamilyMembership:', error.message); return null; }
+  return data || null;
+}
+
+// POST /api/family/create — an adult, non-child account starts a family and
+// becomes its parent. requireNotChild covers "child accounts cannot..." for
+// family membership itself; the age_group === 'adult' check below is the
+// stronger rule specific to THIS route — a teen shouldn't be able to become
+// a parent, even though requireNotChild alone wouldn't stop a non-child teen.
+app.post('/api/family/create', requireNotChild, async (req, res) => {
+  const sess = req._session;
+  const { name } = req.body || {};
+  try {
+    const acct = await dbGetAccount(sess.username);
+    if (acct?.age_group !== 'adult') {
+      return res.status(403).json({ error: 'Only adult accounts can create a family.' });
+    }
+    const existing = await dbGetFamilyByParent(sess.username);
+    if (existing) return res.status(409).json({ error: 'You already have a family.', familyId: existing.id });
+
+    const { data: family, error } = await supabase.from('families').insert({
+      parent_username: sess.username,
+      name: (name || '').trim().slice(0, 60) || 'My Family',
+    }).select().single();
+    if (error) throw new Error(error.message);
+
+    const { error: memberErr } = await supabase.from('family_members').insert({
+      family_id: family.id, username: sess.username, role: 'parent', status: 'active',
+    });
+    if (memberErr) throw new Error(memberErr.message);
+
+    return res.status(201).json({ family });
+  } catch (err) {
+    console.error('[family/create]', err);
+    return res.status(500).json({ error: 'Could not create family.' });
+  }
+});
+
+// POST /api/family/invite — parent generates a fresh invite code for their
+// family. Any previously pending code is left alone (a parent might want
+// several outstanding invites for several kids) rather than revoked, unlike
+// account-email-verification tokens which are single-slot per account.
+app.post('/api/family/invite', requireNotChild, async (req, res) => {
+  const sess = req._session;
+  try {
+    const family = await dbGetFamilyByParent(sess.username);
+    if (!family) return res.status(404).json({ error: 'Create a family before inviting a child.' });
+
+    // Small retry loop for the astronomically-unlikely invite_code collision
+    // (unique constraint on family_invites.invite_code) rather than trusting
+    // one shot — cheap insurance, this route isn't hot-path enough to matter.
+    let invite, lastErr;
+    for (let attempt = 0; attempt < 5 && !invite; attempt++) {
+      const code = generateFamilyInviteCode();
+      const { data, error } = await supabase.from('family_invites').insert({
+        family_id: family.id, invite_code: code, created_by: sess.username,
+      }).select().single();
+      if (!error) { invite = data; break; }
+      lastErr = error;
+    }
+    if (!invite) throw new Error(lastErr?.message || 'Could not generate a unique invite code.');
+
+    return res.status(201).json({
+      inviteCode: invite.invite_code,
+      expiresAt: invite.expires_at,
+    });
+  } catch (err) {
+    console.error('[family/invite]', err);
+    return res.status(500).json({ error: 'Could not create invite.' });
+  }
+});
+
+// POST /api/family/join  { inviteCode }
+// The CHILD's account redeems a parent-generated code. requireNotChild is
+// deliberately NOT used here — a brand-new child account joining a family
+// for the first time isn't a family member yet, so there's nothing for that
+// middleware to check; the real gates are all inline below (already in a
+// family? invite valid/unexpired/unused?).
+app.post('/api/family/join', rateLimit, async (req, res) => {
+  const token = (req.headers.authorization || '').replace('Bearer ', '') || req.body?.token;
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Authentication required.' });
+
+  const inviteCode = String(req.body?.inviteCode || '').trim().toUpperCase();
+  if (!inviteCode) return res.status(400).json({ error: 'Invite code is required.' });
+
+  try {
+    const alreadyIn = await dbGetFamilyMembership(sess.username);
+    if (alreadyIn) return res.status(409).json({ error: 'This account already belongs to a family.' });
+
+    const { data: invite, error: inviteErr } = await supabase
+      .from('family_invites').select('*').eq('invite_code', inviteCode).maybeSingle();
+    if (inviteErr) throw new Error(inviteErr.message);
+    if (!invite) return res.status(404).json({ error: 'Invalid invite code.' });
+    if (invite.status !== 'pending') return res.status(410).json({ error: 'This invite has already been used or is no longer valid.' });
+    if (new Date(invite.expires_at).getTime() < Date.now()) {
+      await supabase.from('family_invites').update({ status: 'expired' }).eq('id', invite.id);
+      return res.status(410).json({ error: 'This invite has expired. Ask for a new code.' });
+    }
+
+    // A parent shouldn't be able to redeem their own (or anyone else's
+    // parent-role) invite into a second family_members row for themselves —
+    // this route is specifically how a CHILD account joins.
+    if (invite.created_by === sess.username) {
+      return res.status(400).json({ error: "You can't join a family using your own invite code." });
+    }
+
+    const { error: memberErr } = await supabase.from('family_members').insert({
+      family_id: invite.family_id, username: sess.username, role: 'child', status: 'active',
+    });
+    if (memberErr) throw new Error(memberErr.message);
+
+    const { error: redeemErr } = await supabase.from('family_invites').update({
+      status: 'redeemed', redeemed_by: sess.username, redeemed_at: new Date().toISOString(),
+    }).eq('id', invite.id);
+    if (redeemErr) console.error('[family/join] invite redeem update failed (non-fatal):', redeemErr.message);
+
+    // Seed a default family_restrictions row immediately — the schema's
+    // column defaults are already the sensible "locked down" starting point
+    // (max_content_rating='clean', uploads/labs/premium_purchases disabled
+    // by default per the column defaults) so a child is never mid-join with
+    // NO restrictions row and therefore no enforcement in effect.
+    const { error: restrErr } = await supabase.from('family_restrictions').insert({
+      username: sess.username, family_id: invite.family_id, updated_by: invite.created_by,
+    });
+    if (restrErr) throw new Error(restrErr.message);
+
+    await syncChildPlaybackFilters(sess.username, 'clean');
+
+    return res.status(201).json({ joined: true, familyId: invite.family_id });
+  } catch (err) {
+    console.error('[family/join]', err);
+    return res.status(500).json({ error: 'Could not join family.' });
+  }
+});
+
+// GET /api/family — parent dashboard: family info, member roster, and each
+// active child's restrictions + today's listening time. requireNotChild
+// blocks a child from pulling this (Part 5 — restrictions are parent-only
+// to VIEW as well as edit, since the dashboard reveals other children's
+// data too, not just the caller's own).
+app.get('/api/family', requireNotChild, async (req, res) => {
+  const sess = req._session;
+  try {
+    const family = await dbGetFamilyByParent(sess.username);
+    if (!family) return res.json({ family: null, children: [] });
+
+    const { data: members, error: membersErr } = await supabase
+      .from('family_members').select('*').eq('family_id', family.id).eq('status', 'active').neq('username', sess.username);
+    if (membersErr) throw new Error(membersErr.message);
+
+    const childUsernames = (members || []).map(m => m.username);
+    const [restrictionsRows, listeningRows, accountsRows] = await Promise.all([
+      childUsernames.length
+        ? supabase.from('family_restrictions').select('*').in('username', childUsernames).then(r => r.data || [])
+        : [],
+      childUsernames.length
+        ? supabase.from('family_listening_time').select('*').in('username', childUsernames).eq('listen_date', new Date().toISOString().slice(0, 10)).then(r => r.data || [])
+        : [],
+      childUsernames.length
+        ? Promise.all(childUsernames.map(u => dbGetAccount(u)))
+        : [],
+    ]);
+    const restrictionsByUser = new Map(restrictionsRows.map(r => [r.username, r]));
+    const listeningByUser = new Map(listeningRows.map(r => [r.username, r]));
+    const accountByUser = new Map(accountsRows.filter(Boolean).map(a => [a.username, a]));
+
+    const children = (members || []).map(m => {
+      const acct = accountByUser.get(m.username);
+      const restrictions = restrictionsByUser.get(m.username) || null;
+      const listening = listeningByUser.get(m.username) || null;
+      return {
+        username: m.username,
+        displayName: acct?.display_name || m.username,
+        ageGroup: acct?.age_group || null,
+        joinedAt: m.joined_at,
+        restrictions,
+        listeningMinutesToday: listening ? Math.round(listening.seconds_listened / 60) : 0,
+      };
+    });
+
+    return res.json({ family, children });
+  } catch (err) {
+    console.error('[family get]', err);
+    return res.status(500).json({ error: 'Could not load family.' });
+  }
+});
+
+// Fields a parent is allowed to edit on family_restrictions. Whitelisted
+// explicitly rather than spreading req.body — username/family_id/updated_at
+// must never come from client input.
+const FAMILY_RESTRICTION_EDITABLE_FIELDS = [
+  'max_content_rating', 'blocked_artist_ids', 'blocked_genres', 'blocked_track_ids',
+  'disable_radio', 'disable_discover', 'disable_social_feed', 'disable_following',
+  'disable_uploads', 'disable_artist_pages', 'disable_labs', 'disable_premium_purchases',
+  'daily_listening_limit_minutes', 'bedtime_start', 'bedtime_end',
+  'allowed_hours_start', 'allowed_hours_end',
+];
+
+// PATCH /api/family/child/:username/restrictions — the route
+// dbGetPlaybackFilterSettings's own doc comment already pointed to. Parent-
+// only (requireNotChild), and further scoped to children of THIS parent's
+// family so one parent can't edit a stranger's kid by guessing a username.
+app.patch('/api/family/child/:username/restrictions', requireNotChild, async (req, res) => {
+  const sess = req._session;
+  const childUsername = normalizeUsername(req.params.username);
+  try {
+    const family = await dbGetFamilyByParent(sess.username);
+    if (!family) return res.status(404).json({ error: 'You do not have a family.' });
+
+    const { data: membership, error: memErr } = await supabase
+      .from('family_members').select('*').eq('family_id', family.id).eq('username', childUsername).eq('role', 'child').eq('status', 'active').maybeSingle();
+    if (memErr) throw new Error(memErr.message);
+    if (!membership) return res.status(404).json({ error: 'No child with that username in your family.' });
+
+    const patch = {};
+    for (const field of FAMILY_RESTRICTION_EDITABLE_FIELDS) {
+      if (Object.prototype.hasOwnProperty.call(req.body || {}, field)) patch[field] = req.body[field];
+    }
+    if (patch.max_content_rating && !['clean', 'parental_guidance', 'adult'].includes(patch.max_content_rating)) {
+      return res.status(400).json({ error: 'Invalid max_content_rating.' });
+    }
+    if (Object.keys(patch).length === 0) return res.status(400).json({ error: 'No valid fields to update.' });
+
+    patch.updated_by = sess.username;
+    patch.updated_at = new Date().toISOString();
+
+    const { data: updated, error } = await supabase.from('family_restrictions')
+      .update(patch).eq('username', childUsername).select().single();
+    if (error) throw new Error(error.message);
+
+    // Keep playback_filter_settings in lockstep the moment max_content_rating
+    // changes — dbGetPlaybackFilterSettings would self-heal this on next
+    // read anyway (drift-repair), but syncing here means the child's very
+    // next request already reflects the new limit instead of one stale read.
+    if (Object.prototype.hasOwnProperty.call(patch, 'max_content_rating')) {
+      await syncChildPlaybackFilters(childUsername, updated.max_content_rating);
+    }
+
+    return res.json({ restrictions: updated });
+  } catch (err) {
+    console.error('[family restrictions patch]', err);
+    return res.status(500).json({ error: 'Could not update restrictions.' });
+  }
+});
+
+// POST /api/family/child/:username/remove — parent removes a child from the
+// family. Sets family_members.status='removed' (soft, keeps history) rather
+// than deleting the row. Deliberately does NOT delete family_restrictions —
+// dbGetEffectiveFamilyRestrictions already treats a restrictions row as
+// inert once dbIsActiveChildMember returns false, and
+// dbGetPlaybackFilterSettings's unlock-on-leave path hands playback control
+// back to the (former) child automatically on their next read.
+app.post('/api/family/child/:username/remove', requireNotChild, async (req, res) => {
+  const sess = req._session;
+  const childUsername = normalizeUsername(req.params.username);
+  try {
+    const family = await dbGetFamilyByParent(sess.username);
+    if (!family) return res.status(404).json({ error: 'You do not have a family.' });
+
+    const { data: membership, error: memErr } = await supabase
+      .from('family_members').select('*').eq('family_id', family.id).eq('username', childUsername).eq('role', 'child').eq('status', 'active').maybeSingle();
+    if (memErr) throw new Error(memErr.message);
+    if (!membership) return res.status(404).json({ error: 'No child with that username in your family.' });
+
+    const { error } = await supabase.from('family_members').update({
+      status: 'removed', removed_at: new Date().toISOString(),
+    }).eq('id', membership.id);
+    if (error) throw new Error(error.message);
+
+    return res.json({ removed: true, username: childUsername });
+  } catch (err) {
+    console.error('[family child remove]', err);
+    return res.status(500).json({ error: 'Could not remove child from family.' });
+  }
+});
+
+// DELETE /api/family/child/:username/devices/:deviceId — parent-facing
+// "Remove Device" from the spec. family_child_devices rows are populated by
+// whatever session-tracking hook writes device_label/session_token on child
+// login (outside this block's scope) — this route only ever deletes, and
+// also invalidates the underlying session so the removal actually logs the
+// device out rather than just clearing a label from a list.
+app.delete('/api/family/child/:username/devices/:deviceId', requireNotChild, async (req, res) => {
+  const sess = req._session;
+  const childUsername = normalizeUsername(req.params.username);
+  try {
+    const family = await dbGetFamilyByParent(sess.username);
+    if (!family) return res.status(404).json({ error: 'You do not have a family.' });
+
+    const { data: membership, error: memErr } = await supabase
+      .from('family_members').select('*').eq('family_id', family.id).eq('username', childUsername).eq('role', 'child').eq('status', 'active').maybeSingle();
+    if (memErr) throw new Error(memErr.message);
+    if (!membership) return res.status(404).json({ error: 'No child with that username in your family.' });
+
+    const { data: device, error: devErr } = await supabase
+      .from('family_child_devices').select('*').eq('id', req.params.deviceId).eq('username', childUsername).maybeSingle();
+    if (devErr) throw new Error(devErr.message);
+    if (!device) return res.status(404).json({ error: 'Device not found.' });
+
+    if (device.session_token) {
+      await supabase.from('sessions').delete().eq('token', device.session_token);
+    }
+    const { error } = await supabase.from('family_child_devices').delete().eq('id', device.id);
+    if (error) throw new Error(error.message);
+
+    return res.json({ removed: true });
+  } catch (err) {
+    console.error('[family device remove]', err);
+    return res.status(500).json({ error: 'Could not remove device.' });
+  }
+});
+
+// POST /api/family/child/:username/signout — parent-facing "Sign Out Child."
+// Invalidates ALL of the child's sessions (every device at once), distinct
+// from the single-device DELETE .../devices/:deviceId above. Also clears
+// their family_child_devices rows so the dashboard doesn't show stale
+// now-signed-out devices as still active.
+app.post('/api/family/child/:username/signout', requireNotChild, async (req, res) => {
+  const sess = req._session;
+  const childUsername = normalizeUsername(req.params.username);
+  try {
+    const family = await dbGetFamilyByParent(sess.username);
+    if (!family) return res.status(404).json({ error: 'You do not have a family.' });
+
+    const { data: membership, error: memErr } = await supabase
+      .from('family_members').select('*').eq('family_id', family.id).eq('username', childUsername).eq('role', 'child').eq('status', 'active').maybeSingle();
+    if (memErr) throw new Error(memErr.message);
+    if (!membership) return res.status(404).json({ error: 'No child with that username in your family.' });
+
+    await supabase.from('sessions').delete().eq('username', childUsername);
+    await supabase.from('family_child_devices').delete().eq('username', childUsername);
+
+    return res.json({ signedOut: true, username: childUsername });
+  } catch (err) {
+    console.error('[family child signout]', err);
+    return res.status(500).json({ error: 'Could not sign out child.' });
+  }
+});
+
 
 // Middleware: require an authenticated Premium session (used by DJ BOOM and
 // any other Premium-gated route). Mirrors requireAdmin below it — same
@@ -4493,6 +5136,12 @@ app.post('/api/auth/signup', rateLimit, async (req, res) => {
       ageGroup: acct?.age_group || birthdateResult.ageGroup,
       birthdateRequired: false,
       emailVerified: false,
+      familyControls: {
+        isChildAccount: birthdateResult.ageGroup === 'child',
+        parentManaged: false,
+        maxContentRating: null,
+        disabledFeatures: {},
+      },
       verifyUrl: verifyEmailLink?.verifyUrl || null,
       verifyExpiresInHours: verifyEmailLink?.expiresInHours || null,
     });
@@ -4552,6 +5201,7 @@ app.post('/api/auth/signin', rateLimit, async (req, res) => {
       console.error('[signin] premium reverify failed (non-fatal):', verifyErr?.message || verifyErr);
     }
 
+    const familyControls = await dbGetFamilyGateSummary(acctKey);
     return res.json({
       token,
       username: acctKey,
@@ -4573,6 +5223,7 @@ app.post('/api/auth/signin', rateLimit, async (req, res) => {
       birthdateRequired: !acctForResponse.age_group,
       ageGroup: acctForResponse.age_group || null,
       emailVerified: !!acctForResponse.email_verified_at,
+      familyControls,
     });
   } catch (err) {
     console.error('[signin]', err);
@@ -5176,6 +5827,7 @@ app.post('/api/auth/token-refresh', async (req, res) => {
     console.error('[token-refresh] premium reverify failed (non-fatal):', verifyErr?.message || verifyErr);
   }
 
+  const familyControls = await dbGetFamilyGateSummary(sess.username);
   return res.json({
     ok: true,
     expiresAt,
@@ -5186,6 +5838,7 @@ app.post('/api/auth/token-refresh', async (req, res) => {
     birthdateRequired: !acct?.age_group,
     ageGroup: acct?.age_group || null,
     emailVerified: !!acct?.email_verified_at,
+    familyControls,
   });
 });
 
@@ -5286,7 +5939,7 @@ async function handlePremiumVerifyRequest(req, res, routeLabel) {
 // matching verifyPremiumNow's own doc comment: this is low-frequency by
 // nature (one click after paying) so there's no need to rate-limit beyond
 // the global per-IP limiter already applied via app-wide middleware.
-app.post('/api/premium/verify', rateLimit, (req, res) => handlePremiumVerifyRequest(req, res, 'premium verify'));
+app.post('/api/premium/verify', rateLimit, requireFeatureAllowed('premium_purchases'), (req, res) => handlePremiumVerifyRequest(req, res, 'premium verify'));
 
 // Same underlying check, framed as "refresh my subscription state" rather
 // than "activate my purchase" — see the comment above handlePremiumVerifyRequest.
@@ -5312,6 +5965,7 @@ app.get('/api/auth/pull', async (req, res) => {
       console.error('[pull] premium reverify failed (non-fatal):', verifyErr?.message || verifyErr);
     }
 
+    const familyControls = await dbGetFamilyGateSummary(sess.username);
     return res.json({
       username:    sess.username,
       displayName: acct?.display_name || sess.username,
@@ -5322,6 +5976,7 @@ app.get('/api/auth/pull', async (req, res) => {
       birthdateRequired: !acct?.age_group,
       ageGroup: acct?.age_group || null,
       emailVerified: !!acct?.email_verified_at,
+      familyControls,
     });
   } catch (err) {
     console.error('[pull]', err);
@@ -5329,9 +5984,9 @@ app.get('/api/auth/pull', async (req, res) => {
   }
 });
 
-app.delete('/api/auth/account', async (req, res) => {
+app.delete('/api/auth/account', requireNotChild, async (req, res) => {
   const token = req.body.token || (req.headers.authorization || '').replace('Bearer ', '');
-  const sess  = await dbGetSession(token);
+  const sess  = req._session || await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token.' });
   try {
     await dbDeleteAccount(sess.username);
@@ -5342,10 +5997,10 @@ app.delete('/api/auth/account', async (req, res) => {
   }
 });
 
-// Public, unauthenticated — just hands the client the Gumroad product URL so
-// it isn't hardcoded into index.html. Contains no secrets (it's the same URL
-// anyone sees clicking a "Buy" link), so no auth/session check needed here.
-app.get('/api/premium/config', (_req, res) => {
+// Public for signed-out visitors, but a supplied account token is honored so
+// a parent-disabled Premium purchase flow cannot retrieve the checkout URL.
+// The URL contains no secrets; this gate enforces account policy.
+app.get('/api/premium/config', requireFeatureAllowed('premium_purchases', { allowAnonymous: true }), (_req, res) => {
   res.json({ checkoutUrl: GUMROAD_CHECKOUT_URL });
 });
 
@@ -5498,7 +6153,7 @@ function shapeStationForClient(s) {
 }
 
 // GET /api/radio/search?token=&name=&tag=&country=&countryCode=&language=&limit=&offset=
-app.get('/api/radio/search', requirePremium, radioRateLimit, async (req, res) => {
+app.get('/api/radio/search', requireFeatureAllowed('radio'), requirePremium, radioRateLimit, async (req, res) => {
   try {
     const stations = await radio.searchStations({
       name: req.query.name,
@@ -5517,7 +6172,7 @@ app.get('/api/radio/search', requirePremium, radioRateLimit, async (req, res) =>
 });
 
 // GET /api/radio/popular?token=&limit=
-app.get('/api/radio/popular', requirePremium, radioRateLimit, async (req, res) => {
+app.get('/api/radio/popular', requireFeatureAllowed('radio'), requirePremium, radioRateLimit, async (req, res) => {
   try {
     const stations = await radio.getPopularStations({ limit: req.query.limit });
     return res.json({ stations: stations.map(shapeStationForClient) });
@@ -5530,7 +6185,7 @@ app.get('/api/radio/popular', requirePremium, radioRateLimit, async (req, res) =
 // GET /api/radio/featured?token=&limit=  — top-voted stations, used for the
 // Radio Home "Featured" rail, kept distinct from Popular (clickcount) since
 // they're different signals (community votes vs. actual live listens).
-app.get('/api/radio/featured', requirePremium, radioRateLimit, async (req, res) => {
+app.get('/api/radio/featured', requireFeatureAllowed('radio'), requirePremium, radioRateLimit, async (req, res) => {
   try {
     const stations = await radio.getTopVotedStations({ limit: req.query.limit });
     return res.json({ stations: stations.map(shapeStationForClient) });
@@ -5540,11 +6195,9 @@ app.get('/api/radio/featured', requirePremium, radioRateLimit, async (req, res) 
   }
 });
 
-// GET /api/radio/countries?limit=  — metadata only (names + counts), no
-// stream URLs, so this is intentionally left open (not requirePremium) to
-// power genre/country browse chips on the upgrade-prompt view for signed-
-// out / non-Premium visitors. Matches DJ BOOM's "show it, don't hide it".
-app.get('/api/radio/countries', rateLimit, async (req, res) => {
+// GET /api/radio/countries?limit=  — metadata only (names + counts), but still
+// part of the disabled Radio surface, so it shares the family + Premium gate.
+app.get('/api/radio/countries', requireFeatureAllowed('radio'), requirePremium, rateLimit, async (req, res) => {
   try {
     const countries = await radio.getCountries({ limit: req.query.limit });
     return res.json({ countries });
@@ -5554,9 +6207,8 @@ app.get('/api/radio/countries', rateLimit, async (req, res) => {
   }
 });
 
-// GET /api/radio/tags?limit=  — same "metadata only, left open" reasoning
-// as /api/radio/countries above.
-app.get('/api/radio/tags', rateLimit, async (req, res) => {
+// GET /api/radio/tags?limit=  — same family + Premium boundary as countries.
+app.get('/api/radio/tags', requireFeatureAllowed('radio'), requirePremium, rateLimit, async (req, res) => {
   try {
     const tags = await radio.getTags({ limit: req.query.limit });
     return res.json({ tags });
@@ -5575,7 +6227,7 @@ app.get('/api/radio/tags', rateLimit, async (req, res) => {
 // Experimental Labs — this is the one Labs experiment wired to a real
 // backend route, so it enforces its own toggle rather than trusting the
 // frontend to only call it when the switch is on.
-app.get('/api/radio/spin-globe', requirePremium, radioRateLimit, async (req, res) => {
+app.get('/api/radio/spin-globe', requireFeatureAllowed('radio'), requirePremium, radioRateLimit, async (req, res) => {
   try {
     const { data: setting, error: settingErr } = await supabase
       .from('experimental_user_settings')
@@ -5618,7 +6270,7 @@ app.get('/api/radio/spin-globe', requirePremium, radioRateLimit, async (req, res
 // per their own usage guidance. This is the one route whose entire purpose
 // is handing back a playable URL, so it's the most important to keep
 // behind requirePremium regardless of what the frontend does.
-app.post('/api/radio/play', requirePremium, radioRateLimit, async (req, res) => {
+app.post('/api/radio/play', requireFeatureAllowed('radio'), requirePremium, radioRateLimit, async (req, res) => {
   const { stationUuid } = req.body || {};
   if (!stationUuid) return res.status(400).json({ error: 'stationUuid is required.' });
   try {
@@ -5637,7 +6289,7 @@ app.post('/api/radio/play', requirePremium, radioRateLimit, async (req, res) => 
 // ─── Favorites ──────────────────────────────────────────────────────────
 
 // GET /api/radio/favorites?token=
-app.get('/api/radio/favorites', requirePremium, radioRateLimit, async (req, res) => {
+app.get('/api/radio/favorites', requireFeatureAllowed('radio'), requirePremium, radioRateLimit, async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('radio_favorites')
@@ -5673,7 +6325,7 @@ app.get('/api/radio/favorites', requirePremium, radioRateLimit, async (req, res)
 // that would make a second round-trip meaningful here. Premium-gated like
 // everything else radio, even though it doesn't hand back a stream URL
 // itself, since favoriting is part of the same Premium feature surface.
-app.post('/api/radio/favorites', requirePremium, radioRateLimit, async (req, res) => {
+app.post('/api/radio/favorites', requireFeatureAllowed('radio'), requirePremium, radioRateLimit, async (req, res) => {
   const { station } = req.body || {};
   const stationUuid = station?.stationUuid;
   const name = station?.name;
@@ -5707,7 +6359,7 @@ app.post('/api/radio/favorites', requirePremium, radioRateLimit, async (req, res
 });
 
 // DELETE /api/radio/favorites/:stationId   { token }
-app.delete('/api/radio/favorites/:stationId', requirePremium, radioRateLimit, async (req, res) => {
+app.delete('/api/radio/favorites/:stationId', requireFeatureAllowed('radio'), requirePremium, radioRateLimit, async (req, res) => {
   try {
     const { error } = await supabase
       .from('radio_favorites')
@@ -5732,7 +6384,7 @@ app.delete('/api/radio/favorites/:stationId', requirePremium, radioRateLimit, as
 // helper on the query builder used elsewhere in this codebase — see
 // server-config.js — so this stays consistent with how every other route
 // here shapes results after a plain .select()).
-app.get('/api/radio/recent', requirePremium, radioRateLimit, async (req, res) => {
+app.get('/api/radio/recent', requireFeatureAllowed('radio'), requirePremium, radioRateLimit, async (req, res) => {
   const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 100);
   try {
     const { data, error } = await supabase
@@ -5776,7 +6428,7 @@ app.get('/api/radio/recent', requirePremium, radioRateLimit, async (req, res) =>
 // Logs one play event. Called by the frontend right after a station
 // actually starts playing (not on hover/search-result-render) — same
 // timing as /api/radio/play, and typically fired alongside it.
-app.post('/api/radio/recent', requirePremium, radioRateLimit, async (req, res) => {
+app.post('/api/radio/recent', requireFeatureAllowed('radio'), requirePremium, radioRateLimit, async (req, res) => {
   const { station } = req.body || {};
   const stationUuid = station?.stationUuid;
   const name = station?.name;
@@ -5898,7 +6550,7 @@ async function loadLabsFeaturesForUser(username) {
 // GET /api/labs?token=  — everything the Labs Home screen needs in one call:
 // build badge metadata, the full catalog, and this user's toggle/persona
 // state and warning-acknowledgement status.
-app.get('/api/labs', requirePremium, labsRateLimit, async (req, res) => {
+app.get('/api/labs', requireFeatureAllowed('labs'), requirePremium, labsRateLimit, async (req, res) => {
   try {
     const { features, acknowledgedWarning } = await loadLabsFeaturesForUser(req._premiumSession.username);
     return res.json({ build: LABS_BUILD_INFO, features, acknowledgedWarning });
@@ -5912,7 +6564,7 @@ app.get('/api/labs', requirePremium, labsRateLimit, async (req, res) => {
 // metadata wrapper. Kept separate from GET /api/labs so a future
 // lighter-weight "just refresh the cards" call doesn't need to re-fetch
 // the build badge every time.
-app.get('/api/labs/features', requirePremium, labsRateLimit, async (req, res) => {
+app.get('/api/labs/features', requireFeatureAllowed('labs'), requirePremium, labsRateLimit, async (req, res) => {
   try {
     const { features } = await loadLabsFeaturesForUser(req._premiumSession.username);
     return res.json({ features });
@@ -5929,7 +6581,7 @@ app.get('/api/labs/features', requirePremium, labsRateLimit, async (req, res) =>
 // `acknowledgedWarning`, when true, is written across this call only (not
 // retroactively to other rows) — loadLabsFeaturesForUser treats "any row
 // acknowledged" as "user has seen the warning," so one write is enough.
-app.post('/api/labs/toggle', requirePremium, labsRateLimit, async (req, res) => {
+app.post('/api/labs/toggle', requireFeatureAllowed('labs'), requirePremium, labsRateLimit, async (req, res) => {
   const { featureId, enabled, persona, acknowledgedWarning } = req.body || {};
   const username = req._premiumSession.username;
 
@@ -5997,7 +6649,7 @@ app.post('/api/labs/toggle', requirePremium, labsRateLimit, async (req, res) => 
 // POST /api/labs/feedback   { token, featureId, rating: 'love_it'|'needs_work', feedback? }
 // Every submission is its own row (see migration comment) — this is a log,
 // not a single mutable per-user rating.
-app.post('/api/labs/feedback', requirePremium, labsRateLimit, async (req, res) => {
+app.post('/api/labs/feedback', requireFeatureAllowed('labs'), requirePremium, labsRateLimit, async (req, res) => {
   const { featureId, rating, feedback } = req.body || {};
   const username = req._premiumSession.username;
 
@@ -6154,7 +6806,7 @@ app.patch('/api/profiles/me', rateLimit, async (req, res) => {
 // instead of the private cloud-audio bucket. Ownership is always resolved
 // from the session token, never from anything the client claims, same
 // discipline as every other mutating route in this file.
-app.post('/api/profiles/me/avatar', rateLimit, imageUpload.single('file'), async (req, res) => {
+app.post('/api/profiles/me/avatar', rateLimit, imageUpload.single('file'), requireFeatureAllowed('uploads'), async (req, res) => {
   const sess = await dbGetSession(req.body?.token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
   if (!sess.emailVerified) return res.status(403).json({ error: 'Please verify your email address before uploading.', emailVerificationRequired: true });
@@ -6169,7 +6821,7 @@ app.post('/api/profiles/me/avatar', rateLimit, imageUpload.single('file'), async
   }
 });
 
-app.post('/api/profiles/me/cover', rateLimit, imageUpload.single('file'), async (req, res) => {
+app.post('/api/profiles/me/cover', rateLimit, imageUpload.single('file'), requireFeatureAllowed('uploads'), async (req, res) => {
   const sess = await dbGetSession(req.body?.token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
   if (!sess.emailVerified) return res.status(403).json({ error: 'Please verify your email address before uploading.', emailVerificationRequired: true });
@@ -6195,7 +6847,7 @@ app.post('/api/profiles/me/cover', rateLimit, imageUpload.single('file'), async 
 //  GET    /api/follows/:username/following    ?limit=&offset=
 // ═══════════════════════════════════════════════════════════════════════════════
 
-app.post('/api/follows/:username', followRateLimit, async (req, res) => {
+app.post('/api/follows/:username', followRateLimit, requireFeatureAllowed('following'), async (req, res) => {
   const target = normalizeUsername(req.params.username);
   const sess = req._followSession; // resolved by followRateLimit — avoids a second dbGetSession round-trip
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
@@ -6248,7 +6900,7 @@ app.delete('/api/follows/:username', followRateLimit, async (req, res) => {
 // fields only — we never leak someone's private bio/displayName choice
 // through someone else's follower list. Simplest correct rule: filter to
 // is_public, full stop, even for the list owner viewing their own followers.
-app.get('/api/follows/:username/followers', async (req, res) => {
+app.get('/api/follows/:username/followers', requireFeatureAllowed('following', { allowAnonymous: true }), async (req, res) => {
   const key = normalizeUsername(req.params.username);
   if (!key) return res.status(400).json({ error: 'Username required.' });
   const limit  = Math.min(Math.max(Number(req.query.limit) || 50, 1), 100);
@@ -6266,7 +6918,7 @@ app.get('/api/follows/:username/followers', async (req, res) => {
   }
 });
 
-app.get('/api/follows/:username/following', async (req, res) => {
+app.get('/api/follows/:username/following', requireFeatureAllowed('following', { allowAnonymous: true }), async (req, res) => {
   const key = normalizeUsername(req.params.username);
   if (!key) return res.status(400).json({ error: 'Username required.' });
   const limit  = Math.min(Math.max(Number(req.query.limit) || 50, 1), 100);
@@ -6769,6 +7421,7 @@ app.get('/api/playlists/:id', async (req, res) => {
     }
 
     const tracks = await dbGetPlaylistTracks(id);
+    const visibleTracks = await filterPlaylistTracksForRequest(req, tracks);
     let collaborators = [];
     let pendingInvites = [];
     if (isOwner) {
@@ -6783,11 +7436,11 @@ app.get('/api/playlists/:id', async (req, res) => {
     return res.json({
       id: playlist.id, owner: playlist.owner, name: playlist.name,
       description: playlist.description, isPublic: playlist.is_public,
-      trackCount: playlist.track_count, isOwner,
+      trackCount: visibleTracks.length, isOwner,
       likeCount: playlist.like_count || 0, likedByMe,
       collabRole: collabRole || null, isEditor,
       collaborators, pendingInvites,
-      tracks: tracks.map(t => ({
+      tracks: visibleTracks.map(t => ({
         rowId: t.id, ...t.track_data, addedBy: t.added_by, addedAt: t.added_at,
       })),
     });
@@ -6916,9 +7569,9 @@ app.get('/api/playback-filters', async (req, res) => {
   }
 });
 
-app.patch('/api/playback-filters', async (req, res) => {
+app.patch('/api/playback-filters', requireNotChild, async (req, res) => {
   const { token, allowClean, allowParentalGuidance, allowAdult } = req.body || {};
-  const sess = await dbGetSession(token);
+  const sess = req._session || await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
   try {
     // Part 5/6: a locked-down child account cannot change its own content
@@ -6992,6 +7645,12 @@ app.get('/api/discover/playlists', async (req, res) => {
   const sort  = req.query.sort === 'recent' ? 'recent' : 'likes';
   const limit = Math.min(Math.max(Number(req.query.limit) || 30, 1), DISCOVER_MAX_LIMIT);
   try {
+    // Part 6/12: a child account with Discover disabled sees an empty
+    // result, not an error — Part 12 wants restricted content to "pretend
+    // it doesn't exist" rather than surfacing a visible lock/error state.
+    if (await isFeatureDisabledForRequest(req, 'discover')) {
+      return res.json({ sort, playlists: [] });
+    }
     const rows = await dbDiscoverPlaylists({ sort, limit });
     return res.json({
       sort,
@@ -7010,6 +7669,9 @@ app.get('/api/discover/playlists', async (req, res) => {
 app.get('/api/discover/profiles', async (req, res) => {
   const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), DISCOVER_MAX_LIMIT);
   try {
+    if (await isFeatureDisabledForRequest(req, 'discover')) {
+      return res.json({ profiles: [] });
+    }
     const token = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
     const sess  = token ? await dbGetSession(token) : null;
     const rows  = await dbDiscoverProfiles({ limit, excludeUsername: sess ? sess.username : null });
@@ -7039,6 +7701,12 @@ app.get('/api/discover/tracks', async (req, res) => {
   const sess     = token ? await dbGetSession(token) : null;
 
   try {
+    // Part 6: a child account with Discover disabled sees no results —
+    // checked before the Part 3 rating filter below since disabling the
+    // whole surface is a stronger restriction than filtering within it.
+    if (await isFeatureDisabledForRequest(req, 'discover')) {
+      return res.json({ tracks: [] });
+    }
     // Part 3 enforcement: search/discover must respect the requester's
     // playback filter settings (or the all-true defaults for a signed-out
     // visitor) the same way Charts does via getAllowedRatingsForRequest.
@@ -7110,6 +7778,9 @@ app.get('/api/discover/artists', async (req, res) => {
   const query = (req.query.q || '').toString().trim().slice(0, 100) || null;
   if (mode === 'search' && !query) return res.json({ mode, artists: [] });
   try {
+    if (await isFeatureDisabledForRequest(req, 'discover')) {
+      return res.json({ mode, artists: [] });
+    }
     const rows = await dbDiscoverArtists({ mode, limit, query });
     return res.json({
       mode,
@@ -8362,6 +9033,9 @@ app.post('/api/cloud-files', rateLimit, (req, res, next) => {
       const sess     = await dbGetSession(token);
       if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
       if (!sess.emailVerified) return res.status(403).json({ error: 'Please verify your email address before uploading.', emailVerificationRequired: true });
+      if (await isFeatureDisabledForUsername(sess.username, 'uploads')) {
+        return res.status(403).json({ error: 'Uploads have been disabled by a parent or guardian on this account.', childAccountRestricted: true, feature: 'uploads' });
+      }
 
       if (!req.file) return res.status(400).json({ error: 'No file received.' });
 
@@ -8422,6 +9096,9 @@ app.post('/api/cloud-files', rateLimit, (req, res, next) => {
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
   if (!sess.emailVerified) return res.status(403).json({ error: 'Please verify your email address before uploading.', emailVerificationRequired: true });
+  if (await isFeatureDisabledForUsername(sess.username, 'uploads')) {
+    return res.status(403).json({ error: 'Uploads have been disabled by a parent or guardian on this account.', childAccountRestricted: true, feature: 'uploads' });
+  }
   if (!filename || !data) return res.status(400).json({ error: '"filename" and "data" are required.' });
 
   const parsed = parseDataUrl(data);
@@ -8697,7 +9374,7 @@ async function dbGetTrackVideo(trackId) {
 // Step 1 of the direct-to-storage flow. Validates format/size up front so
 // a doomed upload never starts, then creates the pending video_files row
 // and asks Storage for a signed upload URL scoped to that row's path.
-app.post('/api/videos/upload-url', rateLimit, async (req, res) => {
+app.post('/api/videos/upload-url', rateLimit, requireFeatureAllowed('uploads'), async (req, res) => {
   const { token, filename, mimeType, size } = req.body || {};
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
@@ -8754,7 +9431,7 @@ app.post('/api/videos/upload-url', rateLimit, async (req, res) => {
 // the first time anyone tries to watch it), and adding a verification
 // round-trip here would slow down every single confirm call for a
 // failure mode that's already cheap to detect downstream.
-app.post('/api/videos/:id/confirm', rateLimit, async (req, res) => {
+app.post('/api/videos/:id/confirm', rateLimit, requireFeatureAllowed('uploads'), async (req, res) => {
   const { token, duration, width, height } = req.body || {};
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
@@ -8823,7 +9500,7 @@ app.delete('/api/videos/:id', rateLimit, async (req, res) => {
 // track_videos row (and its old video_files row is left in place,
 // unattached, rather than auto-deleted, so a mistaken swap is recoverable
 // via DELETE /api/videos/:id afterward rather than being unrecoverable).
-app.post('/api/tracks/:trackId/video', rateLimit, async (req, res) => {
+app.post('/api/tracks/:trackId/video', rateLimit, requireFeatureAllowed('uploads'), requireFeatureAllowed('artist_pages'), async (req, res) => {
   const { token, videoFileId, thumbnailUrl } = req.body || {};
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
@@ -8877,7 +9554,7 @@ app.post('/api/tracks/:trackId/video', rateLimit, async (req, res) => {
 // images an artist may want to differ (e.g. a freeze-frame vs. the single
 // artwork), even though they're allowed to be the same image if the
 // artist just reuses the cover.
-app.post('/api/tracks/:trackId/video-thumbnail', rateLimit, imageUpload.single('file'), async (req, res) => {
+app.post('/api/tracks/:trackId/video-thumbnail', rateLimit, imageUpload.single('file'), requireFeatureAllowed('uploads'), requireFeatureAllowed('artist_pages'), async (req, res) => {
   const sess = await dbGetSession(req.body?.token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
   if (!sess.emailVerified) return res.status(403).json({ error: 'Please verify your email address before uploading.', emailVerificationRequired: true });
@@ -8942,6 +9619,17 @@ app.get('/api/tracks/:trackId/video-stream', rateLimit, async (req, res) => {
     const track = await dbGetTrackById(req.params.trackId);
     if (!track || !track.is_published) return res.status(404).json({ error: 'Track not found.' });
 
+    // Check the listener's effective family/playback ceiling BEFORE looking
+    // up Storage or minting a signed URL. A restricted response must never
+    // contain a playable or downloadable location.
+    const allowedRatings = await getAllowedRatingsForRequest(req);
+    if (!allowedRatings.includes(track.content_rating || 'clean')) {
+      return res.status(403).json({
+        error: 'This track is restricted by your account settings.',
+        contentRestricted: true,
+      });
+    }
+
     const trackVideo = await dbGetTrackVideo(track.id);
     if (!trackVideo || !trackVideo.video_files) return res.status(404).json({ error: 'This track has no video.' });
     const videoFile = trackVideo.video_files;
@@ -9002,6 +9690,10 @@ app.post('/api/tracks/:trackId/video/watch-event', rateLimit, async (req, res) =
   try {
     const track = await dbGetTrackById(req.params.trackId);
     if (!track || !track.is_published) return res.status(404).json({ error: 'Track not found.' });
+    const allowedRatings = await getAllowedRatingsForRequest(req);
+    if (!allowedRatings.includes(track.content_rating || 'clean')) {
+      return res.status(403).json({ error: 'This track is restricted by your account settings.', contentRestricted: true });
+    }
     const trackVideo = await dbGetTrackVideo(track.id);
     if (!trackVideo) return res.status(404).json({ error: 'This track has no video.' });
 
@@ -9050,17 +9742,19 @@ app.post('/api/tracks/:trackId/video/watch-event', rateLimit, async (req, res) =
 
 // GET /api/artists/:id/videos   ?sort=newest   &limit=
 // Artist page "Music Videos" section. Newest-first by default per spec.
-app.get('/api/artists/:id/videos', async (req, res) => {
+app.get('/api/artists/:id/videos', requireFeatureAllowed('artist_pages', { allowAnonymous: true }), async (req, res) => {
   try {
     const artist = await resolveArtistFromParam(req.params.id);
     if (!artist) return res.status(404).json({ error: 'Artist not found.' });
     const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 50);
+    const allowedRatings = await getAllowedRatingsForRequest(req);
 
     const { data, error } = await supabase
       .from('tracks')
-      .select('id, title, is_explicit, published_at, cover_url, track_videos!inner(id, thumbnail_url, play_count, created_at, video_files(duration))')
+      .select('id, title, is_explicit, content_rating, published_at, cover_url, track_videos!inner(id, thumbnail_url, play_count, created_at, video_files(duration))')
       .eq('artist_id', artist.id)
       .eq('is_published', true)
+      .in('content_rating', allowedRatings)
       .order('created_at', { referencedTable: 'track_videos', ascending: false })
       .limit(limit);
     if (error) throw new Error(error.message);
@@ -9090,6 +9784,11 @@ app.get('/api/discover/videos', async (req, res) => {
   const mode = ['new', 'trending', 'most_played', 'most_liked'].includes(req.query.mode) ? req.query.mode : 'new';
   const limit = Math.min(Math.max(Number(req.query.limit) || 30, 1), 100);
   try {
+    // Part 6: a child account with Discover disabled sees no video results
+    // either — same reasoning as the audio-only discover routes above.
+    if (await isFeatureDisabledForRequest(req, 'discover')) {
+      return res.json({ mode, videos: [] });
+    }
     // Part 3/12: video tracks are still `tracks` rows with a content_rating
     // — Discover must hide blocked ones the same as the audio-only listing.
     const allowedRatings = await getAllowedRatingsForRequest(req);
@@ -9192,7 +9891,7 @@ async function dbGetTrackMotionCanvas(trackId) {
 }
 
 // POST /api/motion-canvas/upload-url   { token, filename, mimeType, size }
-app.post('/api/motion-canvas/upload-url', rateLimit, async (req, res) => {
+app.post('/api/motion-canvas/upload-url', rateLimit, requireFeatureAllowed('uploads'), async (req, res) => {
   const { token, filename, mimeType, size } = req.body || {};
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
@@ -9247,7 +9946,7 @@ app.post('/api/motion-canvas/upload-url', rateLimit, async (req, res) => {
 // would fight a browser whose metadata read came back slightly off; the
 // spec's real intent (short, loopable) is enforced by artist expectations
 // and the UI's guidance text, not a server-side rejection.
-app.post('/api/motion-canvas/:id/confirm', rateLimit, async (req, res) => {
+app.post('/api/motion-canvas/:id/confirm', rateLimit, requireFeatureAllowed('uploads'), async (req, res) => {
   const { token, duration, width, height } = req.body || {};
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
@@ -9309,7 +10008,7 @@ app.delete('/api/motion-canvas/:id', rateLimit, async (req, res) => {
 // Attaches a ready, owned motion_canvas_files row to a track the caller's
 // artist page owns. One canvas per track (v1) — re-attaching replaces the
 // existing track_motion_canvas row.
-app.post('/api/tracks/:trackId/motion-canvas', rateLimit, async (req, res) => {
+app.post('/api/tracks/:trackId/motion-canvas', rateLimit, requireFeatureAllowed('uploads'), requireFeatureAllowed('artist_pages'), async (req, res) => {
   const { token, motionCanvasFileId } = req.body || {};
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
@@ -9478,7 +10177,7 @@ app.get('/index/:name', (req, res) => {
 //  GET /api/activity/unread        ?token= &since=<ISO>
 // ═══════════════════════════════════════════════════════════════════════════════
 
-app.get('/api/activity/feed', async (req, res) => {
+app.get('/api/activity/feed', requireFeatureAllowed('social_feed'), async (req, res) => {
   const token = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
   const sess  = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
@@ -9509,7 +10208,7 @@ app.get('/api/activity/feed', async (req, res) => {
   }
 });
 
-app.get('/api/activity/unread', async (req, res) => {
+app.get('/api/activity/unread', requireFeatureAllowed('social_feed'), async (req, res) => {
   const token = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
   const sess  = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
@@ -9567,7 +10266,7 @@ function removeActivitySseClient(username, res) {
   }
 }
 
-app.get('/api/activity/feed/realtime', async (req, res) => {
+app.get('/api/activity/feed/realtime', requireFeatureAllowed('social_feed'), async (req, res) => {
   const token = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
   const sess  = await dbGetSession(token);
   if (!sess) return res.status(401).end();
@@ -9740,9 +10439,9 @@ function formatPost(p, myUsername = null) {
 
 // ── Routes ───────────────────────────────────────────────────────────────────
 
-app.post('/api/posts', rateLimit, async (req, res) => {
+app.post('/api/posts', rateLimit, requireFeatureAllowed('social_feed'), async (req, res) => {
   const { token, postType, body, playlistId, trackId, artistId, releaseId } = req.body || {};
-  const sess = await dbGetSession(token);
+  const sess = req._session || await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
   if (!sess.emailVerified) return res.status(403).json({ error: 'Please verify your email address before posting.', emailVerificationRequired: true });
   if (!body && !playlistId && !trackId && !artistId && !releaseId) {
@@ -9827,7 +10526,7 @@ app.post('/api/posts', rateLimit, async (req, res) => {
   }
 });
 
-app.get('/api/posts', async (req, res) => {
+app.get('/api/posts', requireFeatureAllowed('social_feed', { allowAnonymous: true }), async (req, res) => {
   const before = req.query.before || null;
   const limit  = Math.min(Math.max(Number(req.query.limit) || 20, 1), 50);
   const token  = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
@@ -9852,7 +10551,7 @@ app.get('/api/posts', async (req, res) => {
   }
 });
 
-app.get('/api/posts/user/:username', async (req, res) => {
+app.get('/api/posts/user/:username', requireFeatureAllowed('social_feed', { allowAnonymous: true }), async (req, res) => {
   const username = normalizeUsername(req.params.username);
   const before   = req.query.before || null;
   const limit    = Math.min(Math.max(Number(req.query.limit) || 20, 1), 50);
@@ -9877,7 +10576,7 @@ app.get('/api/posts/user/:username', async (req, res) => {
   }
 });
 
-app.get('/api/posts/artist/:id', async (req, res) => {
+app.get('/api/posts/artist/:id', requireFeatureAllowed('social_feed', { allowAnonymous: true }), async (req, res) => {
   const before = req.query.before || null;
   const limit  = Math.min(Math.max(Number(req.query.limit) || 20, 1), 50);
   const token  = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
@@ -9902,7 +10601,7 @@ app.get('/api/posts/artist/:id', async (req, res) => {
     return res.status(500).json({ error: 'Could not load artist posts.' });
   }
 });
-app.get('/api/posts/:id', async (req, res) => {
+app.get('/api/posts/:id', requireFeatureAllowed('social_feed', { allowAnonymous: true }), async (req, res) => {
   const token = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
   const sess  = token ? await dbGetSession(token) : null;
   try {
@@ -9920,7 +10619,7 @@ app.get('/api/posts/:id', async (req, res) => {
   }
 });
 
-app.patch('/api/posts/:id', rateLimit, async (req, res) => {
+app.patch('/api/posts/:id', rateLimit, requireFeatureAllowed('social_feed'), async (req, res) => {
   const { token, body } = req.body || {};
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
@@ -9955,7 +10654,7 @@ app.delete('/api/posts/:id', rateLimit, async (req, res) => {
   }
 });
 
-app.post('/api/posts/:id/like', rateLimit, async (req, res) => {
+app.post('/api/posts/:id/like', rateLimit, requireFeatureAllowed('social_feed'), async (req, res) => {
   const { token } = req.body || {};
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
@@ -9986,7 +10685,7 @@ app.delete('/api/posts/:id/like', rateLimit, async (req, res) => {
     return res.status(500).json({ error: 'Could not unlike post.' });
   }
 });
-app.post('/api/posts/:id/share', rateLimit, async (req, res) => {
+app.post('/api/posts/:id/share', rateLimit, requireFeatureAllowed('social_feed'), async (req, res) => {
   const { token } = req.body || {};
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
@@ -10007,9 +10706,9 @@ app.post('/api/posts/:id/share', rateLimit, async (req, res) => {
   }
 });
 
-app.post('/api/posts/:id/comments', rateLimit, async (req, res) => {
+app.post('/api/posts/:id/comments', rateLimit, requireFeatureAllowed('social_feed'), async (req, res) => {
   const { token, body } = req.body || {};
-  const sess = await dbGetSession(token);
+  const sess = req._session || await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
   if (!sess.emailVerified) return res.status(403).json({ error: 'Please verify your email address before commenting.', emailVerificationRequired: true });
   if (!body || typeof body !== 'string' || !body.trim()) return res.status(400).json({ error: '"body" is required.' });
@@ -10028,7 +10727,7 @@ app.post('/api/posts/:id/comments', rateLimit, async (req, res) => {
   }
 });
 
-app.get('/api/posts/:id/comments', async (req, res) => {
+app.get('/api/posts/:id/comments', requireFeatureAllowed('social_feed', { allowAnonymous: true }), async (req, res) => {
   try {
     const { data, error } = await supabase.from('post_comments')
       .select('*, profiles:author!inner(username, display_name, avatar_url)')
@@ -10088,7 +10787,7 @@ app.post('/api/admin/recount-artist-followers', rateLimit, async (req, res) => {
 
 // ─── END SOCIAL POSTS ────────────────────────────────────────────────────────
 
-app.get('/api/artists', async (req, res) => {
+app.get('/api/artists', requireFeatureAllowed('artist_pages', { allowAnonymous: true }), async (req, res) => {
   const sort   = ['trending', 'recent', 'followers'].includes(req.query.sort) ? req.query.sort : 'followers';
   const limit  = Math.min(Math.max(Number(req.query.limit) || 30, 1), 50);
   const offset = Math.max(Number(req.query.offset) || 0, 0);
@@ -10107,7 +10806,7 @@ app.get('/api/artists', async (req, res) => {
   }
 });
 
-app.get('/api/artists/:id', async (req, res) => {
+app.get('/api/artists/:id', requireFeatureAllowed('artist_pages', { allowAnonymous: true }), async (req, res) => {
   try {
     const artist = await resolveArtistFromParam(req.params.id);
     if (!artist) return res.status(404).json({ error: 'Artist not found.' });
@@ -10153,13 +10852,14 @@ app.get('/api/artists/:id', async (req, res) => {
   }
 });
 
-app.get('/api/artists/:id/tracks', async (req, res) => {
+app.get('/api/artists/:id/tracks', requireFeatureAllowed('artist_pages', { allowAnonymous: true }), async (req, res) => {
   try {
     const artist = await resolveArtistFromParam(req.params.id);
     if (!artist) return res.status(404).json({ error: 'Artist not found.' });
     const sort  = req.query.sort === 'trending' ? 'trending' : 'plays';
     const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 50);
-    const tracks = await dbGetArtistTracks(artist.id, { sort, limit });
+    const allowedRatings = await getAllowedRatingsForRequest(req);
+    const tracks = await dbGetArtistTracks(artist.id, { sort, limit, allowedRatings });
     const collabsByTrack = await dbGetCollaboratorsForTracks(tracks.map(t => t.id));
     // Batched video-attached check, same shape as the search badge above —
     // backs the 🎬 badge on artist pages without an N+1 per track row.
@@ -10225,7 +10925,7 @@ app.get('/api/artists/:id/tracks', async (req, res) => {
 // the roadmap's "Basic play counts free / full funnel + export Premium"
 // split — withholding the funnel data itself from Free artists would make
 // the free tier feel crippled rather than the paid tier feel additive.
-app.get('/api/artists/:id/insights', async (req, res) => {
+app.get('/api/artists/:id/insights', requireFeatureAllowed('artist_pages'), async (req, res) => {
   try {
     const artist = await resolveArtistFromParam(req.params.id);
     if (!artist) return res.status(404).json({ error: 'Artist not found.' });
@@ -10250,7 +10950,7 @@ app.get('/api/artists/:id/insights', async (req, res) => {
 // CSV export — Premium only. Reuses dbGetArtistInsights (same aggregation,
 // same owner check) rather than a second query path; this route's only
 // added job is formatting the response as CSV instead of JSON.
-app.get('/api/artists/:id/insights/export.csv', requirePremium, async (req, res) => {
+app.get('/api/artists/:id/insights/export.csv', requireFeatureAllowed('artist_pages'), requirePremium, async (req, res) => {
   try {
     const artist = await resolveArtistFromParam(req.params.id);
     if (!artist) return res.status(404).json({ error: 'Artist not found.' });
@@ -10283,7 +10983,7 @@ app.get('/api/artists/:id/insights/export.csv', requirePremium, async (req, res)
   }
 });
 
-app.get('/api/artists/:id/releases', async (req, res) => {
+app.get('/api/artists/:id/releases', requireFeatureAllowed('artist_pages', { allowAnonymous: true }), async (req, res) => {
   try {
     const artist = await resolveArtistFromParam(req.params.id);
     if (!artist) return res.status(404).json({ error: 'Artist not found.' });
@@ -10295,7 +10995,8 @@ app.get('/api/artists/:id/releases', async (req, res) => {
       isOwner = !!(sess && artist.account_id === sess.username);
     }
     const type = ['single', 'album', 'ep', 'mixtape', 'compilation'].includes(req.query.type) ? req.query.type : null;
-    const releases = await dbGetArtistReleases(artist.id, { type, includeNonPublic: isOwner });
+    const allowedRatings = await getAllowedRatingsForRequest(req);
+    const releases = await dbGetArtistReleases(artist.id, { type, includeNonPublic: isOwner, allowedRatings });
     const releasesWithCollabs = await Promise.all(releases.map(async r => ({
       r, collaborators: (await dbGetReleaseCollaborators(r.id)).map(shapeCollaborator),
     })));
@@ -10320,7 +11021,7 @@ app.get('/api/artists/:id/releases', async (req, res) => {
   }
 });
 
-app.get('/api/artists/:id/releases/:releaseId/tracks', async (req, res) => {
+app.get('/api/artists/:id/releases/:releaseId/tracks', requireFeatureAllowed('artist_pages', { allowAnonymous: true }), async (req, res) => {
   try {
     // Visibility gate: private releases require ownership
     const { data: release, error: relErr } = await supabase
@@ -10339,7 +11040,8 @@ app.get('/api/artists/:id/releases/:releaseId/tracks', async (req, res) => {
       }
     }
 
-    const tracks = await dbGetReleaseTracks(req.params.releaseId);
+    const allowedRatings = await getAllowedRatingsForRequest(req);
+    const tracks = await dbGetReleaseTracks(req.params.releaseId, { allowedRatings });
     const collabsByTrack = await dbGetCollaboratorsForTracks(tracks.map(t => t.id));
     // Batched video-attached check — backs the 🎬 badge on release
     // tracklists (album/EP/single pages) per spec.
@@ -10359,6 +11061,8 @@ app.get('/api/artists/:id/releases/:releaseId/tracks', async (req, res) => {
         artistName: t.artist_name || null,
         isUpload: !!t.cloud_file_id,
         isExplicit: !!t.is_explicit,
+        contentRating: t.content_rating || 'clean',
+        contentRatingTags: t.content_rating_tags || [],
         collaborators: (collabsByTrack.get(t.id) || []).map(shapeCollaborator),
         hasVideo: videoTrackIds.has(t.id),
       })),
@@ -10377,7 +11081,7 @@ app.get('/api/artists/:id/releases/:releaseId/tracks', async (req, res) => {
 // Filtering activity_feed by meta->>artistId here, mirroring the same
 // PostgREST or-clause shape dbGetFollowingFeed already uses for the
 // artist-follow case.
-app.get('/api/artists/:id/activity', async (req, res) => {
+app.get('/api/artists/:id/activity', requireFeatureAllowed('artist_pages', { allowAnonymous: true }), async (req, res) => {
   try {
     const artist = await resolveArtistFromParam(req.params.id);
     if (!artist) return res.status(404).json({ error: 'Artist not found.' });
@@ -10405,7 +11109,7 @@ app.get('/api/artists/:id/activity', async (req, res) => {
   }
 });
 
-app.post('/api/artists/:id/follow', artistFollowRateLimit, async (req, res) => {
+app.post('/api/artists/:id/follow', artistFollowRateLimit, requireFeatureAllowed('following'), requireFeatureAllowed('artist_pages'), async (req, res) => {
   const sess = req._followSession;
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
   try {
@@ -10452,7 +11156,7 @@ app.delete('/api/artists/:id/follow', artistFollowRateLimit, async (req, res) =>
 // uses for play-time dedup, just triggered from account creation instead.
 // `merged: true` in the response lets the frontend say "we found your
 // existing stats" rather than silently inheriting a stranger's-looking row.
-app.post('/api/artists/create', rateLimit, async (req, res) => {
+app.post('/api/artists/create', rateLimit, requireFeatureAllowed('artist_pages'), async (req, res) => {
   const { token, name } = req.body || {};
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
@@ -10516,7 +11220,7 @@ app.post('/api/artists/create', rateLimit, async (req, res) => {
 // and an artist can only ever be claimed once (the WHERE account_id IS
 // NULL check below, backed by the same partial-unique-index reasoning as
 // get_or_create_artist's dedup).
-app.post('/api/artists/claim', rateLimit, async (req, res) => {
+app.post('/api/artists/claim', rateLimit, requireFeatureAllowed('artist_pages'), async (req, res) => {
   const { token, artistId } = req.body || {};
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
@@ -10546,7 +11250,7 @@ app.post('/api/artists/claim', rateLimit, async (req, res) => {
 // needs escaping/handling there to a known, small set of platforms.
 const ARTIST_LINK_KEYS = ['website', 'spotify', 'soundcloud', 'instagram', 'twitter', 'youtube'];
 
-app.patch('/api/artists/:id', rateLimit, async (req, res) => {
+app.patch('/api/artists/:id', rateLimit, requireFeatureAllowed('artist_pages'), async (req, res) => {
   const { token, bio, avatarUrl, bannerUrl, genre, links } = req.body || {};
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
@@ -10598,7 +11302,7 @@ app.patch('/api/artists/:id', rateLimit, async (req, res) => {
 // artist-banners/ in the shared `media` bucket. Ownership check mirrors
 // PATCH /api/artists/:id exactly: only the account that claimed this artist
 // page can upload art for it.
-app.post('/api/artists/:id/avatar', rateLimit, imageUpload.single('file'), async (req, res) => {
+app.post('/api/artists/:id/avatar', rateLimit, imageUpload.single('file'), requireFeatureAllowed('uploads'), requireFeatureAllowed('artist_pages'), async (req, res) => {
   const sess = await dbGetSession(req.body?.token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
   if (!sess.emailVerified) return res.status(403).json({ error: 'Please verify your email address before uploading artist art.', emailVerificationRequired: true });
@@ -10618,7 +11322,7 @@ app.post('/api/artists/:id/avatar', rateLimit, imageUpload.single('file'), async
   }
 });
 
-app.post('/api/artists/:id/banner', rateLimit, imageUpload.single('file'), async (req, res) => {
+app.post('/api/artists/:id/banner', rateLimit, imageUpload.single('file'), requireFeatureAllowed('uploads'), requireFeatureAllowed('artist_pages'), async (req, res) => {
   const sess = await dbGetSession(req.body?.token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
   if (!req.file) return res.status(400).json({ error: 'No image file uploaded.' });
@@ -10637,7 +11341,7 @@ app.post('/api/artists/:id/banner', rateLimit, imageUpload.single('file'), async
   }
 });
 
-app.post('/api/artists/:id/releases', rateLimit, async (req, res) => {
+app.post('/api/artists/:id/releases', rateLimit, requireFeatureAllowed('artist_pages'), async (req, res) => {
   const { token, title, releaseType, coverUrl, releaseDate, trackIds, visibility } = req.body || {};
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
@@ -10683,7 +11387,7 @@ app.post('/api/artists/:id/releases', rateLimit, async (req, res) => {
 // from this release (see dbDeleteRelease comment). Same 401/403 ownership
 // pattern as every other artist-mutation route in this file: missing/bad
 // session is 401, a real session that isn't this artist's owner is 403.
-app.delete('/api/artists/:id/releases/:releaseId', rateLimit, async (req, res) => {
+app.delete('/api/artists/:id/releases/:releaseId', rateLimit, requireFeatureAllowed('artist_pages'), async (req, res) => {
   const token = req.body?.token || req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
@@ -10707,7 +11411,7 @@ app.delete('/api/artists/:id/releases/:releaseId', rateLimit, async (req, res) =
 
 // PATCH /api/artists/:id/releases/:releaseId  { token, title?, coverUrl?, releaseDate?, description?, visibility? }
 // Edit release metadata. release_type is immutable after creation by design.
-app.patch('/api/artists/:id/releases/:releaseId', rateLimit, async (req, res) => {
+app.patch('/api/artists/:id/releases/:releaseId', rateLimit, requireFeatureAllowed('artist_pages'), async (req, res) => {
   const { token, title, coverUrl, releaseDate, description, visibility } = req.body || {};
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
@@ -10754,7 +11458,7 @@ app.patch('/api/artists/:id/releases/:releaseId', rateLimit, async (req, res) =>
 
 // DELETE /api/artists/:id/releases/:releaseId/tracks/:trackId  { token }
 // Remove a single track from a release (unlinks it, does not delete the track).
-app.delete('/api/artists/:id/releases/:releaseId/tracks/:trackId', rateLimit, async (req, res) => {
+app.delete('/api/artists/:id/releases/:releaseId/tracks/:trackId', rateLimit, requireFeatureAllowed('artist_pages'), async (req, res) => {
   const token = req.body?.token || req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
@@ -10777,7 +11481,7 @@ app.delete('/api/artists/:id/releases/:releaseId/tracks/:trackId', rateLimit, as
 
 // POST /api/artists/:id/releases/:releaseId/tracks  { token, trackId }
 // Add an existing published track to a release (e.g. after editing release assignment).
-app.post('/api/artists/:id/releases/:releaseId/tracks', rateLimit, async (req, res) => {
+app.post('/api/artists/:id/releases/:releaseId/tracks', rateLimit, requireFeatureAllowed('artist_pages'), async (req, res) => {
   const { token, trackId } = req.body || {};
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
@@ -10806,7 +11510,7 @@ app.post('/api/artists/:id/releases/:releaseId/tracks', rateLimit, async (req, r
 // confirm the release actually belongs to that artist before touching it.
 // Listing is public (GET has no auth requirement) — release collaborator
 // credits are meant to be visible on the public release/artist page.
-app.get('/api/artists/:id/releases/:releaseId/collaborators', rateLimit, async (req, res) => {
+app.get('/api/artists/:id/releases/:releaseId/collaborators', rateLimit, requireFeatureAllowed('artist_pages', { allowAnonymous: true }), async (req, res) => {
   try {
     const artist = await resolveArtistFromParam(req.params.id);
     if (!artist) return res.status(404).json({ error: 'Artist not found.' });
@@ -10821,7 +11525,7 @@ app.get('/api/artists/:id/releases/:releaseId/collaborators', rateLimit, async (
   }
 });
 
-app.post('/api/artists/:id/releases/:releaseId/collaborators', rateLimit, async (req, res) => {
+app.post('/api/artists/:id/releases/:releaseId/collaborators', rateLimit, requireFeatureAllowed('artist_pages'), async (req, res) => {
   const { token, artistId, role } = req.body || {};
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
@@ -10852,7 +11556,7 @@ app.post('/api/artists/:id/releases/:releaseId/collaborators', rateLimit, async 
   }
 });
 
-app.delete('/api/artists/:id/releases/:releaseId/collaborators/:collabId', rateLimit, async (req, res) => {
+app.delete('/api/artists/:id/releases/:releaseId/collaborators/:collabId', rateLimit, requireFeatureAllowed('artist_pages'), async (req, res) => {
   const token = req.body?.token || req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
@@ -11000,7 +11704,7 @@ async function dbUnpublishTrack(trackId) {
   recomputeArtistStats().catch(err => console.error('[unpublish] recompute failed:', err));
 }
 
-app.get('/api/artists/:id/publishable', rateLimit, async (req, res) => {
+app.get('/api/artists/:id/publishable', rateLimit, requireFeatureAllowed('artist_pages'), async (req, res) => {
   const token = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
@@ -11031,7 +11735,7 @@ app.get('/api/artists/:id/publishable', rateLimit, async (req, res) => {
 // cover while setting up metadata) as well as after — the frontend can
 // always re-PATCH a track's coverUrl later via PATCH /api/tracks/:trackId
 // using the URL this returns.
-app.post('/api/artists/:id/track-cover', rateLimit, imageUpload.single('file'), async (req, res) => {
+app.post('/api/artists/:id/track-cover', rateLimit, imageUpload.single('file'), requireFeatureAllowed('uploads'), requireFeatureAllowed('artist_pages'), async (req, res) => {
   const sess = await dbGetSession(req.body?.token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
   if (!sess.emailVerified) return res.status(403).json({ error: 'Please verify your email address before uploading.', emailVerificationRequired: true });
@@ -11054,7 +11758,7 @@ app.post('/api/artists/:id/track-cover', rateLimit, imageUpload.single('file'), 
   }
 });
 
-app.post('/api/artists/:id/publish', rateLimit, async (req, res) => {
+app.post('/api/artists/:id/publish', rateLimit, requireFeatureAllowed('uploads'), requireFeatureAllowed('artist_pages'), async (req, res) => {
   const { token, cloudFileId, title, coverUrl, releaseId, contentRating, contentRatingTags } = req.body || {};
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
@@ -11115,7 +11819,7 @@ app.post('/api/artists/:id/publish', rateLimit, async (req, res) => {
   }
 });
 
-app.patch('/api/tracks/:trackId', rateLimit, async (req, res) => {
+app.patch('/api/tracks/:trackId', rateLimit, requireFeatureAllowed('artist_pages'), async (req, res) => {
   const { token, title, coverUrl, description, releaseId, contentRating, contentRatingTags } = req.body || {};
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
@@ -11256,7 +11960,7 @@ app.get('/api/tracks/:trackId/collaborators', rateLimit, async (req, res) => {
   }
 });
 
-app.post('/api/tracks/:trackId/collaborators', rateLimit, async (req, res) => {
+app.post('/api/tracks/:trackId/collaborators', rateLimit, requireFeatureAllowed('artist_pages'), async (req, res) => {
   const { token, artistId, role } = req.body || {};
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
@@ -11285,7 +11989,7 @@ app.post('/api/tracks/:trackId/collaborators', rateLimit, async (req, res) => {
   }
 });
 
-app.delete('/api/tracks/:trackId/collaborators/:collabId', rateLimit, async (req, res) => {
+app.delete('/api/tracks/:trackId/collaborators/:collabId', rateLimit, requireFeatureAllowed('artist_pages'), async (req, res) => {
   const token = req.body?.token || req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
@@ -11384,6 +12088,18 @@ app.get('/api/tracks/:trackId/stream', rateLimit, async (req, res) => {
     if (!track || !track.is_published || !track.cloud_file_id) {
       return res.status(404).json({ error: 'Track not found.' });
     }
+
+    // Final playback boundary. Catalog surfaces hide restricted tracks for
+    // normal browsing, but a copied id or stale playlist can still hit this
+    // endpoint directly. Reject it before querying cloud_files or signing any
+    // Storage URL so blocked audio is never disclosed to the client.
+    const allowedRatings = await getAllowedRatingsForRequest(req);
+    if (!allowedRatings.includes(track.content_rating || 'clean')) {
+      return res.status(403).json({
+        error: 'This track is restricted by your account settings.',
+        contentRestricted: true,
+      });
+    }
     // Bypasses dbGetCloudFile's owner-scoped lookup on purpose — see comment
     // above. Goes straight to the table since the publish/ownership check
     // already happened once, permanently, at publish time.
@@ -11442,6 +12158,11 @@ app.post('/api/tracks/:trackId/like', rateLimit, async (req, res) => {
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Invalid or expired token. Please sign in again.' });
   try {
+    const track = await dbGetTrackById(req.params.trackId);
+    const allowedRatings = await getAllowedRatingsForRequest(req);
+    if (!track?.is_published || !allowedRatings.includes(track.content_rating || 'clean')) {
+      return res.status(403).json({ error: 'This track is restricted by your account settings.', contentRestricted: true });
+    }
     const { error } = await supabase.from('track_likes')
       .upsert({ track_id: req.params.trackId, username: sess.username }, { onConflict: 'track_id,username' });
     if (error && error.code !== '23505') throw new Error(error.message);
@@ -11475,9 +12196,10 @@ app.get('/api/tracks/liked', rateLimit, async (req, res) => {
     if (!likeRows?.length) return res.json({ tracks: [] });
 
     const ids = likeRows.map(l => l.track_id);
+    const allowedRatings = await getAllowedRatingsForRequest(req);
     const { data: tracks, error: trackErr } = await supabase.from('tracks')
-      .select('id, title, artist_id, artist_name, is_explicit, cover_url')
-      .in('id', ids).eq('is_published', true);
+      .select('id, title, artist_id, artist_name, is_explicit, content_rating, cover_url')
+      .in('id', ids).eq('is_published', true).in('content_rating', allowedRatings);
     if (trackErr) throw new Error(trackErr.message);
 
     // Preserve like-order (most recently liked first), not the arbitrary
@@ -11488,7 +12210,7 @@ app.get('/api/tracks/liked', rateLimit, async (req, res) => {
     return res.json({
       tracks: ordered.map(t => ({
         id: t.id, title: t.title, artistId: t.artist_id, artistName: t.artist_name,
-        isExplicit: !!t.is_explicit, coverUrl: t.cover_url,
+        isExplicit: !!t.is_explicit, contentRating: t.content_rating || 'clean', coverUrl: t.cover_url,
       })),
     });
   } catch (err) {
@@ -11522,7 +12244,7 @@ app.delete('/api/tracks/:trackId/like', rateLimit, async (req, res) => {
 // comments), so the analytics endpoint reports commentCount as null with a
 // supported:false flag rather than fabricating a 0 that looks real but never
 // updates. Surface that honestly in the UI instead of pretending it's wired up.
-app.get('/api/artists/:id/tracks/:trackId/analytics', async (req, res) => {
+app.get('/api/artists/:id/tracks/:trackId/analytics', requireFeatureAllowed('artist_pages'), async (req, res) => {
   try {
     const artist = await resolveArtistFromParam(req.params.id);
     if (!artist) return res.status(404).json({ error: 'Artist not found.' });
@@ -12174,7 +12896,7 @@ const verificationEvidenceUpload = multer({
 // Public-ish (any authenticated user) summary of the artist's current
 // verification state — used to render claim-flow entry points and the badge
 // tooltip. Does NOT expose evidence contents, only status metadata.
-app.get('/api/artists/:id/verification/status', rateLimit, async (req, res) => {
+app.get('/api/artists/:id/verification/status', rateLimit, requireFeatureAllowed('artist_pages'), async (req, res) => {
   try {
     const artist = await resolveArtistFromParam(req.params.id);
     if (!artist) return res.status(404).json({ error: 'Artist not found.' });
@@ -12201,7 +12923,7 @@ app.get('/api/artists/:id/verification/status', rateLimit, async (req, res) => {
 // POST /api/artists/:id/verification/start
 // Step 1 (claim) + kicks off Step 2 (email verification). Body:
 //   { token, role, legalName, stageName, contactEmail, officialLinks: [] }
-app.post('/api/artists/:id/verification/start', rateLimit, async (req, res) => {
+app.post('/api/artists/:id/verification/start', rateLimit, requireFeatureAllowed('artist_pages'), async (req, res) => {
   const token = req.body?.token || (req.headers.authorization || '').replace('Bearer ', '');
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Authentication required.' });
@@ -12307,7 +13029,7 @@ app.post('/api/artists/:id/verification/start', rateLimit, async (req, res) => {
 // stored hash is overwritten. Returns the same verifyUrl/artistName/
 // expiresInHours shape as /verification/start so the frontend can reuse the
 // exact same emailjs.send() call.
-app.post('/api/verification/:requestId/resend-email', rateLimit, async (req, res) => {
+app.post('/api/verification/:requestId/resend-email', rateLimit, requireFeatureAllowed('artist_pages'), async (req, res) => {
   const { requestId } = req.params;
   const authToken = req.body?.token || (req.headers.authorization || '').replace('Bearer ', '');
   try {
@@ -12411,7 +13133,7 @@ app.get('/verify-email', async (req, res) => {
 // POST /api/verification/:requestId/consent   { token, consentGiven: true }
 // Must be recorded before any of the evidence-upload routes below will accept
 // a government ID, selfie, or liveness video.
-app.post('/api/verification/:requestId/consent', rateLimit, async (req, res) => {
+app.post('/api/verification/:requestId/consent', rateLimit, requireFeatureAllowed('artist_pages'), async (req, res) => {
   const token = req.body?.token || (req.headers.authorization || '').replace('Bearer ', '');
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Authentication required.' });
@@ -12440,7 +13162,7 @@ async function getOwnedRequest(requestId, username) {
 // POST /api/verification/:requestId/documents/id
 // Step 3 — government-issued ID upload. multipart/form-data: file, token.
 // Requires consent to already be recorded. Encrypts before storage.
-app.post('/api/verification/:requestId/documents/id', rateLimit, verificationEvidenceUpload.single('file'), async (req, res) => {
+app.post('/api/verification/:requestId/documents/id', rateLimit, verificationEvidenceUpload.single('file'), requireFeatureAllowed('uploads'), requireFeatureAllowed('artist_pages'), async (req, res) => {
   const token = req.body?.token || (req.headers.authorization || '').replace('Bearer ', '');
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Authentication required.' });
@@ -12472,7 +13194,7 @@ app.post('/api/verification/:requestId/documents/id', rateLimit, verificationEvi
 // (no gallery picker) — this route can't distinguish the two, so the honesty
 // of "live capture" depends on the client using getUserMedia + canvas capture
 // rather than <input type=file>, which the claim-wizard UI does.
-app.post('/api/verification/:requestId/documents/selfie', rateLimit, verificationEvidenceUpload.single('file'), async (req, res) => {
+app.post('/api/verification/:requestId/documents/selfie', rateLimit, verificationEvidenceUpload.single('file'), requireFeatureAllowed('uploads'), requireFeatureAllowed('artist_pages'), async (req, res) => {
   const token = req.body?.token || (req.headers.authorization || '').replace('Bearer ', '');
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Authentication required.' });
@@ -12504,7 +13226,7 @@ app.post('/api/verification/:requestId/documents/selfie', rateLimit, verificatio
 // immediately before recording (frontend requests this right as the camera
 // opens), since the prompt changing per-attempt is what makes a prerecorded
 // video insufficient.
-app.get('/api/verification/:requestId/liveness/prompt', rateLimit, async (req, res) => {
+app.get('/api/verification/:requestId/liveness/prompt', rateLimit, requireFeatureAllowed('artist_pages'), async (req, res) => {
   const token = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Authentication required.' });
@@ -12528,7 +13250,7 @@ app.get('/api/verification/:requestId/liveness/prompt', rateLimit, async (req, r
 // comparison), Step 8 (manipulation check), moves to automated_review, and
 // immediately to manual_review per shouldForceManualReview(). All automated
 // results are stored but treated as advisory only.
-app.post('/api/verification/:requestId/liveness/submit', rateLimit, verificationEvidenceUpload.single('file'), async (req, res) => {
+app.post('/api/verification/:requestId/liveness/submit', rateLimit, verificationEvidenceUpload.single('file'), requireFeatureAllowed('uploads'), requireFeatureAllowed('artist_pages'), async (req, res) => {
   const token = req.body?.token || (req.headers.authorization || '').replace('Bearer ', '');
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Authentication required.' });
@@ -12615,7 +13337,7 @@ app.post('/api/verification/:requestId/liveness/submit', rateLimit, verification
 //   website_code / social_code -> { evidenceType, url }  (server checks for the issued code)
 //   official_email_reply, distributor_link, authorization_doc, verified_collaborator_confirm
 //     -> { evidenceType, detail }  (reviewer-verified manually; detail is freeform context)
-app.post('/api/verification/:requestId/ownership-evidence', rateLimit, async (req, res) => {
+app.post('/api/verification/:requestId/ownership-evidence', rateLimit, requireFeatureAllowed('artist_pages'), async (req, res) => {
   const token = req.body?.token || (req.headers.authorization || '').replace('Bearer ', '');
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Authentication required.' });
@@ -12672,7 +13394,7 @@ app.post('/api/verification/:requestId/ownership-evidence', rateLimit, async (re
 
 // GET /api/verification/:requestId  — applicant's own view of their request
 // (status + non-sensitive fields; never returns document bytes or raw evidence).
-app.get('/api/verification/:requestId', rateLimit, async (req, res) => {
+app.get('/api/verification/:requestId', rateLimit, requireFeatureAllowed('artist_pages'), async (req, res) => {
   const token = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Authentication required.' });
