@@ -3141,6 +3141,37 @@ async function getAllowedRatingsForRequest(req) {
   return allowedRatingsFromSettings(settings);
 }
 
+// Companion check to getAllowedRatingsForRequest, for the specific-artist/
+// specific-track/specific-genre blocks Part 6 also asks for
+// (blocked_artist_ids/blocked_genres/blocked_track_ids on
+// family_restrictions) — deliberately kept SEPARATE from the rating check
+// rather than merged into allowedRatingsFromSettings, since rating is a
+// simple set-membership test against a fixed 3-value enum while this needs
+// the actual track row (for artist_id/id) and sometimes a join to
+// artists.genre. Returns true if the track should be BLOCKED (named to
+// read naturally at call sites: `if (await isTrackBlockedForRequest(...))`).
+// Non-child requests and children with no restrictions row always resolve
+// to false immediately — same fast-path philosophy as
+// isFeatureDisabledForRequest above.
+async function isTrackBlockedForRequest(req, track) {
+  if (!track) return false;
+  const token = (req.headers.authorization || '').replace('Bearer ', '') || req.body?.token || req.query.token;
+  const sess = token ? await dbGetSession(token) : null;
+  if (!sess) return false;
+  const restrictions = await dbGetFamilyRestrictions(sess.username);
+  if (!restrictions) return false;
+
+  if (Array.isArray(restrictions.blocked_track_ids) && restrictions.blocked_track_ids.includes(track.id)) return true;
+  if (track.artist_id && Array.isArray(restrictions.blocked_artist_ids) && restrictions.blocked_artist_ids.includes(track.artist_id)) return true;
+
+  if (Array.isArray(restrictions.blocked_genres) && restrictions.blocked_genres.length && track.artist_id) {
+    const { data: artistRow } = await supabase.from('artists').select('genre').eq('id', track.artist_id).maybeSingle();
+    if (artistRow?.genre && restrictions.blocked_genres.includes(artistRow.genre)) return true;
+  }
+
+  return false;
+}
+
 // Relational playlists keep track payloads as JSON so they can also contain
 // external providers. Only published FREQ ids have authoritative rating rows;
 // batch-resolve those ids and remove blocked ones before returning the
@@ -3684,12 +3715,41 @@ app.post('/api/family/child/:username/remove', requireNotChild, async (req, res)
   }
 });
 
+// GET /api/family/child/:username/devices — parent-facing device list, the
+// read half of the DELETE below. Rows are populated by
+// POST /api/family/listening-heartbeat's device upsert (see that route) —
+// so a device only appears here once it's actually sent at least one
+// heartbeat, which in practice means "played some audio while logged in,"
+// a reasonable bar for "this is a real device in use."
+app.get('/api/family/child/:username/devices', requireNotChild, async (req, res) => {
+  const sess = req._session;
+  const childUsername = normalizeUsername(req.params.username);
+  try {
+    const family = await dbGetFamilyByParent(sess.username);
+    if (!family) return res.status(404).json({ error: 'You do not have a family.' });
+
+    const { data: membership, error: memErr } = await supabase
+      .from('family_members').select('*').eq('family_id', family.id).eq('username', childUsername).eq('role', 'child').eq('status', 'active').maybeSingle();
+    if (memErr) throw new Error(memErr.message);
+    if (!membership) return res.status(404).json({ error: 'No child with that username in your family.' });
+
+    const { data: devices, error } = await supabase
+      .from('family_child_devices').select('id, device_label, first_seen_at, last_seen_at').eq('username', childUsername).order('last_seen_at', { ascending: false });
+    if (error) throw new Error(error.message);
+
+    return res.json({ devices: devices || [] });
+  } catch (err) {
+    console.error('[family child devices list]', err);
+    return res.status(500).json({ error: 'Could not load devices.' });
+  }
+});
+
 // DELETE /api/family/child/:username/devices/:deviceId — parent-facing
 // "Remove Device" from the spec. family_child_devices rows are populated by
-// whatever session-tracking hook writes device_label/session_token on child
-// login (outside this block's scope) — this route only ever deletes, and
-// also invalidates the underlying session so the removal actually logs the
-// device out rather than just clearing a label from a list.
+// POST /api/family/listening-heartbeat's device upsert (see that route) —
+// this route only ever deletes, and also invalidates the underlying
+// session so the removal actually logs the device out rather than just
+// clearing a label from a list.
 app.delete('/api/family/child/:username/devices/:deviceId', requireNotChild, async (req, res) => {
   const sess = req._session;
   const childUsername = normalizeUsername(req.params.username);
@@ -3744,6 +3804,107 @@ app.post('/api/family/child/:username/signout', requireNotChild, async (req, res
   } catch (err) {
     console.error('[family child signout]', err);
     return res.status(500).json({ error: 'Could not sign out child.' });
+  }
+});
+
+// Checks a child's family_restrictions against "right now" — daily minutes
+// used so far today, plus bedtime window — and returns whether playback
+// should be allowed to continue. Pure function of (restrictions,
+// secondsToday, now) so it's cheap to call on every heartbeat without
+// re-deriving anything from the DB beyond what the caller already fetched.
+function evaluateListeningAllowed(restrictions, secondsListenedToday, now) {
+  if (!restrictions) return { allowed: true };
+
+  if (restrictions.daily_listening_limit_minutes) {
+    const usedMinutes = secondsListenedToday / 60;
+    if (usedMinutes >= restrictions.daily_listening_limit_minutes) {
+      return { allowed: false, reason: 'daily_limit', message: "Today's listening time limit has been reached." };
+    }
+  }
+
+  // bedtime_start/bedtime_end are TIME columns (HH:MM:SS strings from
+  // Supabase) compared against the server's local wall-clock time. A
+  // bedtime window that WRAPS midnight (e.g. 21:00 -> 07:00) is the normal
+  // case for this feature, so the "start > end" branch below is expected,
+  // not an edge case — a same-day window (e.g. 13:00 -> 14:00 "quiet hour")
+  // still works via the simpler branch.
+  if (restrictions.bedtime_start && restrictions.bedtime_end) {
+    const nowStr = now.toTimeString().slice(0, 8); // HH:MM:SS, matches TIME column format
+    const start = restrictions.bedtime_start;
+    const end = restrictions.bedtime_end;
+    const inWindow = start <= end
+      ? (nowStr >= start && nowStr < end)
+      : (nowStr >= start || nowStr < end); // wraps midnight
+    if (inWindow) {
+      return { allowed: false, reason: 'bedtime', message: 'This account is in its bedtime hours right now.' };
+    }
+  }
+
+  return { allowed: true };
+}
+
+// POST /api/family/listening-heartbeat  { elapsedSeconds, deviceLabel? }
+// Called periodically by the frontend player WHILE a child account has
+// audio actively playing (not on every /api/plays call — this is about
+// wall-clock listening time for Part 6's daily limit, not play-count).
+// elapsedSeconds is the time since the caller's OWN last heartbeat
+// (client-tracked), capped server-side so a paused tab that fires one huge
+// catch-up heartbeat can't blow past the limit in a single call.
+const HEARTBEAT_MAX_ELAPSED_SECONDS = 120; // generous cap over the ~30s interval the frontend actually uses
+app.post('/api/family/listening-heartbeat', rateLimit, async (req, res) => {
+  const token = (req.headers.authorization || '').replace('Bearer ', '') || req.body?.token;
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Authentication required.' });
+
+  try {
+    const isChild = await dbIsActiveChildMember(sess.username);
+    if (!isChild) return res.json({ allowed: true }); // no-op for non-child accounts — nothing to track or enforce
+
+    const restrictions = await dbGetFamilyRestrictions(sess.username);
+    const now = new Date();
+    const today = now.toISOString().slice(0, 10);
+
+    const rawElapsed = Number(req.body?.elapsedSeconds);
+    const elapsed = Number.isFinite(rawElapsed) ? Math.max(0, Math.min(rawElapsed, HEARTBEAT_MAX_ELAPSED_SECONDS)) : 0;
+
+    // Read-modify-write rather than a single atomic upsert-with-increment:
+    // this table has no RPC helper (unlike track_plays' increment_track_play_count),
+    // and heartbeat volume per child is low enough (~1 every 30s of active
+    // playback) that the race window this leaves is negligible in practice.
+    const { data: existing } = await supabase
+      .from('family_listening_time').select('seconds_listened').eq('username', sess.username).eq('listen_date', today).maybeSingle();
+    const newTotal = (existing?.seconds_listened || 0) + elapsed;
+    const { error: upsertErr } = await supabase.from('family_listening_time').upsert({
+      username: sess.username, listen_date: today, seconds_listened: newTotal, updated_at: now.toISOString(),
+    }, { onConflict: 'username,listen_date' });
+    if (upsertErr) throw new Error(upsertErr.message);
+
+    // Best-effort device tracking (Part 4's "Remove Device" needs rows to
+    // remove) — upserted here since a heartbeat is a reliable "this device
+    // is actively in use right now" signal, unlike login (which only proves
+    // a device connected once, not that it's still being used).
+    const deviceLabel = typeof req.body?.deviceLabel === 'string' ? req.body.deviceLabel.slice(0, 120) : null;
+    supabase.from('family_child_devices').upsert({
+      username: sess.username, session_token: token, device_label: deviceLabel, last_seen_at: now.toISOString(),
+    }, { onConflict: 'session_token' }).then(() => {}).catch(devErr => {
+      console.error('[family heartbeat] device upsert failed (non-fatal):', devErr?.message || devErr);
+    });
+
+    const evaluation = evaluateListeningAllowed(restrictions, newTotal, now);
+    return res.json({
+      allowed: evaluation.allowed,
+      reason: evaluation.reason || null,
+      message: evaluation.message || null,
+      secondsListenedToday: newTotal,
+      dailyLimitMinutes: restrictions?.daily_listening_limit_minutes || null,
+    });
+  } catch (err) {
+    console.error('[family listening-heartbeat]', err);
+    // Fail OPEN, not closed — a transient DB hiccup on a background
+    // heartbeat should never be the reason a child's music stops playing.
+    // The daily limit is enforced on a best-effort basis by design; it's a
+    // parental tool, not a security boundary.
+    return res.json({ allowed: true });
   }
 });
 
@@ -12095,6 +12256,15 @@ app.get('/api/tracks/:trackId/stream', rateLimit, async (req, res) => {
     // Storage URL so blocked audio is never disclosed to the client.
     const allowedRatings = await getAllowedRatingsForRequest(req);
     if (!allowedRatings.includes(track.content_rating || 'clean')) {
+      return res.status(403).json({
+        error: 'This track is restricted by your account settings.',
+        contentRestricted: true,
+      });
+    }
+    // Part 6: specific artist/genre/track blocks, on top of the rating
+    // ceiling above — a track can pass the rating check and still be
+    // blocked by name/artist/genre for a given child.
+    if (await isTrackBlockedForRequest(req, track)) {
       return res.status(403).json({
         error: 'This track is restricted by your account settings.',
         contentRestricted: true,
