@@ -1219,6 +1219,28 @@ textarea.support-field { height:90px;resize:vertical; }
   background:var(--text);transition:transform 0.2s;
 }
 .family-toggle-switch.on::after { transform:translateX(16px);background:#000; }
+.family-chart-bar-wrap {
+  flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;
+  height:100%;gap:4px;
+}
+.family-chart-bar {
+  width:100%;max-width:22px;background:var(--accent);border-radius:2px 2px 0 0;
+  min-height:2px;transition:height 0.3s;
+}
+.family-chart-bar.over-limit { background:var(--accent2); }
+.family-chart-bar-label { font-size:0.36rem;color:var(--text-muted);letter-spacing:0.04em; }
+.family-history-row {
+  display:flex;align-items:center;gap:8px;padding:6px 0;
+  border-bottom:1px solid rgba(255,255,255,0.04);font-size:0.5rem;
+}
+.family-history-row:last-child { border-bottom:none; }
+.family-history-cover {
+  width:26px;height:26px;border-radius:3px;object-fit:cover;flex-shrink:0;background:var(--surface3);
+}
+.family-history-text { flex:1;min-width:0; }
+.family-history-title { color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+.family-history-meta { color:var(--text-muted);font-size:0.42rem;margin-top:2px; }
+
 
 
 /* ─── About Modal ────────────────────────────────────────────────── */
@@ -3889,6 +3911,18 @@ body.oled-mode {
 
       <button class="support-send-btn" id="familySaveRestrictionsBtn">SAVE CHANGES</button>
       <div class="auth-error" id="familyEditError"></div>
+
+      <div class="support-section">
+        <div class="support-section-title">Screen Time (Last 7 Days)</div>
+        <div id="familyScreenTimeSummary" style="font-size:0.5rem;color:var(--text-dim);margin-bottom:8px;">Loading…</div>
+        <div id="familyScreenTimeChart" style="display:flex;align-items:flex-end;gap:4px;height:70px;padding:0 2px;"></div>
+      </div>
+
+      <div class="support-section">
+        <div class="support-section-title">Playback History</div>
+        <div id="familyHistoryList"><div style="font-size:0.46rem;color:var(--text-muted);padding:6px 0;">Loading…</div></div>
+        <button class="family-child-edit-btn" id="familyHistoryLoadMoreBtn" style="display:none;width:100%;margin-top:8px;text-align:center;">LOAD MORE</button>
+      </div>
 
       <div class="support-section">
         <div class="support-section-title">Devices</div>
@@ -6744,6 +6778,7 @@ const FAMILY_STATE = {
   children: [],
   editingUsername: null,
   editingRestrictions: null,
+  historyBefore: null, // cursor for Playback History "load more" pagination
 };
 
 function openFamilyModal() {
@@ -6754,6 +6789,7 @@ function closeFamilyModal() {
   $('familyOverlay')?.classList.remove('open');
   FAMILY_STATE.editingUsername = null;
   FAMILY_STATE.editingRestrictions = null;
+  FAMILY_STATE.historyBefore = null;
 }
 $('authFamilyPill')?.addEventListener('click', () => { playSfx?.('click'); openFamilyModal(); });
 
@@ -6937,7 +6973,87 @@ function openFamilyChildEdit(username) {
   familySwitchView('familyViewChildEdit');
   renderFamilyEditForm();
   loadFamilyChildDevices(username);
+  loadFamilyScreenTime(username);
+  FAMILY_STATE.historyBefore = null;
+  loadFamilyHistory(username, false);
 }
+
+async function loadFamilyScreenTime(username) {
+  const summary = $('familyScreenTimeSummary');
+  const chart = $('familyScreenTimeChart');
+  if (!summary || !chart) return;
+  summary.textContent = 'Loading…';
+  chart.innerHTML = '';
+  try {
+    const res = await fetch(`/api/family/child/${encodeURIComponent(username)}/screen-time?days=7`, { headers: authHeaders() });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { summary.textContent = 'Could not load screen time.'; return; }
+    const days = data.days || [];
+    const dailyLimit = FAMILY_STATE.editingRestrictions?.daily_listening_limit_minutes || null;
+    const totalHours = Math.floor(data.totalMinutes / 60);
+    const totalMins = data.totalMinutes % 60;
+    summary.textContent = `${totalHours}h ${totalMins}m total · avg ${data.averageMinutesPerDay}m/day`;
+
+    const maxMinutes = Math.max(...days.map(d => d.minutes), dailyLimit || 0, 1);
+    chart.innerHTML = days.map(d => {
+      const heightPct = Math.max(2, Math.round((d.minutes / maxMinutes) * 100));
+      const overLimit = dailyLimit && d.minutes >= dailyLimit;
+      const weekday = new Date(d.date + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'short' }).slice(0, 2);
+      return `
+        <div class="family-chart-bar-wrap" title="${escapeHtml(d.date)}: ${d.minutes}m">
+          <div class="family-chart-bar${overLimit ? ' over-limit' : ''}" style="height:${heightPct}%;"></div>
+          <div class="family-chart-bar-label">${weekday}</div>
+        </div>
+      `;
+    }).join('');
+  } catch (err) {
+    summary.textContent = 'Network error loading screen time.';
+  }
+}
+
+async function loadFamilyHistory(username, append) {
+  const list = $('familyHistoryList');
+  const moreBtn = $('familyHistoryLoadMoreBtn');
+  if (!list) return;
+  if (!append) list.innerHTML = '<div style="font-size:0.46rem;color:var(--text-muted);padding:6px 0;">Loading…</div>';
+  try {
+    const params = new URLSearchParams({ limit: '20' });
+    if (append && FAMILY_STATE.historyBefore) params.set('before', FAMILY_STATE.historyBefore);
+    const res = await fetch(`/api/family/child/${encodeURIComponent(username)}/history?${params}`, { headers: authHeaders() });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { list.innerHTML = '<div style="font-size:0.46rem;color:var(--text-muted);padding:6px 0;">Could not load history.</div>'; return; }
+    const plays = data.plays || [];
+    if (!plays.length && !append) {
+      list.innerHTML = '<div style="font-size:0.46rem;color:var(--text-muted);padding:6px 0;">No playback history yet.</div>';
+      if (moreBtn) moreBtn.style.display = 'none';
+      return;
+    }
+    const rowsHtml = plays.map(p => {
+      const cover = p.coverUrl ? `<img class="family-history-cover" src="${escapeHtml(p.coverUrl)}" alt="" />` : `<div class="family-history-cover"></div>`;
+      const when = p.playedAt ? new Date(p.playedAt).toLocaleString() : '';
+      const artist = p.artistName ? ` · ${escapeHtml(p.artistName)}` : '';
+      return `
+        <div class="family-history-row">
+          ${cover}
+          <div class="family-history-text">
+            <div class="family-history-title">${escapeHtml(p.title)}${artist}</div>
+            <div class="family-history-meta">${when}${p.completed === false ? ' · skipped' : ''}</div>
+          </div>
+        </div>
+      `;
+    }).join('');
+    if (append) list.insertAdjacentHTML('beforeend', rowsHtml);
+    else list.innerHTML = rowsHtml;
+
+    if (plays.length) FAMILY_STATE.historyBefore = plays[plays.length - 1].playedAt;
+    if (moreBtn) moreBtn.style.display = data.hasMore ? 'block' : 'none';
+  } catch (err) {
+    if (!append) list.innerHTML = '<div style="font-size:0.46rem;color:var(--text-muted);padding:6px 0;">Network error loading history.</div>';
+  }
+}
+$('familyHistoryLoadMoreBtn')?.addEventListener('click', () => {
+  if (FAMILY_STATE.editingUsername) loadFamilyHistory(FAMILY_STATE.editingUsername, true);
+});
 
 async function loadFamilyChildDevices(username) {
   const list = $('familyEditDevicesList');
