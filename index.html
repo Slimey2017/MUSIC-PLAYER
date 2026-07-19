@@ -11320,7 +11320,22 @@ function renderMpEarnOffers() {
 
 async function resolveMpEarnOffer(track) {
   const item = await resolveChartTrack(track, 'listen_to_earn');
+  // Listen to Earn only ever activates when logPlay() computes
+  // wantsListenToEarn as true, which requires platform === 'freq' AND
+  // playSource === 'listen_to_earn' on this exact item. resolveChartTrack
+  // only sets platform: 'freq' via its cloud: URL branch — any other path
+  // through it (e.g. the generic /api/resolve fallback) returns whatever
+  // that endpoint reports, which is never 'freq'. If that ever happens for
+  // an Earn offer, the failure used to be completely silent: no toast, no
+  // session, nothing — indistinguishable from a working track that simply
+  // wasn't clicked as an Earn offer. Asserting it here instead turns that
+  // into a visible, debuggable error at the moment it actually happens.
+  if (item.platform !== 'freq' || !item.originalUrl?.startsWith('cloud:')) {
+    console.error('[Listen to Earn] offer did not resolve to a freq/cloud item', { track, item });
+    throw new Error('This track could not be prepared for Listen to Earn.');
+  }
   item.listenToEarn = true;
+  item.playSource = 'listen_to_earn';
   item.mpReward = Number(track.rewardMp) || 150;
   return item;
 }
