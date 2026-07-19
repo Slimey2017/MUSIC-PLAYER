@@ -8790,21 +8790,39 @@ app.post('/api/plays', rateLimit, async (req, res) => {
     // already created above. It is opt-in only from Discovery's Earn MP
     // source; ordinary Charts, playlists, artist pages, Radio, DJ BOOM, and
     // arbitrary URL plays continue to behave exactly as before.
+    //
+    // The four conditions below used to be a single combined `if`, which
+    // meant ANY of them silently failing (session not resolving, source
+    // string not matching exactly, a missing/malformed trackId) produced
+    // listenToEarn: null with no distinguishable reason — indistinguishable
+    // client-side from "the client didn't ask for Listen to Earn at all".
+    // Checked individually now so a genuine gate failure is always visible
+    // as a real reason instead of silently doing nothing.
     let listenToEarnResult = null;
-    if (listenToEarn === true && safeSource === 'listen_to_earn' && sess && publishedTrackId) {
-      const identity = mpRequestIdentity(req, sess.username, mpDeviceId);
-      const { data: earnData, error: earnError } = await supabase.rpc('start_listen_to_earn_session', {
-        p_username: sess.username,
-        p_track_id: publishedTrackId,
-        p_play_row_id: result.playRowId || null,
-        p_device_hash: identity.deviceHash,
-        p_ip_hash: identity.ipHash,
-      });
-      if (earnError) {
-        console.error('[mp listen start]', earnError.message);
-        listenToEarnResult = { eligible: false, reason: 'unavailable', message: 'Listen to Earn could not start.' };
+    if (listenToEarn === true) {
+      if (!sess) {
+        listenToEarnResult = { eligible: false, reason: 'not_signed_in', message: 'Sign in to earn MP from Listen to Earn.' };
+      } else if (safeSource !== 'listen_to_earn') {
+        console.error('[mp listen start] source mismatch', { source, safeSource });
+        listenToEarnResult = { eligible: false, reason: 'source_mismatch', message: 'Listen to Earn could not start (source).' };
+      } else if (!publishedTrackId) {
+        console.error('[mp listen start] missing/invalid trackId', { trackId });
+        listenToEarnResult = { eligible: false, reason: 'missing_track_id', message: 'Listen to Earn could not start (track id).' };
       } else {
-        listenToEarnResult = earnData || { eligible: false, reason: 'unavailable' };
+        const identity = mpRequestIdentity(req, sess.username, mpDeviceId);
+        const { data: earnData, error: earnError } = await supabase.rpc('start_listen_to_earn_session', {
+          p_username: sess.username,
+          p_track_id: publishedTrackId,
+          p_play_row_id: result.playRowId || null,
+          p_device_hash: identity.deviceHash,
+          p_ip_hash: identity.ipHash,
+        });
+        if (earnError) {
+          console.error('[mp listen start] rpc error', earnError.message);
+          listenToEarnResult = { eligible: false, reason: 'unavailable', message: 'Listen to Earn could not start.' };
+        } else {
+          listenToEarnResult = earnData || { eligible: false, reason: 'unavailable' };
+        }
       }
     }
 
