@@ -2242,6 +2242,16 @@ async function dbGetMpLedger(username, { limit = 30, before = null } = {}) {
 // permanent owned items, one active item per cosmetic slot, and atomic gifts.
 // Phase 4 adds scheduled collections. A seasonal item reaches the normal
 // catalog only while both the global switch and its collection window are live.
+const MUSI_SHOP_COSMETIC_SLOTS = new Set([
+  'app_theme', 'profile_frame', 'profile_background',
+  'username_color', 'username_effect', 'profile_badge',
+  'profile_banner_effect', 'status_emoji', 'favorite_genre_badge',
+  'milestone_badge', 'achievement_showcase', 'chat_bubble_theme',
+  'app_icon', 'loading_screen', 'cursor_theme', 'equalizer_skin',
+  'player_skin', 'playlist_cover_template', 'radio_station_icon',
+  'radio_theme', 'dj_boom_style', 'visualizer_style',
+]);
+
 async function dbGetMusiShopSettings() {
   const { data, error } = await supabase.from('app_config')
     .select('key, value').in('key', [
@@ -2289,6 +2299,13 @@ function shapeMusiShopItem(row) {
     cosmeticIcon: typeof metadata.icon === 'string' ? metadata.icon : null,
     collectionLabel: typeof metadata.collection_label === 'string' ? metadata.collection_label : null,
     eventExclusive: metadata.event_exclusive === true,
+    rarity: typeof metadata.rarity === 'string'
+      ? metadata.rarity
+      : metadata.tier === 'legendary' ? 'legendary'
+        : metadata.tier === 'premium' ? 'epic'
+          : metadata.tier === 'basic' ? 'common' : 'common',
+    unlockOnly: metadata.unlock_only === true,
+    previewText: typeof metadata.preview_text === 'string' ? metadata.preview_text.slice(0, 160) : null,
     selections,
     selectionLabels,
     giftable: row.giftable !== false,
@@ -2312,6 +2329,156 @@ async function dbGetMusiShopCatalog({ liveSeasonKeys = new Set() } = {}) {
     const ends = row.available_until ? new Date(row.available_until).getTime() : null;
     return (!row.seasonal || liveSeasonKeys.has(row.season_key)) && (!starts || starts <= now) && (!ends || ends > now);
   }).map(shapeMusiShopItem);
+}
+
+function musiShopUtcDay(date = new Date()) {
+  const day = new Date(date);
+  const rotationDate = day.toISOString().slice(0, 10);
+  const expiresAt = new Date(`${rotationDate}T00:00:00.000Z`);
+  expiresAt.setUTCDate(expiresAt.getUTCDate() + 1);
+  return { rotationDate, expiresAt: expiresAt.toISOString() };
+}
+
+function seededMusiShopOrder(items, seed) {
+  return [...items].sort((a, b) => {
+    const aHash = crypto.createHash('sha256').update(`${seed}|${a.sku}`).digest('hex');
+    const bHash = crypto.createHash('sha256').update(`${seed}|${b.sku}`).digest('hex');
+    return aHash.localeCompare(bHash) || String(a.sku).localeCompare(String(b.sku));
+  });
+}
+
+async function dbGetMusiShopDailyRotation(catalog) {
+  const { rotationDate, expiresAt } = musiShopUtcDay();
+  let { data: rows, error } = await supabase.from('musi_shop_daily_rotation')
+    .select('rotation_date, placement, sort_order, sku, discount_percent')
+    .eq('rotation_date', rotationDate)
+    .order('placement', { ascending: true })
+    .order('sort_order', { ascending: true });
+  if (error) throw new Error(error.message);
+
+  if ((rows || []).length < 8) {
+    const cosmetics = (catalog || []).filter(item =>
+      item.entitlementType === 'owned_item'
+      && item.slot
+      && MUSI_SHOP_COSMETIC_SLOTS.has(item.slot)
+      && !item.seasonal
+      && !item.unlockOnly
+    );
+    const legendary = cosmetics.filter(item => item.rarity === 'legendary');
+    const regular = cosmetics.filter(item => item.rarity !== 'legendary');
+    const dailyItems = seededMusiShopOrder(regular.length >= 6 ? regular : cosmetics, `${rotationDate}|daily`).slice(0, 6);
+    const used = new Set(dailyItems.map(item => item.sku));
+    const legendaryItem = seededMusiShopOrder(
+      legendary.filter(item => !used.has(item.sku)),
+      `${rotationDate}|legendary`
+    )[0];
+    if (legendaryItem) used.add(legendaryItem.sku);
+    const dealItem = seededMusiShopOrder(
+      cosmetics.filter(item => !used.has(item.sku)),
+      `${rotationDate}|deal`
+    )[0];
+
+    const generated = [
+      ...dailyItems.map((item, index) => ({
+        rotation_date: rotationDate,
+        placement: 'daily',
+        sort_order: index,
+        sku: item.sku,
+        discount_percent: 0,
+      })),
+      ...(legendaryItem ? [{
+        rotation_date: rotationDate,
+        placement: 'legendary',
+        sort_order: 0,
+        sku: legendaryItem.sku,
+        discount_percent: 0,
+      }] : []),
+      ...(dealItem ? [{
+        rotation_date: rotationDate,
+        placement: 'deal',
+        sort_order: 0,
+        sku: dealItem.sku,
+        discount_percent: 25,
+      }] : []),
+    ];
+    if (generated.length) {
+      const { error: deleteError } = await supabase.from('musi_shop_daily_rotation')
+        .delete().eq('rotation_date', rotationDate);
+      if (deleteError) throw new Error(deleteError.message);
+      const { error: upsertError } = await supabase.from('musi_shop_daily_rotation')
+        .upsert(generated, { onConflict: 'rotation_date,placement,sort_order' });
+      if (upsertError) throw new Error(upsertError.message);
+      rows = generated;
+    }
+  }
+
+  const bySku = new Map((catalog || []).map(item => [item.sku, item]));
+  const placementOrder = { daily: 0, legendary: 1, deal: 2 };
+  const items = (rows || [])
+    .map(row => {
+      const item = bySku.get(row.sku);
+      if (!item) return null;
+      const discountPercent = Math.max(0, Math.min(80, Number(row.discount_percent) || 0));
+      const originalPriceMp = Number(item.priceMp) || 0;
+      const priceMp = discountPercent
+        ? Math.max(1, Math.floor(originalPriceMp * (100 - discountPercent) / 100))
+        : originalPriceMp;
+      return {
+        ...item,
+        placement: row.placement,
+        placementOrder: placementOrder[row.placement] ?? 9,
+        rotationOrder: Number(row.sort_order) || 0,
+        discountPercent,
+        originalPriceMp,
+        priceMp,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.placementOrder - b.placementOrder || a.rotationOrder - b.rotationOrder);
+  return { rotationDate, expiresAt, items };
+}
+
+async function dbGetMusiShopAchievements(username) {
+  const { error: syncError } = await supabase.rpc('sync_musi_shop_achievements', {
+    p_username: username,
+  });
+  if (syncError) throw new Error(syncError.message);
+  const [{ data: definitions, error: definitionsError }, { data: progressRows, error: progressError }] = await Promise.all([
+    supabase.from('musi_shop_achievement_catalog')
+      .select('achievement_key, name, description, icon, metric, target, reward_sku, sort_order')
+      .eq('active', true)
+      .order('sort_order', { ascending: true }),
+    supabase.from('musi_shop_user_achievements')
+      .select('achievement_key, progress, unlocked_at')
+      .eq('username', username),
+  ]);
+  if (definitionsError) throw new Error(definitionsError.message);
+  if (progressError) throw new Error(progressError.message);
+  const progressByKey = new Map((progressRows || []).map(row => [row.achievement_key, row]));
+  return (definitions || []).map(row => {
+    const progress = progressByKey.get(row.achievement_key);
+    return {
+      achievementKey: row.achievement_key,
+      name: row.name,
+      description: row.description || '',
+      icon: row.icon || '🏆',
+      metric: row.metric,
+      target: Number(row.target) || 1,
+      progress: Math.max(0, Number(progress?.progress) || 0),
+      unlockedAt: progress?.unlocked_at || null,
+      rewardSku: row.reward_sku || null,
+    };
+  });
+}
+
+async function dbOpenMusiShopCrate(username, tier, idempotencyKey) {
+  const { data, error } = await supabase.rpc('open_musi_shop_crate', {
+    p_username: username,
+    p_tier: tier,
+    p_idempotency_key: idempotencyKey,
+  });
+  if (error) throw new Error(error.message);
+  return data || { ok: false, reason: 'crate_failed' };
 }
 
 function safeMusiShopGradient(value) {
@@ -7992,16 +8159,22 @@ app.get('/api/profiles/:username', async (req, res) => {
         .eq('is_published', true)).count || 0)
       : 0;
     const profileCosmetics = (await dbGetMusiShopActiveItems(key))
-      .filter(active => ['profile_frame', 'username_color', 'profile_badge', 'profile_banner_effect'].includes(active.slot))
+      .filter(active => [
+        'profile_frame', 'profile_background', 'username_color',
+        'username_effect', 'profile_badge', 'profile_banner_effect',
+        'status_emoji', 'favorite_genre_badge', 'milestone_badge',
+        'achievement_showcase',
+      ].includes(active.slot))
       .reduce((result, active) => {
         const item = active.item || {};
         result[active.slot] = {
           sku: active.sku,
           selectionKey: active.selectionKey,
+          assetKey: item.assetKey || null,
           name: item.name || null,
           animated: item.animated === true,
           color: item.color || null,
-          label: item.cosmeticLabel || null,
+          label: item.selectionLabels?.[active.selectionKey] || item.cosmeticLabel || null,
           icon: item.cosmeticIcon || null,
         };
         return result;
@@ -8937,6 +9110,9 @@ app.get('/api/mp/shop', rateLimit, async (req, res) => {
   try {
     const settings = await dbGetMusiShopSettings();
     const seasonalCollections = await dbGetMusiShopCollections(settings);
+    // Sync first so newly earned Achievement/Prestige rewards are present in
+    // the inventory read below on this same response.
+    const achievements = await dbGetMusiShopAchievements(sess.username);
     const liveSeasonKeys = new Set(
       seasonalCollections.filter(collection => collection.purchasable).map(collection => collection.collectionKey)
     );
@@ -8946,6 +9122,7 @@ app.get('/api/mp/shop', rateLimit, async (req, res) => {
       dbGetMusiShopEntitlements(sess.username, sess.isPremium),
       dbGetMusiShopInventory(sess.username),
     ]);
+    const dailyShop = await dbGetMusiShopDailyRotation(catalog);
     return res.json({
       enabled: settings.enabled,
       seasonalEnabled: settings.seasonalEnabled,
@@ -8954,6 +9131,8 @@ app.get('/api/mp/shop', rateLimit, async (req, res) => {
       seasonalCollections: settings.enabled ? seasonalCollections : [],
       currency: 'MP',
       catalog: settings.enabled ? catalog : [],
+      dailyShop: settings.enabled ? dailyShop : { rotationDate: null, expiresAt: null, items: [] },
+      achievements,
       wallet,
       entitlements,
       ...inventory,
@@ -9026,14 +9205,10 @@ app.post('/api/mp/shop/activate', rateLimit, async (req, res) => {
   const token = (req.headers.authorization || '').replace('Bearer ', '') || req.body?.token;
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Authentication required.' });
-  const allowedSlots = new Set([
-    'app_theme', 'profile_frame', 'username_color',
-    'profile_badge', 'profile_banner_effect', 'visualizer_style',
-  ]);
   const slot = String(req.body?.slot || '').trim();
   const sku = req.body?.sku == null ? null : String(req.body.sku).trim();
   const selectionKey = req.body?.selectionKey == null ? null : String(req.body.selectionKey).trim();
-  if (!allowedSlots.has(slot)
+  if (!MUSI_SHOP_COSMETIC_SLOTS.has(slot)
       || (sku && !/^[a-z0-9][a-z0-9_-]{2,79}$/.test(sku))
       || (selectionKey && !/^[a-z0-9][a-z0-9_-]{0,79}$/.test(selectionKey))) {
     return res.status(400).json({ error: 'Invalid cosmetic activation request.' });
@@ -9056,6 +9231,57 @@ app.post('/api/mp/shop/activate', rateLimit, async (req, res) => {
   } catch (err) {
     console.error('[musi-shop activate]', err);
     return res.status(500).json({ error: 'Could not update your active cosmetic.' });
+  }
+});
+
+app.post('/api/mp/shop/crate/open', rateLimit, async (req, res) => {
+  const token = (req.headers.authorization || '').replace('Bearer ', '') || req.body?.token;
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Authentication required.' });
+  const tier = String(req.body?.tier || '').trim().toLowerCase();
+  const idempotencyKey = String(req.body?.idempotencyKey || '').trim();
+  if (!['common', 'rare', 'epic', 'legendary'].includes(tier) || !UUID_RE.test(idempotencyKey)) {
+    return res.status(400).json({ error: 'Invalid mystery crate request.' });
+  }
+  try {
+    const result = await dbOpenMusiShopCrate(sess.username, tier, idempotencyKey);
+    if (!result.ok) {
+      const responses = {
+        shop_disabled: [503, 'The Musi-Shop is temporarily unavailable.'],
+        tier_complete: [409, `You already own every available ${tier} cosmetic.`],
+        insufficient_mp: [409, 'You do not have enough MP for this crate.'],
+        authentication_required: [401, 'Authentication required.'],
+        invalid_request: [400, 'Invalid mystery crate request.'],
+      };
+      const [status, message] = responses[result.reason] || [409, 'This crate could not be opened.'];
+      return res.status(status).json({
+        error: message,
+        reason: result.reason || 'crate_failed',
+        balanceMp: Number(result.balanceMp) || 0,
+        priceMp: Number(result.priceMp) || null,
+      });
+    }
+    const [wallet, inventory] = await Promise.all([
+      dbGetMpWallet(sess.username),
+      dbGetMusiShopInventory(sess.username),
+    ]);
+    return res.status(result.idempotent ? 200 : 201).json({
+      success: true,
+      idempotent: !!result.idempotent,
+      reward: {
+        openId: result.openId,
+        tier: result.tier,
+        sku: result.sku,
+        itemName: result.itemName,
+        itemIcon: result.itemIcon,
+        priceMp: Number(result.priceMp) || 0,
+      },
+      wallet,
+      ...inventory,
+    });
+  } catch (err) {
+    console.error('[musi-shop crate]', err);
+    return res.status(500).json({ error: 'Could not open this mystery crate.' });
   }
 });
 
