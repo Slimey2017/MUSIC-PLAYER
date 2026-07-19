@@ -7927,6 +7927,17 @@ async function sendMpEarnHeartbeat({ final = false, positionOverride = null } = 
 
   const position = Number.isFinite(Number(positionOverride)) ? Number(positionOverride) : Number(localAudio.currentTime);
   if (!Number.isFinite(position) || position < 0) return;
+  // TEMP DIAGNOSTIC — remove once Listen to Earn accrual is confirmed
+  // working. Backend RPC (record_listen_to_earn_heartbeat) has been
+  // verified correct via direct manual call; if listen_seconds_accrued
+  // still isn't moving, this line will show whether `position` itself is
+  // the problem (stuck at 0, not advancing, or a positionOverride masking
+  // the real currentTime) versus something else.
+  console.log('[MP heartbeat debug]', {
+    position, currentTime: localAudio.currentTime, paused: localAudio.paused,
+    src: localAudio.src?.slice(0, 60), positionOverride, final,
+    activeTrackId: active.trackId, queueItemTrackId: (state.queue[state.activeIndex]?.freqTrackId || state.queue[state.activeIndex]?.id),
+  });
   if (final) active.finalizing = true;
   MP_STATE.heartbeatInFlight = true;
   try {
