@@ -307,7 +307,7 @@ footer {
     <h1 class="tos-title">Privacy<br><span class="accent">Policy</span></h1>
     <div class="tos-meta">
       <span><span class="dot">●</span> Effective: June 29, 2026</span>
-      <span><span class="dot">●</span> Last Updated: July 2026</span>
+      <span><span class="dot">●</span> Last Updated: July 19, 2026</span>
       <span><span class="dot">●</span> Platform: FREQ Universal Music Player</span>
     </div>
   </div>
@@ -319,7 +319,9 @@ footer {
       <li><a href="#s1">Overview</a></li>
       <li><a href="#s2">Information We Collect</a></li>
       <li><a href="#s3">Account &amp; Authentication Data</a></li>
-      <li><a href="#s4">Payment &amp; Subscription Data</a></li>
+      <li><a href="#s4">Payment, Subscription &amp; Purchase Data</a></li>
+      <li><a href="#artist-data">Artist &amp; Verification Data</a></li>
+      <li><a href="#mp-data">Musi-Pixel Data</a></li>
       <li><a href="#s5">Content You Upload</a></li>
       <li><a href="#s6">Local Device Storage</a></li>
       <li><a href="#s7">Listening &amp; Usage Data</a></li>
@@ -346,7 +348,7 @@ footer {
       <div class="callout-label">Note</div>
       <p>FREQ is an independent platform operated by a solo developer. It is not affiliated with YouTube, Spotify, Tidal, SoundCloud, Apple Music, or any other third-party streaming service referenced in this Policy.</p>
     </div>
-    <p>FREQ is built around a simple principle: collect what's needed to run the Platform, and nothing more. Creating an account requires an email address, used for account recovery and to verify FREQ Premium purchases. Most of your personal settings — queue, history, favorites, theme — never leave your device. The sections below explain exactly what does.</p>
+    <p>FREQ is built around a simple principle: collect what is reasonably needed to operate, secure, and improve the Platform. Creating an account requires an email address, birthdate, country, username, and password. Some playback preferences, your local queue, favorites, and theme remain on your device; account features, play events, Family Controls, Listen to Earn validation, and Musi-Pixel activity are stored by FREQ as described below.</p>
   </section>
 
   <!-- §2 Information We Collect -->
@@ -366,7 +368,7 @@ footer {
         <tbody>
           <tr>
             <td><strong>Account credentials</strong></td>
-            <td>Username, display name, email address, password (hashed)</td>
+            <td>Username, display name, email address, birthdate, country, age group, password (hashed)</td>
             <td>FREQ database (Supabase)</td>
           </tr>
           <tr>
@@ -386,8 +388,23 @@ footer {
           </tr>
           <tr>
             <td><strong>Activity data</strong></td>
-            <td>Plays, likes, follows, posts, reports</td>
+            <td>Playback history and statistics, recommendation signals, likes, follows, posts, reports</td>
             <td>FREQ database (Supabase)</td>
+          </tr>
+          <tr>
+            <td><strong>Listen to Earn validation</strong></td>
+            <td>Eligibility, session progress, heartbeat timing and position, device/page identifiers, completion and anti-abuse results</td>
+            <td>FREQ database (Supabase)</td>
+          </tr>
+          <tr>
+            <td><strong>Musi-Pixel economy</strong></td>
+            <td>MP balance, earning and spending ledger, purchases, entitlements, gifts, and reward history</td>
+            <td>FREQ database (Supabase)</td>
+          </tr>
+          <tr>
+            <td><strong>Artist &amp; verification data</strong></td>
+            <td>Uploads, artist profile, analytics, legal/stage name, contact email, ownership evidence, ID/selfie/liveness files and review results where submitted, verification status, and badge state</td>
+            <td>FREQ database + Supabase Storage + EmailJS</td>
           </tr>
           <tr>
             <td><strong>Support &amp; report submissions</strong></td>
@@ -402,26 +419,26 @@ footer {
         </tbody>
       </table>
     </div>
-    <p>We do not collect government ID, payment card numbers, biometric data, or precise location data. FREQ Premium purchases are processed by Gumroad; FREQ never receives or stores your card details — see <a href="#s4">Payment &amp; Subscription Data</a> below.</p>
+    <p>FREQ does not receive or store payment-card numbers or collect precise location data. FREQ Premium purchases are processed by Gumroad; FREQ never receives your card details. Artist Verification may involve identity documents, a selfie, a liveness clip, and face-match, liveness, or manipulation-risk results when those materials are submitted through the verification flow. See <a href="#artist-data">Artist &amp; Verification Data</a> and <a href="#s4">Payment, Subscription &amp; Purchase Data</a>.</p>
   </section>
 
   <!-- §3 Account & Authentication Data -->
   <section class="tos-section" id="s3">
     <div class="section-num">Section 03</div>
     <h2 class="section-heading">Account &amp; Authentication Data</h2>
-    <p>Creating a FREQ account requires a <strong>username</strong>, an <strong>email address</strong>, a <strong>display name</strong>, and a <strong>password</strong>.</p>
+    <p>Creating a FREQ account requires a <strong>username</strong>, an <strong>email address</strong>, a <strong>birthdate</strong>, a <strong>country</strong>, and a <strong>password</strong>. A display name is optional. Birthdate is used to determine age group and apply age-appropriate content and Family Control rules; it is not displayed publicly.</p>
     <div class="callout info">
       <div class="callout-label">ℹ Email Address Required</div>
-      <p>A valid email address is required to create a FREQ account. It's used to help you recover your account, to verify FREQ Premium purchases against Gumroad's records, and to send important account or service notices. Accounts created before this requirement was introduced may be prompted to add an email address, including when accessing Premium features. We do not use your account email for marketing without your consent.</p>
+      <p>A valid email address is required to create a FREQ account. FREQ may require verification for Artist Verification, Listen to Earn eligibility, Musi-Pixel rewards, Premium purchase checks, sensitive account actions, and account recovery. Verification helps confirm control of the address and reduces impersonation, automated abuse, and fraud. Accounts created before this requirement may be prompted to add and verify an address. We do not use your account email for marketing without your consent.</p>
     </div>
     <p>Passwords are hashed using <strong>PBKDF2-SHA256</strong> before storage. We never store your password in plain text and cannot recover it for you directly, but we can send an account-recovery message to the email on file.</p>
     <p>When you sign in, FREQ issues a session token that your browser stores locally to keep you authenticated. This token is sent with API requests that require your identity (publishing tracks, liking, following, reporting, and similar actions) and is not used to track you across other websites.</p>
   </section>
 
-  <!-- §4 Payment & Subscription Data -->
+  <!-- §4 Payment, Subscription & Purchase Data -->
   <section class="tos-section" id="s4">
     <div class="section-num">Section 04</div>
-    <h2 class="section-heading">Payment &amp; Subscription Data</h2>
+    <h2 class="section-heading">Payment, Subscription &amp; Purchase Data</h2>
     <p>FREQ offers an optional paid tier, <strong>FREQ Premium</strong>. Payments for Premium are handled entirely by <strong>Gumroad</strong>, an independent third-party payment processor — FREQ never receives, transmits, or stores your card number, billing address, or other payment card details.</p>
     <div class="priv-table-wrap">
       <table class="priv-table">
@@ -452,7 +469,33 @@ footer {
       </table>
     </div>
     <p>To keep your Premium status current, FREQ periodically queries Gumroad's API using the email address tied to your subscription and stores only the resulting status (active, cancelled, expired, renewal date). We do not have access to your Gumroad account, payment method, or full transaction history — cancellations, refunds, and payment-method changes are all managed directly on Gumroad.</p>
+    <p>FREQ separately stores your <strong>in-app Musi-Shop purchase history</strong>, including the item or SKU, MP price, time, resulting entitlement or active cosmetic, gift direction where applicable, and related MP ledger entry. Musi-Shop purchases use MP, not payment-card details.</p>
     <p>Gumroad's own handling of your payment data is governed by Gumroad's privacy policy and terms, not this one.</p>
+  </section>
+
+  <section class="tos-section" id="artist-data">
+    <div class="section-num">Platform Data</div>
+    <h2 class="section-heading">Artist &amp; Verification Data</h2>
+    <p>If you create or manage an artist page, FREQ may collect and store artist profile information, uploads, release and collaborator metadata, social links, content ratings, analytics, and the relationship between your account and the artist page.</p>
+    <p>If you request artist verification, FREQ may collect the information you submit to establish identity, authority, or ownership, such as legal and stage name, role, contact email, ownership evidence, identity documents, a selfie, a liveness clip, face-match or liveness results, manipulation-risk results, review notes, status history, and prior attempts. Verification information is used to review the request, prevent impersonation and fraud, communicate about the request, maintain the official badge, and investigate later abuse.</p>
+    <div class="callout info">
+      <div class="callout-label">ℹ Verification Review</div>
+      <p>Verification is not automatic. Verification documents are stored encrypted and are accessed through authenticated review tools; document views are logged. Access is limited to the systems and people needed to process, secure, and audit the request. Approved, denied, revoked, or prior-request status may be retained where reasonably needed to prevent repeat abuse and document moderation decisions.</p>
+    </div>
+  </section>
+
+  <section class="tos-section" id="mp-data">
+    <div class="section-num">Platform Data</div>
+    <h2 class="section-heading">Musi-Pixel &amp; Listen to Earn Data</h2>
+    <p>To operate the Musi-Pixel economy, FREQ stores your MP wallet balance, lifetime earned and spent totals, earning history, transaction ledger, Musi-Shop purchases, entitlements, active cosmetic selections, Radio Pass status, DJ BOOM message balance, gifts, refunds or adjustments, and related timestamps.</p>
+    <p>For Listen to Earn, FREQ may store the offered track and artist, session identifiers, device and browser-page identifiers, playback position and timing observations, heartbeat counts, verified progress, completion state, eligibility decisions, caps, rejection reasons, and anti-abuse signals. These records are used to:</p>
+    <ul class="tos-list">
+      <li>Verify that a listening session meets the current reward rules.</li>
+      <li>Calculate and credit Musi-Pixel rewards.</li>
+      <li>Enforce per-track, per-artist, daily, device, and account limits.</li>
+      <li>Detect bots, automation, fake playback, duplicate sessions, and fraudulent accounts.</li>
+      <li>Investigate disputes, correct wallet or ledger errors, and remove improperly earned rewards.</li>
+    </ul>
   </section>
 
   <!-- §5 Content You Upload -->
@@ -464,6 +507,7 @@ footer {
       <li><strong>Private cloud files</strong> (your personal library) are delivered only to you via time-limited signed URLs — they are not publicly accessible.</li>
       <li><strong>Published tracks and music videos</strong> are intentionally public once you publish them, and are streamable by anyone via a public endpoint, consistent with the visibility setting (public, unlisted, or private) you choose at publish time.</li>
       <li><strong>File metadata</strong> we store includes filename, file size, upload date, and — where available — embedded audio metadata such as ID3 tags (title, artist, album art).</li>
+      <li><strong>Publishing metadata</strong> may include title, artist and collaborator credits, release association, genre, visibility, content rating and reason tags, duration, lyrics, and analytics identifiers.</li>
       <li>If you delete a published track or your account, associated files are removed from cloud storage, subject to the retention notes in Section 13.</li>
     </ul>
     <p>See our Terms of Service, Section 11, for additional detail on cloud storage limits and availability.</p>
@@ -482,6 +526,7 @@ footer {
       <li>Star ratings you assign to tracks</li>
       <li>Your "Keep Server Awake," debug mode, and notification preferences</li>
     </ul>
+    <p>FREQ also creates a random MP device identifier in local storage and a browser-page identifier for Listen to Earn. Those identifiers and qualifying session observations are sent to FREQ when you use Listen to Earn, as described in <a href="#mp-data">Musi-Pixel &amp; Listen to Earn Data</a>.</p>
     <p>Because this data lives only in your browser, it does not sync across devices unless the equivalent feature (such as cloud-synced playlists) is tied to your account, and it is permanently lost if you clear your browser data or use the <strong>Clear All Local Data</strong> control in Settings.</p>
   </section>
 
@@ -489,21 +534,24 @@ footer {
   <section class="tos-section" id="s7">
     <div class="section-num">Section 07</div>
     <h2 class="section-heading">Listening &amp; Usage Data</h2>
-    <p>To power features like Community Charts, track analytics, and your own listening history, FREQ records play events when you listen to a track.</p>
+    <p>To power Community Charts, artist analytics, listening history, recommendations, Family Controls, and Listen to Earn, FREQ may record playback events and listening statistics when you listen to a track.</p>
     <ul class="tos-list">
       <li>A play event records the track's source URL, platform (YouTube, Spotify, local file, etc.), title, artist (when available), and — for FREQ-published tracks — the track's internal ID.</li>
       <li>If you're logged in, the play is associated with your account so it can count toward your personal history and the artist's analytics. If you're logged out, the play is recorded anonymously and contributes only to aggregate counts like Community Charts.</li>
       <li>Audio and video plays are tracked as separate counters and are never merged into a single number.</li>
       <li>Artists can see aggregate analytics for their own published tracks (total plays, likes, and release association) — never the listening activity of any individual identified listener.</li>
+      <li>Recommendation signals may include tracks, artists, genres, playlists, searches, likes, follows, and recent or repeated listening used to improve discovery and For You results.</li>
+      <li>Listen to Earn sessions add heartbeat validation data, playback position and progress, session continuity, completion, eligibility, and anti-abuse outcomes as described in <a href="#mp-data">Musi-Pixel &amp; Listen to Earn Data</a>.</li>
+      <li>For a parent-managed account, authorized parents or guardians may view supported playback history, listening-time summaries, and recognized devices through Family Controls.</li>
     </ul>
-    <p>You can turn off local <strong>History Tracking</strong> in Settings to stop recording your recently-played list on this device. An optional, separate <strong>Analytics (anonymous)</strong> toggle governs anonymous usage-pattern data intended to help us improve the Platform; this data is not tied to your identity.</p>
+    <p>You can turn off local <strong>History Tracking</strong> in Settings to stop recording the recently-played list on that device. This local preference does not disable server records that are necessary for published-track counts, artist analytics, Family Controls, security, fraud prevention, or Listen to Earn. An optional, separate <strong>Analytics (anonymous)</strong> toggle governs additional anonymous usage-pattern data intended to help us improve the Platform.</p>
   </section>
 
   <!-- §7 Cookies & Tracking Technologies -->
   <section class="tos-section" id="s8">
     <div class="section-num">Section 08</div>
     <h2 class="section-heading">Cookies &amp; Tracking Technologies</h2>
-    <p>FREQ does not use third-party advertising cookies and does not sell or share your data with advertisers. The Platform primarily relies on browser local storage (see Section 5) rather than cookies for its own functionality.</p>
+    <p>FREQ does not use third-party advertising cookies and does not sell or share your data with advertisers. The Platform primarily relies on browser local storage and session storage for login sessions, queue and playback state, preferences, theme and customization settings, feature flags, and one-session interface state.</p>
     <ul class="tos-list">
       <li>FREQ does not run cross-site tracking pixels, ad networks, or fingerprinting scripts of its own.</li>
       <li>Embedded third-party players (YouTube, Spotify, SoundCloud, etc.) may set their own cookies when you stream through them, governed entirely by that platform's own policy — see Section 11.</li>
@@ -519,6 +567,10 @@ footer {
     <ul class="tos-list">
       <li>Create and maintain your account, and authenticate your sessions.</li>
       <li>Operate core features — publishing, playback, playlists, follows, likes, posts, and Community Charts.</li>
+      <li>Verify email control, evaluate Artist Verification requests, and display or revoke official verification badges.</li>
+      <li>Improve recommendations and discovery using listening and engagement signals.</li>
+      <li>Determine Listen to Earn eligibility, validate playback progress, calculate MP rewards, operate wallets and ledgers, and fulfill Musi-Shop purchases and gifts.</li>
+      <li>Provide and enforce Family Controls, including content limits, listening schedules, screen-time records, supported playback history, and device management.</li>
       <li>Display your public profile, artist page, and published content to other users as intended.</li>
       <li>Respond to support requests and investigate moderation reports.</li>
       <li>Enforce our Terms of Service, including detecting abuse, spam, and metric manipulation.</li>
@@ -535,7 +587,7 @@ footer {
     <ul class="tos-list">
       <li><strong>Public by design:</strong> content you choose to make public — published tracks, artist profiles, posts, comments, follower lists — is visible to anyone using the Platform, by definition.</li>
       <li><strong>Collaborators:</strong> if you're tagged as a collaborator on a release, your username and credit role are displayed alongside that release.</li>
-      <li><strong>Service providers:</strong> we use Supabase (database and file storage), EmailJS (transactional email delivery for support tickets and moderation notifications), and Gumroad (Premium subscription checkout and billing) to operate the Platform. These providers process data on our behalf and are not authorized to use it for their own purposes, except that Gumroad independently controls payment data as described in <a href="#s4">Payment &amp; Subscription Data</a>.</li>
+      <li><strong>Service providers:</strong> we use Supabase (PostgreSQL database and file storage), Render (application hosting), EmailJS (support, moderation, and artist-verification email delivery), and Gumroad (Premium checkout, purchase verification, and subscription billing) to operate the Platform. These providers process data under their own terms and privacy practices; Gumroad independently controls payment data as described in <a href="#s4">Payment, Subscription &amp; Purchase Data</a>.</li>
       <li><strong>Moderation &amp; reports:</strong> if you submit a report, the report's content (reason, details, and your username) is shared with FREQ's moderation system and, via email, with the FREQ administrator who reviews it.</li>
       <li><strong>Legal requirements:</strong> we may disclose information if required by law, subpoena, or other legal process, or to protect the rights, safety, or property of FREQ, our users, or the public.</li>
       <li><strong>Business transfers:</strong> if FREQ is ever involved in a merger, acquisition, or sale of assets, user information may be transferred as part of that transaction, subject to this Policy.</li>
@@ -545,8 +597,15 @@ footer {
   <!-- §10 Third-Party Platforms -->
   <section class="tos-section" id="s11">
     <div class="section-num">Section 11</div>
-    <h2 class="section-heading">Third-Party Platforms</h2>
-    <p>FREQ integrates with and embeds content from third-party platforms including YouTube, YouTube Music, Spotify, Tidal, SoundCloud, Apple Music, Amazon Music, Qobuz, and Deezer.</p>
+    <h2 class="section-heading">Third-Party Services &amp; Platforms</h2>
+    <p>FREQ currently relies on the following service integrations to operate:</p>
+    <ul class="tos-list">
+      <li><strong>Supabase:</strong> PostgreSQL database services and Storage for account, Platform, economy, and uploaded-file data.</li>
+      <li><strong>Render:</strong> hosting for FREQ's Node/Express application and API.</li>
+      <li><strong>EmailJS:</strong> delivery of support, moderation, and artist-verification messages submitted through supported flows.</li>
+      <li><strong>Gumroad:</strong> Premium checkout, billing, subscription management, and purchase-status verification. Gumroad receives payment information directly; FREQ does not receive card numbers.</li>
+    </ul>
+    <p>FREQ also integrates with or embeds content from YouTube, YouTube Music, Spotify, Tidal, SoundCloud, Apple Music, Amazon Music, Qobuz, Deezer, and Last.fm.</p>
     <ul class="tos-list">
       <li>When you stream through one of these embeds, your interaction with that embed (playback, volume, and similar signals sent via that platform's own player API) is subject to <strong>that platform's own privacy policy</strong>, not this one.</li>
       <li>FREQ does not control what data these third-party platforms collect from embedded players, and is not responsible for their data practices.</li>
@@ -562,6 +621,8 @@ footer {
     <p>Account and platform data is stored in a Supabase-hosted PostgreSQL database. Uploaded files are stored in Supabase Storage and delivered via signed, time-limited URLs rather than public, permanent links.</p>
     <ul class="tos-list">
       <li>Passwords are hashed with PBKDF2-SHA256 and are never stored or transmitted in plain text.</li>
+      <li>Authenticated API routes use session tokens, and sensitive actions may require a verified email address, an eligible age group, account ownership, Premium status, parent or administrator authorization, or other server-side checks.</li>
+      <li>Listen to Earn credits, Musi-Shop purchases, Family Controls, moderation actions, and artist-verification decisions are validated on the server rather than relying only on browser state.</li>
       <li>The Platform is hosted on Render. As an independent, solo-operated project, FREQ applies reasonable security practices but cannot guarantee absolute security — no online service can.</li>
       <li>We ask that you use a unique, strong password and avoid reusing credentials from other services.</li>
     </ul>
@@ -581,7 +642,8 @@ footer {
       <li>Upon deletion, your profile, posts, and associated personal account data are removed from active systems. Uploaded files may be deleted from cloud storage as part of this process.</li>
       <li>Some information may persist in backups for a limited period, or where retention is required to comply with legal obligations, resolve disputes, or enforce our agreements.</li>
       <li>Aggregate, de-identified data (for example, total play counts that no longer reference your account) may be retained even after account deletion.</li>
-      <li>Local browser data (Section 5) is retained until you clear it yourself or clear your browser's storage — FREQ has no way to remotely delete it for you, since we never receive it.</li>
+      <li>MP ledger, purchase, verification, moderation, security, and anti-fraud records may be retained for a reasonable period after account or content deletion where needed to reconcile transactions, investigate abuse, prevent repeat fraud, enforce these Terms, or meet legal obligations.</li>
+      <li>Local browser data (Section 6) is retained until you clear it yourself or clear your browser's storage — FREQ has no way to remotely delete local-only data it never receives.</li>
     </ul>
   </section>
 
@@ -591,9 +653,9 @@ footer {
     <h2 class="section-heading">Your Choices &amp; Rights</h2>
     <p>You have meaningful control over your information on FREQ:</p>
     <ul class="tos-list">
-      <li><strong>Access &amp; export:</strong> you can export your local settings at any time from Settings → Data Management.</li>
-      <li><strong>Correction:</strong> you can edit your display name, bio, avatar, banner, and other profile fields directly from your account or artist page settings.</li>
-      <li><strong>Deletion:</strong> you can delete individual uploads, posts, or releases, or delete your entire account, as described in Section 13.</li>
+      <li><strong>Access &amp; export:</strong> you can export supported local settings at any time from Settings → Data Management. You may also contact support to request a copy of server-side personal data where the law requires it or where FREQ can reasonably support the request.</li>
+      <li><strong>Correction:</strong> you can edit supported profile fields directly from account or artist settings and may contact support to request correction of account information you cannot change yourself.</li>
+      <li><strong>Deletion:</strong> you can delete individual uploads, posts, or releases, use Settings to delete your account, or contact support for help with an account-deletion request, subject to the retention limits in Section 13.</li>
       <li><strong>Local data control:</strong> you can clear all locally-stored data for FREQ (queue, history, favorites, settings) at any time via the <strong>Clear All Local Data</strong> button in Settings.</li>
       <li><strong>Opting out of tracking:</strong> you can disable local History Tracking and anonymous Analytics independently in Settings → Notifications &amp; Privacy.</li>
       <li><strong>Visibility controls:</strong> you choose whether each release is public, unlisted, or private at the time you publish it.</li>
@@ -605,10 +667,12 @@ footer {
   <section class="tos-section" id="s15">
     <div class="section-num">Section 15</div>
     <h2 class="section-heading">Children's Privacy</h2>
-    <p>FREQ requires users to be at least <strong>13 years of age</strong>, consistent with our Terms of Service, Section 2. We do not knowingly collect personal information from children under 13.</p>
+    <p>FREQ requires users to be at least <strong>13 years of age</strong>, consistent with our Terms of Service, Section 2. We do not knowingly permit an independent account for a child under 13. Birthdate is collected to determine age group and support content and Family Control enforcement.</p>
     <ul class="tos-list">
       <li>If we become aware that an account belongs to a user under 13, we will take steps to delete that account and associated data.</li>
-      <li>Users aged 13–17 are restricted to Clean-rated content by default. A Parental Controls system, allowing parents or guardians to manage what their child can access, is in development — see our Terms of Service, Section 7, for current status.</li>
+      <li>Family Controls allow an eligible adult account to create a family, invite and approve eligible child or teen accounts, and manage rating limits, blocked artists/tracks/genres, listening schedules, daily limits, feature access, and recognized devices.</li>
+      <li>Authorized parents or guardians may view supported listening-time summaries and playback history for a linked account and may remotely sign that account out or remove it from the family.</li>
+      <li>FREQ uses the family relationship, restriction settings, playback records, and device information to provide and enforce these parental features. Linked users are shown that their account is parent-managed.</li>
       <li>Parents or guardians who believe their child has provided personal information to FREQ, or has misrepresented their age, should contact us using the details in Section 18 to request account review or deletion.</li>
     </ul>
     <div class="callout warn">
