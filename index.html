@@ -7082,6 +7082,19 @@ const MP_STATE = {
   activeEarn: null, // { sessionId, trackId, mpPerTrack, intervalMs, finalizing }
   heartbeatTimer: null,
   heartbeatInFlight: false,
+  // Bumped by every playItem() call and stamped onto that call's logPlay/
+  // start-session round trip. If a second playItem() fires before the
+  // first's /api/plays response lands (double-click, re-render, offer
+  // click racing a queue update), the first response's playToken no longer
+  // matches MP_STATE.playToken by the time it resolves, so its
+  // beginMpEarnSession() is skipped instead of silently creating/activating
+  // a session for a track that's no longer the one playing. Without this,
+  // two overlapping session-start calls could stomp each other's
+  // MP_STATE.activeEarn, orphaning whichever session's heartbeat timer lost
+  // the race — that session then keeps beating against last_position_seconds
+  // baselines that no longer match localAudio.currentTime, so verified
+  // progress never accrues even though heartbeats are landing.
+  playToken: 0,
 };
 
 const MUSI_SHOP_STATE = {
@@ -9062,7 +9075,7 @@ $('profileLookupInput')?.addEventListener('keydown', (e) => {
 // 'ended' event could never have fired for it.
 let _tastePlayState = null; // { rowId, naturalEnd, trackable } | null
 
-async function logPlay(item) {
+async function logPlay(item, playToken = null) {
   if (!item || !item.originalUrl) return;
   const wantsListenToEarn = !!(item.listenToEarn && item.playSource === 'listen_to_earn' && item.platform === 'freq');
   // Snapshot + reset before the async call, not after — playItem() may
@@ -9140,7 +9153,21 @@ async function logPlay(item) {
     if (data && data.playRowId) _tastePlayState = { rowId: data.playRowId, naturalEnd: false, trackable };
     if (wantsListenToEarn) {
       if (data?.listenToEarn?.eligible) {
-        beginMpEarnSession(data.listenToEarn, item);
+        // A newer playItem() call already claimed a later playToken while
+        // this /api/plays request was in flight — the session the server
+        // just created belongs to a track attempt that's no longer current.
+        // Tell the server to close it immediately (idempotent, no payout
+        // exists yet) instead of activating it, so it can't linger as an
+        // orphaned 'active' row that a later heartbeat might accidentally
+        // target with a stale sessionId.
+        if (playToken !== null && playToken !== MP_STATE.playToken) {
+          fetch('/api/mp/listen-to-earn/stop', {
+            method: 'POST', headers: authHeaders(),
+            body: JSON.stringify({ sessionId: data.listenToEarn.sessionId }),
+          }).catch(() => {});
+        } else {
+          beginMpEarnSession(data.listenToEarn, item);
+        }
       } else if (data?.listenToEarn) {
         const msg = data.listenToEarn.message || {
           already_rewarded: 'You already earned MP from this track.',
@@ -19880,11 +19907,20 @@ async function playItem(index) {
   // attempt; the server keeps any already-completed payout idempotent.
   if (MP_STATE.activeEarn) stopMpEarnSession();
 
+  // Claim this playItem() call's identity BEFORE any async work (logPlay's
+  // fetch, URL refresh, etc) starts. If another playItem() call comes in
+  // while this one is still in flight, it bumps this same counter, so this
+  // call's eventual logPlay()/beginMpEarnSession() response can recognize
+  // it's stale and skip activating a session for a track that's no longer
+  // current — see MP_STATE.playToken's declaration for the full failure
+  // mode this prevents.
+  const playToken = ++MP_STATE.playToken;
+
   state.currentUrl = item.originalUrl || null;
   nowPlatform.textContent = `${cfg.label} · ${item.type}`;
   nowDot.style.display    = 'block';
   pushHistory(item);
-  logPlay(item);
+  logPlay(item, playToken);
 
   // Download is a Local Files affordance only. FREQ-published tracks stream
   // from a signed URL the same way local files do (same <audio> element,
