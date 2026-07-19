@@ -53,7 +53,7 @@
  * POST   /api/plays                            { originalUrl, platform?, title?, token? }
  * GET    /api/mp/wallet                        Authenticated Musi-Pixels balance
  * GET    /api/mp/ledger                        Authenticated immutable MP transaction ledger
- * GET    /api/mp/shop                          Catalog, entitlements, owned + active items
+ * GET    /api/mp/shop                          Catalog, seasonal collections, owned + active items
  * POST   /api/mp/shop/purchase                 Atomic MP purchase + grant/ownership
  * POST   /api/mp/shop/activate                 Equip/clear an owned cosmetic
  * POST   /api/mp/shop/gift                     Atomic MP gift purchase + recipient grant
@@ -2202,20 +2202,29 @@ async function dbGetMpLedger(username, { limit = 30, before = null } = {}) {
   }));
 }
 
-// ─── Musi-Shop · Phases 2–3 ──────────────────────────────────────────────
+// ─── Musi-Shop · Phases 2–4 ──────────────────────────────────────────────
 // Catalog prices and grant sizes live in musi_shop_items so they can be
 // tuned without deploying server/client code. Purchases reuse the Phase 1
 // wallet and immutable ledger; the database RPC is the only place a debit
 // and its grant can happen, keeping them in one transaction. Phase 3 adds
 // permanent owned items, one active item per cosmetic slot, and atomic gifts.
+// Phase 4 adds scheduled collections. A seasonal item reaches the normal
+// catalog only while both the global switch and its collection window are live.
 async function dbGetMusiShopSettings() {
   const { data, error } = await supabase.from('app_config')
-    .select('key, value').in('key', ['musi_shop.enabled', 'musi_shop.seasonal_enabled']);
+    .select('key, value').in('key', [
+      'musi_shop.enabled',
+      'musi_shop.seasonal_enabled',
+      'musi_shop.seasonal_preview_enabled',
+    ]);
   if (error) throw new Error(error.message);
   const values = new Map((data || []).map(row => [row.key, row.value]));
   return {
     enabled: values.has('musi_shop.enabled') ? values.get('musi_shop.enabled') !== false : true,
     seasonalEnabled: values.get('musi_shop.seasonal_enabled') === true,
+    seasonalPreviewEnabled: values.has('musi_shop.seasonal_preview_enabled')
+      ? values.get('musi_shop.seasonal_preview_enabled') === true
+      : true,
   };
 }
 
@@ -2246,6 +2255,8 @@ function shapeMusiShopItem(row) {
     color: typeof metadata.color === 'string' ? metadata.color : null,
     cosmeticLabel: typeof metadata.label === 'string' ? metadata.label : null,
     cosmeticIcon: typeof metadata.icon === 'string' ? metadata.icon : null,
+    collectionLabel: typeof metadata.collection_label === 'string' ? metadata.collection_label : null,
+    eventExclusive: metadata.event_exclusive === true,
     selections,
     selectionLabels,
     giftable: row.giftable !== false,
@@ -2256,7 +2267,7 @@ function shapeMusiShopItem(row) {
   };
 }
 
-async function dbGetMusiShopCatalog({ seasonalEnabled = false } = {}) {
+async function dbGetMusiShopCatalog({ liveSeasonKeys = new Set() } = {}) {
   const { data, error } = await supabase.from('musi_shop_items')
     .select('sku, name, description, category, entitlement_type, price_mp, grant_quantity, grant_unit, icon, badge, sort_order, available_from, available_until, metadata, giftable, seasonal, season_key')
     .eq('active', true)
@@ -2267,8 +2278,75 @@ async function dbGetMusiShopCatalog({ seasonalEnabled = false } = {}) {
   return (data || []).filter(row => {
     const starts = row.available_from ? new Date(row.available_from).getTime() : null;
     const ends = row.available_until ? new Date(row.available_until).getTime() : null;
-    return (!row.seasonal || seasonalEnabled) && (!starts || starts <= now) && (!ends || ends > now);
+    return (!row.seasonal || liveSeasonKeys.has(row.season_key)) && (!starts || starts <= now) && (!ends || ends > now);
   }).map(shapeMusiShopItem);
+}
+
+function safeMusiShopGradient(value) {
+  const gradient = String(value || '').slice(0, 300);
+  return /^(linear-gradient|radial-gradient)\(/i.test(gradient)
+      && gradient.endsWith(')')
+      && !/[;<>]/.test(gradient)
+      && !/url\s*\(/i.test(gradient)
+    ? gradient
+    : 'linear-gradient(135deg,#6b2bd1,#ef5ec8)';
+}
+
+async function dbGetMusiShopCollections(settings) {
+  const [{ data: collectionRows, error: collectionError }, { data: itemRows, error: itemError }] = await Promise.all([
+    supabase.from('musi_shop_collections')
+      .select('collection_key, name, tagline, description, icon, hero_gradient, active, preview_enabled, preview_from, starts_at, ends_at, sort_order, metadata')
+      .order('sort_order', { ascending: true })
+      .order('collection_key', { ascending: true }),
+    supabase.from('musi_shop_items')
+      .select('sku, name, description, category, entitlement_type, price_mp, grant_quantity, grant_unit, icon, badge, sort_order, available_from, available_until, metadata, giftable, seasonal, season_key')
+      .eq('active', true)
+      .eq('seasonal', true)
+      .order('sort_order', { ascending: true }),
+  ]);
+  if (collectionError) throw new Error(collectionError.message);
+  if (itemError) throw new Error(itemError.message);
+
+  const now = Date.now();
+  const itemsByCollection = new Map();
+  (itemRows || []).forEach(row => {
+    if (!itemsByCollection.has(row.season_key)) itemsByCollection.set(row.season_key, []);
+    itemsByCollection.get(row.season_key).push(shapeMusiShopItem(row));
+  });
+
+  return (collectionRows || []).map(row => {
+    const startsAt = row.starts_at ? new Date(row.starts_at).getTime() : null;
+    const endsAt = row.ends_at ? new Date(row.ends_at).getTime() : null;
+    const previewFrom = row.preview_from ? new Date(row.preview_from).getTime() : null;
+    let scheduledState = 'locked';
+    if (row.active && startsAt && endsAt) {
+      scheduledState = now < startsAt ? 'upcoming' : now >= endsAt ? 'ended' : 'live';
+    }
+    const state = settings.seasonalEnabled ? scheduledState : 'locked';
+    const previewVisible = row.preview_enabled
+      && (!previewFrom || previewFrom <= now)
+      && (settings.seasonalPreviewEnabled || state === 'live');
+    const metadata = row.metadata && typeof row.metadata === 'object' ? row.metadata : {};
+    return {
+      collectionKey: row.collection_key,
+      name: row.name,
+      tagline: row.tagline || '',
+      description: row.description || '',
+      icon: row.icon || '🎉',
+      heroGradient: safeMusiShopGradient(row.hero_gradient),
+      state,
+      scheduledState,
+      purchasable: state === 'live',
+      previewVisible,
+      startsAt: row.starts_at || null,
+      endsAt: row.ends_at || null,
+      nextChangeAt: state === 'upcoming' ? row.starts_at : state === 'live' ? row.ends_at : null,
+      limited: metadata.limited === true,
+      accent: typeof metadata.accent === 'string' ? metadata.accent : null,
+      accent2: typeof metadata.accent2 === 'string' ? metadata.accent2 : null,
+      items: itemsByCollection.get(row.collection_key) || [],
+    };
+  }).filter(collection => collection.previewVisible || collection.purchasable);
 }
 
 async function dbGetMusiShopActiveItems(username) {
@@ -8798,8 +8876,12 @@ app.get('/api/mp/shop', rateLimit, async (req, res) => {
   if (!sess) return res.status(401).json({ error: 'Authentication required.' });
   try {
     const settings = await dbGetMusiShopSettings();
+    const seasonalCollections = await dbGetMusiShopCollections(settings);
+    const liveSeasonKeys = new Set(
+      seasonalCollections.filter(collection => collection.purchasable).map(collection => collection.collectionKey)
+    );
     const [catalog, wallet, entitlements, inventory] = await Promise.all([
-      dbGetMusiShopCatalog(settings),
+      dbGetMusiShopCatalog({ liveSeasonKeys }),
       dbGetMpWallet(sess.username),
       dbGetMusiShopEntitlements(sess.username, sess.isPremium),
       dbGetMusiShopInventory(sess.username),
@@ -8807,6 +8889,9 @@ app.get('/api/mp/shop', rateLimit, async (req, res) => {
     return res.json({
       enabled: settings.enabled,
       seasonalEnabled: settings.seasonalEnabled,
+      seasonalPreviewEnabled: settings.seasonalPreviewEnabled,
+      serverTime: new Date().toISOString(),
+      seasonalCollections: settings.enabled ? seasonalCollections : [],
       currency: 'MP',
       catalog: settings.enabled ? catalog : [],
       wallet,
@@ -8836,6 +8921,8 @@ app.post('/api/mp/shop/purchase', rateLimit, async (req, res) => {
         shop_disabled: [503, 'The Musi-Shop is temporarily unavailable.'],
         item_unavailable: [404, 'This shop item is no longer available.'],
         seasonal_locked: [409, 'This seasonal collection is not open yet.'],
+        seasonal_upcoming: [409, 'This seasonal collection has not started yet.'],
+        seasonal_ended: [409, 'This seasonal collection has ended.'],
         insufficient_mp: [409, 'You do not have enough MP for this item.'],
         included_with_premium: [409, 'This access is already included with FREQ Premium.'],
         already_owned: [409, 'You already own this item.'],
@@ -8929,6 +9016,8 @@ app.post('/api/mp/shop/gift', rateLimit, async (req, res) => {
         shop_disabled: [503, 'The Musi-Shop is temporarily unavailable.'],
         item_unavailable: [404, 'This item cannot be gifted right now.'],
         seasonal_locked: [409, 'This seasonal collection is not open yet.'],
+        seasonal_upcoming: [409, 'This seasonal collection has not started yet.'],
+        seasonal_ended: [409, 'This seasonal collection has ended.'],
         recipient_not_found: [404, 'No FREQ account was found with that username.'],
         recipient_has_premium: [409, 'That user already has this access through FREQ Premium.'],
         recipient_already_owns: [409, 'That user already owns this item.'],
