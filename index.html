@@ -7097,6 +7097,9 @@ const MP_STATE = {
   // baselines that no longer match localAudio.currentTime, so verified
   // progress never accrues even though heartbeats are landing.
   playToken: 0,
+  // Identifies this browser-page lifetime. Sent with playToken so the server
+  // can reject an older /api/plays request that finishes after a newer one.
+  playPageId: (window.crypto?.randomUUID?.() || `page-${Date.now()}-${Math.random().toString(36).slice(2)}`),
 };
 
 const MUSI_SHOP_STATE = {
@@ -7941,17 +7944,36 @@ function stopMpEarnSession({ notifyServer = true } = {}) {
   }).catch(() => {});
 }
 
-async function sendMpEarnHeartbeat({ final = false, positionOverride = null } = {}) {
-  const active = MP_STATE.activeEarn;
+async function sendMpEarnHeartbeat({ final = false, positionOverride, activeOverride = null } = {}) {
+  // activeOverride is used only by a queued final heartbeat. The listener may
+  // already have auto-advanced to a new track by the time the previous request
+  // finishes, but the final observation still belongs to the captured session.
+  const active = activeOverride || MP_STATE.activeEarn;
   if (!active || !AUTH.loggedIn || !AUTH.token) return;
+
+  // Do not coerce the absence sentinel. Number(null) is 0, which previously
+  // replaced the real advancing currentTime on every scheduled heartbeat.
+  const hasPositionOverride =
+    typeof positionOverride === 'number' && Number.isFinite(positionOverride);
+  const position = hasPositionOverride
+    ? positionOverride
+    : Number(localAudio?.currentTime);
+  if (!Number.isFinite(position) || position < 0) return;
+
   if (MP_STATE.heartbeatInFlight) {
     if (final) {
       active.finalizing = true;
-      active.pendingFinalPosition = Number.isFinite(Number(positionOverride)) ? Number(positionOverride) : Number(localAudio.currentTime);
+      active.pendingFinalPosition = Math.max(
+        Number.isFinite(active.pendingFinalPosition) ? active.pendingFinalPosition : 0,
+        position,
+      );
       setTimeout(() => {
-        if (MP_STATE.activeEarn?.sessionId === active.sessionId) {
-          sendMpEarnHeartbeat({ final: true, positionOverride: active.pendingFinalPosition });
-        }
+        if (!Number.isFinite(active.pendingFinalPosition)) return;
+        sendMpEarnHeartbeat({
+          final: true,
+          positionOverride: active.pendingFinalPosition,
+          activeOverride: active,
+        });
       }, 600);
     }
     return;
@@ -7973,8 +7995,6 @@ async function sendMpEarnHeartbeat({ final = false, positionOverride = null } = 
   const item = state.queue[state.activeIndex];
   if (!final && (!item || (item.freqTrackId || item.id) !== active.trackId)) return;
 
-  const position = Number.isFinite(Number(positionOverride)) ? Number(positionOverride) : Number(localAudio.currentTime);
-  if (!Number.isFinite(position) || position < 0) return;
   // TEMP DIAGNOSTIC — remove once Listen to Earn accrual is confirmed
   // working. Backend RPC (record_listen_to_earn_heartbeat) has been
   // verified correct via direct manual call; if listen_seconds_accrued
@@ -7986,11 +8006,20 @@ async function sendMpEarnHeartbeat({ final = false, positionOverride = null } = 
     src: localAudio.src?.slice(0, 60), positionOverride, final,
     activeTrackId: active.trackId, queueItemTrackId: (state.queue[state.activeIndex]?.freqTrackId || state.queue[state.activeIndex]?.id),
   });
-  if (final) active.finalizing = true;
+  if (final) {
+    active.finalizing = true;
+    delete active.pendingFinalPosition;
+  }
   MP_STATE.heartbeatInFlight = true;
+  const controller = new AbortController();
+  const heartbeatTimeout = setTimeout(
+    () => controller.abort(),
+    Math.max(8_000, Math.min(15_000, Number(active.intervalMs) || 12_000)),
+  );
   try {
     const res = await fetch('/api/mp/listen-to-earn/heartbeat', {
       method: 'POST', headers: authHeaders(),
+      signal: controller.signal,
       body: JSON.stringify({
         sessionId: active.sessionId,
         currentTimeSeconds: position,
@@ -8024,6 +8053,19 @@ async function sendMpEarnHeartbeat({ final = false, positionOverride = null } = 
       }[data.reason];
       if (friendly) showToast('Listen to Earn', friendly, 'info');
     }
+
+    // A natural-end observation that did not reward is terminal for this
+    // playback attempt. Close it only after the heartbeat response so the stop
+    // request cannot race ahead and expire a heartbeat that was still earning.
+    if (final && data.active !== false) {
+      if (MP_STATE.activeEarn?.sessionId === active.sessionId) {
+        stopMpEarnSession({ notifyServer: false });
+      }
+      fetch('/api/mp/listen-to-earn/stop', {
+        method: 'POST', headers: authHeaders(),
+        body: JSON.stringify({ sessionId: active.sessionId }),
+      }).catch(() => {});
+    }
   } catch (err) {
     // A network miss never pauses playback or fabricates elapsed time. The
     // next successful heartbeat resumes from server-owned timestamps.
@@ -8032,6 +8074,7 @@ async function sendMpEarnHeartbeat({ final = false, positionOverride = null } = 
       stopMpEarnSession({ notifyServer: false });
     }
   } finally {
+    clearTimeout(heartbeatTimeout);
     MP_STATE.heartbeatInFlight = false;
   }
 }
@@ -9191,6 +9234,8 @@ async function logPlay(item, playToken = null) {
         // source is the dedicated Listen to Earn discovery slot.
         listenToEarn: wantsListenToEarn,
         mpDeviceId: wantsListenToEarn ? MP_STATE.deviceId : undefined,
+        mpPlayPageId: wantsListenToEarn ? MP_STATE.playPageId : undefined,
+        mpPlayToken: wantsListenToEarn ? playToken : undefined,
         // Taste Graph: report how the PREVIOUS track ended, keyed by the
         // playRowId that call's own response handed back. Omitted entirely
         // (not sent as null/false) when there's no previous row to report
@@ -9226,7 +9271,7 @@ async function logPlay(item, playToken = null) {
         } else {
           beginMpEarnSession(data.listenToEarn, item);
         }
-      } else if (data?.listenToEarn) {
+      } else if (data?.listenToEarn && (playToken === null || playToken === MP_STATE.playToken)) {
         const msg = data.listenToEarn.message || {
           already_rewarded: 'You already earned MP from this track.',
           artist_daily_cap: 'You reached today\'s reward limit for this artist.',
@@ -20055,6 +20100,10 @@ async function playItem(index) {
       }
     }
 
+    // A newer playItem() call won while the signed URL refresh was awaiting.
+    // Do not let this stale continuation overwrite the newer audio source.
+    if (playToken !== MP_STATE.playToken) return;
+
     // Cross-origin sources (Supabase signed URLs) must have crossOrigin set
     // BEFORE assigning .src, or createMediaElementSource() taints the output
     // and the Web Audio graph plays back silently with no error of any kind.
@@ -20081,6 +20130,10 @@ async function playItem(index) {
     if (audioCtx && audioCtx.state === 'suspended') {
       try { await audioCtx.resume(); } catch (_) {}
     }
+
+    // resume() is asynchronous too, so repeat the stale-call guard before
+    // touching the shared audio graph or requesting playback.
+    if (playToken !== MP_STATE.playToken) return;
 
     if (audioCtx && !_audioGraphConnected) connectAudioGraph();
     else if (audioCtx && _audioGraphConnected) updateAudioGraph();
@@ -20288,6 +20341,9 @@ const CrossfadeManager = (() => {
     if (state.repeat === 2) return false; // repeat-one: no next track to fade into, just loop
     const cur = state.activeIndex >= 0 ? state.queue[state.activeIndex] : null;
     if (!cur || (cur.platform !== 'local' && cur.platform !== 'freq')) return false;
+    // Crossfade hands off before the main audio element's natural `ended`
+    // event. That would stop an earn session before its final heartbeat.
+    if (MP_STATE.activeEarn?.trackId === (cur.freqTrackId || cur.id)) return false;
     const nextIndex = state.repeat === 1 ? (state.activeIndex + 1) % state.queue.length : state.activeIndex + 1;
     if (nextIndex >= state.queue.length && state.repeat !== 1) return false;
     const next = state.queue[nextIndex];
@@ -20574,6 +20630,7 @@ localAudio.addEventListener('playing', () => { _expiredUrlRetried = false; });
 function removeItem(index) {
   playSfx('remove');
   const item = state.queue[index];
+  if (state.activeIndex === index && MP_STATE.activeEarn) stopMpEarnSession();
   if (item.platform === 'local' && item.blobUrl) URL.revokeObjectURL(item.blobUrl);
   state.queue.splice(index, 1);
   if (state.activeIndex === index) { state.activeIndex = -1; showWelcome(); }
@@ -20843,6 +20900,7 @@ clearBtn.addEventListener('click', () => {
   if (!state.queue.length) return;
   if (!confirm('Clear the entire queue?')) return;
   playSfx('remove');
+  if (MP_STATE.activeEarn) stopMpEarnSession();
   state.queue.forEach(q => { if (q.platform==='local' && q.blobUrl) URL.revokeObjectURL(q.blobUrl); });
   state.queue = []; state.activeIndex = -1; state.currentUrl = null;
   PlaybackManager.prepareForTrackChange();
@@ -23237,7 +23295,7 @@ function applyMotionCanvasEnabledState() {
 // ─── 12. Track notification on play ─────────────────────────────────────────
 const _origPlayItem = playItem;
 window.playItem = function(i) {
-  _origPlayItem(i);
+  const playPromise = _origPlayItem(i);
   // Send notification after a small delay
   setTimeout(() => {
     const item = state.queue[i];
@@ -23246,6 +23304,7 @@ window.playItem = function(i) {
       updateTopbarVis(true);
     }
   }, 200);
+  return playPromise;
 };
 
 // ─── 13. Playback Position Memory ────────────────────────────────────────────
