@@ -53,8 +53,11 @@
  * POST   /api/plays                            { originalUrl, platform?, title?, token? }
  * GET    /api/mp/wallet                        Authenticated Musi-Pixels balance
  * GET    /api/mp/ledger                        Authenticated immutable MP transaction ledger
- * GET    /api/mp/shop                          Configurable Musi-Shop catalog + owned access
- * POST   /api/mp/shop/purchase                 Atomic MP purchase + entitlement grant
+ * GET    /api/mp/shop                          Catalog, entitlements, owned + active items
+ * POST   /api/mp/shop/purchase                 Atomic MP purchase + grant/ownership
+ * POST   /api/mp/shop/activate                 Equip/clear an owned cosmetic
+ * POST   /api/mp/shop/gift                     Atomic MP gift purchase + recipient grant
+ * GET    /api/mp/shop/gifts                    Sent and received item-gift history
  * GET    /api/mp/listen-to-earn/offers         Authenticated eligible discovery tracks
  * POST   /api/mp/listen-to-earn/heartbeat      Authenticated server-verified playback heartbeat
  * POST   /api/mp/listen-to-earn/stop           Ends an incomplete earning attempt
@@ -2199,31 +2202,32 @@ async function dbGetMpLedger(username, { limit = 30, before = null } = {}) {
   }));
 }
 
-// ─── Musi-Shop · Phase 2 ─────────────────────────────────────────────────
+// ─── Musi-Shop · Phases 2–3 ──────────────────────────────────────────────
 // Catalog prices and grant sizes live in musi_shop_items so they can be
 // tuned without deploying server/client code. Purchases reuse the Phase 1
 // wallet and immutable ledger; the database RPC is the only place a debit
-// and its entitlement grant can happen, keeping them in one transaction.
-async function dbGetMusiShopEnabled() {
+// and its grant can happen, keeping them in one transaction. Phase 3 adds
+// permanent owned items, one active item per cosmetic slot, and atomic gifts.
+async function dbGetMusiShopSettings() {
   const { data, error } = await supabase.from('app_config')
-    .select('value').eq('key', 'musi_shop.enabled').maybeSingle();
+    .select('key, value').in('key', ['musi_shop.enabled', 'musi_shop.seasonal_enabled']);
   if (error) throw new Error(error.message);
-  return data ? data.value !== false : true;
+  const values = new Map((data || []).map(row => [row.key, row.value]));
+  return {
+    enabled: values.has('musi_shop.enabled') ? values.get('musi_shop.enabled') !== false : true,
+    seasonalEnabled: values.get('musi_shop.seasonal_enabled') === true,
+  };
 }
 
-async function dbGetMusiShopCatalog() {
-  const { data, error } = await supabase.from('musi_shop_items')
-    .select('sku, name, description, category, entitlement_type, price_mp, grant_quantity, grant_unit, icon, badge, sort_order, available_from, available_until, metadata')
-    .eq('active', true)
-    .order('sort_order', { ascending: true })
-    .order('sku', { ascending: true });
-  if (error) throw new Error(error.message);
-  const now = Date.now();
-  return (data || []).filter(row => {
-    const starts = row.available_from ? new Date(row.available_from).getTime() : null;
-    const ends = row.available_until ? new Date(row.available_until).getTime() : null;
-    return (!starts || starts <= now) && (!ends || ends > now);
-  }).map(row => ({
+function shapeMusiShopItem(row) {
+  const metadata = row?.metadata && typeof row.metadata === 'object' ? row.metadata : {};
+  const selections = Array.isArray(metadata.selections)
+    ? metadata.selections.filter(value => typeof value === 'string').slice(0, 12)
+    : [];
+  const selectionLabels = metadata.selection_labels && typeof metadata.selection_labels === 'object'
+    ? metadata.selection_labels
+    : {};
+  return {
     sku: row.sku,
     name: row.name,
     description: row.description || '',
@@ -2234,9 +2238,141 @@ async function dbGetMusiShopCatalog() {
     grantUnit: row.grant_unit,
     icon: row.icon || '🟣',
     badge: row.badge || null,
-    valueLabel: row.metadata?.value_label || null,
+    valueLabel: metadata.value_label || null,
+    slot: metadata.slot || null,
+    assetKey: metadata.asset_key || null,
+    tier: metadata.tier || null,
+    animated: metadata.animated === true,
+    color: typeof metadata.color === 'string' ? metadata.color : null,
+    cosmeticLabel: typeof metadata.label === 'string' ? metadata.label : null,
+    cosmeticIcon: typeof metadata.icon === 'string' ? metadata.icon : null,
+    selections,
+    selectionLabels,
+    giftable: row.giftable !== false,
+    seasonal: row.seasonal === true,
+    seasonKey: row.season_key || null,
     availableFrom: row.available_from || null,
     availableUntil: row.available_until || null,
+  };
+}
+
+async function dbGetMusiShopCatalog({ seasonalEnabled = false } = {}) {
+  const { data, error } = await supabase.from('musi_shop_items')
+    .select('sku, name, description, category, entitlement_type, price_mp, grant_quantity, grant_unit, icon, badge, sort_order, available_from, available_until, metadata, giftable, seasonal, season_key')
+    .eq('active', true)
+    .order('sort_order', { ascending: true })
+    .order('sku', { ascending: true });
+  if (error) throw new Error(error.message);
+  const now = Date.now();
+  return (data || []).filter(row => {
+    const starts = row.available_from ? new Date(row.available_from).getTime() : null;
+    const ends = row.available_until ? new Date(row.available_until).getTime() : null;
+    return (!row.seasonal || seasonalEnabled) && (!starts || starts <= now) && (!ends || ends > now);
+  }).map(shapeMusiShopItem);
+}
+
+async function dbGetMusiShopActiveItems(username) {
+  const { data: activeRows, error: activeError } = await supabase.from('musi_shop_active_items')
+    .select('slot, sku, selection_key, activated_at, updated_at')
+    .eq('username', username)
+    .order('slot', { ascending: true });
+  if (activeError) throw new Error(activeError.message);
+  const skus = [...new Set((activeRows || []).map(row => row.sku))];
+  let itemRows = [];
+  if (skus.length) {
+    const { data, error } = await supabase.from('musi_shop_items')
+      .select('sku, name, description, category, entitlement_type, price_mp, grant_quantity, grant_unit, icon, badge, available_from, available_until, metadata, giftable, seasonal, season_key')
+      .in('sku', skus);
+    if (error) throw new Error(error.message);
+    itemRows = data || [];
+  }
+  const itemsBySku = new Map(itemRows.map(row => [row.sku, shapeMusiShopItem(row)]));
+  return (activeRows || []).map(row => ({
+    slot: row.slot,
+    sku: row.sku,
+    selectionKey: row.selection_key,
+    activatedAt: row.activated_at,
+    updatedAt: row.updated_at,
+    item: itemsBySku.get(row.sku) || null,
+  }));
+}
+
+async function dbGetMusiShopInventory(username) {
+  const [{ data: ownedRows, error: ownedError }, activeItems] = await Promise.all([
+    supabase.from('musi_shop_owned_items')
+      .select('sku, source, source_ref_id, acquired_at')
+      .eq('username', username)
+      .order('acquired_at', { ascending: false }),
+    dbGetMusiShopActiveItems(username),
+  ]);
+  if (ownedError) throw new Error(ownedError.message);
+  const skus = [...new Set((ownedRows || []).map(row => row.sku))];
+  let itemRows = [];
+  if (skus.length) {
+    const { data, error } = await supabase.from('musi_shop_items')
+      .select('sku, name, description, category, entitlement_type, price_mp, grant_quantity, grant_unit, icon, badge, available_from, available_until, metadata, giftable, seasonal, season_key')
+      .in('sku', skus);
+    if (error) throw new Error(error.message);
+    itemRows = data || [];
+  }
+  const itemsBySku = new Map(itemRows.map(row => [row.sku, shapeMusiShopItem(row)]));
+  return {
+    ownedItems: (ownedRows || []).map(row => ({
+      sku: row.sku,
+      source: row.source,
+      sourceRefId: row.source_ref_id,
+      acquiredAt: row.acquired_at,
+      item: itemsBySku.get(row.sku) || null,
+    })).filter(row => row.item),
+    activeItems,
+  };
+}
+
+async function dbActivateMusiShopItem(username, slot, sku, selectionKey) {
+  const { data, error } = await supabase.rpc('activate_musi_shop_item', {
+    p_username: username,
+    p_slot: slot,
+    p_sku: sku || null,
+    p_selection_key: selectionKey || null,
+  });
+  if (error) throw new Error(error.message);
+  return data || { ok: false, reason: 'activation_failed' };
+}
+
+async function dbGiftMusiShopItem(senderUsername, recipientUsername, sku, idempotencyKey) {
+  const { data, error } = await supabase.rpc('gift_musi_shop_item', {
+    p_sender_username: senderUsername,
+    p_recipient_username: recipientUsername,
+    p_sku: sku,
+    p_idempotency_key: idempotencyKey,
+  });
+  if (error) throw new Error(error.message);
+  return data || { ok: false, reason: 'gift_failed' };
+}
+
+async function dbGetMusiShopGifts(username, limit = 50) {
+  const columns = 'id, sender_username, recipient_username, sku, item_name, category, price_mp, grant_quantity, grant_unit, created_at';
+  const [{ data: sent, error: sentError }, { data: received, error: receivedError }] = await Promise.all([
+    supabase.from('musi_shop_gifts').select(columns).eq('sender_username', username).order('created_at', { ascending: false }).limit(limit),
+    supabase.from('musi_shop_gifts').select(columns).eq('recipient_username', username).order('created_at', { ascending: false }).limit(limit),
+  ]);
+  if (sentError) throw new Error(sentError.message);
+  if (receivedError) throw new Error(receivedError.message);
+  return [
+    ...(sent || []).map(row => ({ ...row, direction: 'sent' })),
+    ...(received || []).map(row => ({ ...row, direction: 'received' })),
+  ].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, limit).map(row => ({
+    id: row.id,
+    direction: row.direction,
+    senderUsername: row.sender_username,
+    recipientUsername: row.recipient_username,
+    sku: row.sku,
+    itemName: row.item_name,
+    category: row.category,
+    priceMp: Number(row.price_mp) || 0,
+    grantQuantity: Number(row.grant_quantity) || 0,
+    grantUnit: row.grant_unit,
+    createdAt: row.created_at,
   }));
 }
 
@@ -7745,6 +7881,21 @@ app.get('/api/profiles/:username', async (req, res) => {
         .eq('artist_id', artist.id)
         .eq('is_published', true)).count || 0)
       : 0;
+    const profileCosmetics = (await dbGetMusiShopActiveItems(key))
+      .filter(active => ['profile_frame', 'username_color', 'profile_badge', 'profile_banner_effect'].includes(active.slot))
+      .reduce((result, active) => {
+        const item = active.item || {};
+        result[active.slot] = {
+          sku: active.sku,
+          selectionKey: active.selectionKey,
+          name: item.name || null,
+          animated: item.animated === true,
+          color: item.color || null,
+          label: item.cosmeticLabel || null,
+          icon: item.cosmeticIcon || null,
+        };
+        return result;
+      }, {});
 
     return res.json({
       username:            profile.username,
@@ -7765,6 +7916,7 @@ app.get('/api/profiles/:username', async (req, res) => {
       artistFollowerCount: artistStats ? artistStats.followerCount : 0,
       artistTotalPlays:    artistStats ? artistStats.totalPlays : 0,
       tracksUploaded,
+      cosmetics: profileCosmetics,
       isFollowing,
       isSelf: !!(sess && sess.username === key),
     });
@@ -8591,11 +8743,14 @@ app.post('/api/plays', rateLimit, async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  MUSI-PIXELS · PHASE 1 + MUSI-SHOP · PHASE 2
+//  MUSI-PIXELS · PHASE 1 + MUSI-SHOP · PHASES 2–3
 //  GET  /api/mp/wallet
 //  GET  /api/mp/ledger?limit=&before=
 //  GET  /api/mp/shop
 //  POST /api/mp/shop/purchase
+//  POST /api/mp/shop/activate
+//  POST /api/mp/shop/gift
+//  GET  /api/mp/shop/gifts
 //  GET  /api/mp/listen-to-earn/offers?limit=
 //  POST /api/mp/listen-to-earn/heartbeat
 //  POST /api/mp/listen-to-earn/stop
@@ -8642,18 +8797,21 @@ app.get('/api/mp/shop', rateLimit, async (req, res) => {
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Authentication required.' });
   try {
-    const [enabled, catalog, wallet, entitlements] = await Promise.all([
-      dbGetMusiShopEnabled(),
-      dbGetMusiShopCatalog(),
+    const settings = await dbGetMusiShopSettings();
+    const [catalog, wallet, entitlements, inventory] = await Promise.all([
+      dbGetMusiShopCatalog(settings),
       dbGetMpWallet(sess.username),
       dbGetMusiShopEntitlements(sess.username, sess.isPremium),
+      dbGetMusiShopInventory(sess.username),
     ]);
     return res.json({
-      enabled,
+      enabled: settings.enabled,
+      seasonalEnabled: settings.seasonalEnabled,
       currency: 'MP',
-      catalog: enabled ? catalog : [],
+      catalog: settings.enabled ? catalog : [],
       wallet,
       entitlements,
+      ...inventory,
     });
   } catch (err) {
     console.error('[musi-shop catalog]', err);
@@ -8677,8 +8835,10 @@ app.post('/api/mp/shop/purchase', rateLimit, async (req, res) => {
       const responses = {
         shop_disabled: [503, 'The Musi-Shop is temporarily unavailable.'],
         item_unavailable: [404, 'This shop item is no longer available.'],
+        seasonal_locked: [409, 'This seasonal collection is not open yet.'],
         insufficient_mp: [409, 'You do not have enough MP for this item.'],
         included_with_premium: [409, 'This access is already included with FREQ Premium.'],
+        already_owned: [409, 'You already own this item.'],
         authentication_required: [401, 'Authentication required.'],
         invalid_request: [400, 'Invalid Musi-Shop purchase request.'],
       };
@@ -8691,9 +8851,10 @@ app.post('/api/mp/shop/purchase', rateLimit, async (req, res) => {
       });
     }
 
-    const [wallet, entitlements] = await Promise.all([
+    const [wallet, entitlements, inventory] = await Promise.all([
       dbGetMpWallet(sess.username),
       dbGetMusiShopEntitlements(sess.username, sess.isPremium),
+      dbGetMusiShopInventory(sess.username),
     ]);
     return res.status(result.idempotent ? 200 : 201).json({
       success: true,
@@ -8706,10 +8867,112 @@ app.post('/api/mp/shop/purchase', rateLimit, async (req, res) => {
       },
       wallet,
       entitlements,
+      ...inventory,
     });
   } catch (err) {
     console.error('[musi-shop purchase]', err);
     return res.status(500).json({ error: 'Could not complete this Musi-Shop purchase.' });
+  }
+});
+
+app.post('/api/mp/shop/activate', rateLimit, async (req, res) => {
+  const token = (req.headers.authorization || '').replace('Bearer ', '') || req.body?.token;
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Authentication required.' });
+  const allowedSlots = new Set([
+    'app_theme', 'profile_frame', 'username_color',
+    'profile_badge', 'profile_banner_effect', 'visualizer_style',
+  ]);
+  const slot = String(req.body?.slot || '').trim();
+  const sku = req.body?.sku == null ? null : String(req.body.sku).trim();
+  const selectionKey = req.body?.selectionKey == null ? null : String(req.body.selectionKey).trim();
+  if (!allowedSlots.has(slot)
+      || (sku && !/^[a-z0-9][a-z0-9_-]{2,79}$/.test(sku))
+      || (selectionKey && !/^[a-z0-9][a-z0-9_-]{0,79}$/.test(selectionKey))) {
+    return res.status(400).json({ error: 'Invalid cosmetic activation request.' });
+  }
+  try {
+    const result = await dbActivateMusiShopItem(sess.username, slot, sku, selectionKey);
+    if (!result.ok) {
+      const responses = {
+        not_owned: [403, 'You do not own this item.'],
+        slot_mismatch: [400, 'This item cannot be used in that slot.'],
+        invalid_slot: [400, 'Invalid cosmetic slot.'],
+        invalid_selection: [400, 'That pack selection is not available.'],
+        authentication_required: [401, 'Authentication required.'],
+      };
+      const [status, message] = responses[result.reason] || [409, 'This item could not be activated.'];
+      return res.status(status).json({ error: message, reason: result.reason || 'activation_failed' });
+    }
+    const inventory = await dbGetMusiShopInventory(sess.username);
+    return res.json({ success: true, activation: result, ...inventory });
+  } catch (err) {
+    console.error('[musi-shop activate]', err);
+    return res.status(500).json({ error: 'Could not update your active cosmetic.' });
+  }
+});
+
+app.post('/api/mp/shop/gift', rateLimit, async (req, res) => {
+  const token = (req.headers.authorization || '').replace('Bearer ', '') || req.body?.token;
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Authentication required.' });
+  const recipientUsername = normalizeUsername(req.body?.recipientUsername);
+  const sku = String(req.body?.sku || '').trim();
+  const idempotencyKey = String(req.body?.idempotencyKey || '').trim();
+  if (!recipientUsername || !/^[a-z0-9][a-z0-9_-]{2,79}$/.test(sku) || !UUID_RE.test(idempotencyKey)) {
+    return res.status(400).json({ error: 'Invalid gift request.' });
+  }
+  try {
+    const result = await dbGiftMusiShopItem(sess.username, recipientUsername, sku, idempotencyKey);
+    if (!result.ok) {
+      const responses = {
+        shop_disabled: [503, 'The Musi-Shop is temporarily unavailable.'],
+        item_unavailable: [404, 'This item cannot be gifted right now.'],
+        seasonal_locked: [409, 'This seasonal collection is not open yet.'],
+        recipient_not_found: [404, 'No FREQ account was found with that username.'],
+        recipient_has_premium: [409, 'That user already has this access through FREQ Premium.'],
+        recipient_already_owns: [409, 'That user already owns this item.'],
+        self_gift: [409, 'Choose another FREQ user to receive this gift.'],
+        insufficient_mp: [409, 'You do not have enough MP to send this gift.'],
+        authentication_required: [401, 'Authentication required.'],
+        invalid_request: [400, 'Invalid gift request.'],
+      };
+      const [status, message] = responses[result.reason] || [409, 'This gift could not be sent.'];
+      return res.status(status).json({
+        error: message,
+        reason: result.reason || 'gift_failed',
+        balanceMp: Number(result.balanceMp) || 0,
+        priceMp: Number(result.priceMp) || null,
+      });
+    }
+    const wallet = await dbGetMpWallet(sess.username);
+    return res.status(result.idempotent ? 200 : 201).json({
+      success: true,
+      idempotent: !!result.idempotent,
+      gift: {
+        id: result.giftId,
+        sku: result.sku,
+        itemName: result.itemName,
+        recipientUsername: result.recipientUsername,
+        priceMp: Number(result.priceMp) || 0,
+      },
+      wallet,
+    });
+  } catch (err) {
+    console.error('[musi-shop gift]', err);
+    return res.status(500).json({ error: 'Could not send this Musi-Shop gift.' });
+  }
+});
+
+app.get('/api/mp/shop/gifts', rateLimit, async (req, res) => {
+  const token = (req.headers.authorization || '').replace('Bearer ', '') || req.query.token;
+  const sess = await dbGetSession(token);
+  if (!sess) return res.status(401).json({ error: 'Authentication required.' });
+  try {
+    return res.json({ gifts: await dbGetMusiShopGifts(sess.username, 50) });
+  } catch (err) {
+    console.error('[musi-shop gifts]', err);
+    return res.status(500).json({ error: 'Could not load your gift history.' });
   }
 });
 
