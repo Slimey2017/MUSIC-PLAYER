@@ -87,6 +87,48 @@
   --text:#f1f5f9;--text-dim:#9ca8c4;--text-muted:#64708c;
   --glow:0 0 24px rgba(125,211,252,0.25);--scanlines:0;
 }
+[data-theme="aurora"] {
+  --bg:#060818;--surface:#0d1230;--surface2:#131b3e;--surface3:#1d2752;
+  --border:#31406f;--accent:#70f0ff;--accent2:#b56cff;--accent3:#78ffa8;
+  --text:#f2f5ff;--text-dim:#7080b3;--text-muted:#4d5b8b;
+  --glow:0 0 28px rgba(112,240,255,.22);--scanlines:0;
+}
+[data-theme="sunset"] {
+  --bg:#160810;--surface:#24101a;--surface2:#321522;--surface3:#431d2a;
+  --border:#613044;--accent:#ffb14a;--accent2:#ff5f78;--accent3:#c579ff;
+  --text:#fff2e5;--text-dim:#a5656d;--text-muted:#70434e;
+  --glow:0 0 25px rgba(255,95,120,.2);--scanlines:0;
+}
+[data-theme="cyber-ice"] {
+  --bg:#020a11;--surface:#071723;--surface2:#0b2231;--surface3:#113044;
+  --border:#18516a;--accent:#67f5ff;--accent2:#388bff;--accent3:#d7fbff;
+  --text:#effeff;--text-dim:#5a91a5;--text-muted:#315c70;
+  --glow:0 0 30px rgba(103,245,255,.26);--scanlines:1;
+}
+[data-theme="rose-gold"] {
+  --bg:#130c0e;--surface:#211518;--surface2:#2e1d21;--surface3:#3b272b;
+  --border:#68434a;--accent:#f5b7a8;--accent2:#d98493;--accent3:#ffe0b8;
+  --text:#fff5f0;--text-dim:#a37879;--text-muted:#6b4b50;
+  --glow:0 0 25px rgba(245,183,168,.2);--scanlines:0;
+}
+[data-theme="cosmic-pulse"] {
+  --bg:#050315;--surface:rgba(16,10,45,.92);--surface2:rgba(28,15,65,.9);--surface3:rgba(48,24,92,.88);
+  --border:#5830a0;--accent:#d76cff;--accent2:#6574ff;--accent3:#53f5e4;
+  --text:#f8f2ff;--text-dim:#8271b0;--text-muted:#584b7e;
+  --glow:0 0 34px rgba(215,108,255,.3);--scanlines:0;
+}
+[data-theme="liquid-neon"] {
+  --bg:#020207;--surface:rgba(7,8,20,.94);--surface2:rgba(13,15,34,.92);--surface3:rgba(21,24,48,.9);
+  --border:#29345f;--accent:#00ffd5;--accent2:#ff38d1;--accent3:#8e6cff;
+  --text:#f7ffff;--text-dim:#66759b;--text-muted:#3e486a;
+  --glow:0 0 34px rgba(0,255,213,.25);--scanlines:1;
+}
+[data-theme="holiday-signal"] {
+  --bg:#07100d;--surface:#10201a;--surface2:#172d24;--surface3:#203b30;
+  --border:#3a604f;--accent:#74f0a7;--accent2:#ff6474;--accent3:#ffd36a;
+  --text:#f3fff7;--text-dim:#6d9d82;--text-muted:#466a55;
+  --glow:0 0 30px rgba(116,240,167,.25);--scanlines:0;
+}
 
 :root { --radius:4px; --font-scale:1; }
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
@@ -1019,7 +1061,7 @@ body.local-player-active #embedContainer{display:none;}
 .mp-play-btn{background:linear-gradient(135deg,#c950ff,#f36be7);border:none;color:#100016;font-family:'Unbounded',sans-serif;font-size:.4rem;font-weight:800;padding:6px 9px;border-radius:var(--radius);cursor:pointer;white-space:nowrap;}
 .mp-play-btn:hover{filter:brightness(1.1);}
 
-/* ─── Musi-Shop · Phase 2 ──────────────────────────────────────────────── */
+/* ─── Musi-Shop · Phases 2–3 ──────────────────────────────────────────── */
 .musi-shop-panel{max-width:760px;max-height:88vh;overflow-y:auto;}
 .musi-shop-wallet{display:flex;align-items:center;gap:12px;padding:12px;border:1px solid rgba(217,86,255,.34);border-radius:var(--radius);background:linear-gradient(135deg,rgba(119,24,205,.18),rgba(242,73,225,.06));margin:10px 0;}
 .musi-shop-wallet img{width:52px;height:52px;object-fit:contain;flex:0 0 auto;}
@@ -1050,8 +1092,62 @@ body.local-player-active #embedContainer{display:none;}
 .mp-history-amount{grid-row:1/3;grid-column:2;font-family:'Unbounded',sans-serif;font-size:.46rem;align-self:center;}
 .mp-history-amount.positive{color:var(--accent3);}.mp-history-amount.negative{color:#ed91ff;}
 .shop-access-pill{font-size:.36rem;color:#ed91ff;border:1px solid rgba(216,92,255,.4);padding:2px 6px;border-radius:999px;white-space:nowrap;}
+.musi-shop-seasonal-lock{border:1px dashed rgba(216,92,255,.42);background:linear-gradient(135deg,rgba(125,44,180,.12),rgba(255,101,205,.05));padding:10px;border-radius:var(--radius);font-size:.42rem;color:var(--text-muted);line-height:1.65;margin:8px 0 12px;}
+.musi-shop-seasonal-lock button{margin-top:8px;width:auto;padding:6px 10px;}
+.seasonal-collection{border:1px solid rgba(216,92,255,.32);border-radius:10px;overflow:hidden;background:var(--surface2);margin-bottom:14px;box-shadow:0 14px 34px rgba(0,0,0,.2);}
+.seasonal-hero{min-height:154px;padding:18px;display:flex;flex-direction:column;justify-content:flex-end;position:relative;color:#fff;isolation:isolate;}
+.seasonal-hero::after{content:'';position:absolute;inset:0;background:linear-gradient(0deg,rgba(0,0,0,.72),rgba(0,0,0,.08) 72%);z-index:-1;}
+.seasonal-hero-icon{font-size:1.7rem;position:absolute;right:17px;top:15px;filter:drop-shadow(0 4px 8px rgba(0,0,0,.4));}
+.seasonal-hero-title{font-family:'Unbounded',sans-serif;font-size:.82rem;font-weight:900;line-height:1.25;text-shadow:0 2px 10px rgba(0,0,0,.6);}
+.seasonal-hero-tagline{font-size:.43rem;line-height:1.6;max-width:520px;margin-top:5px;color:rgba(255,255,255,.86);}
+.seasonal-state{display:inline-flex;align-items:center;gap:5px;align-self:flex-start;font-size:.36rem;font-weight:800;text-transform:uppercase;letter-spacing:.07em;border:1px solid rgba(255,255,255,.45);border-radius:999px;padding:3px 7px;margin-bottom:8px;background:rgba(0,0,0,.28);}
+.seasonal-state.live{color:#7fffc0;border-color:rgba(127,255,192,.6);}.seasonal-state.upcoming{color:#ffe07d;}.seasonal-state.ended{color:#d0d0d0;}.seasonal-state.locked{color:#ffc2ef;}
+.seasonal-body{padding:12px;}
+.seasonal-countdown{font-family:'Unbounded',sans-serif;font-size:.55rem;color:#ef8aff;margin-bottom:8px;}
+.seasonal-description{font-size:.4rem;color:var(--text-muted);line-height:1.7;margin-bottom:10px;}
+.seasonal-item.locked{filter:saturate(.55);}
+.seasonal-item .seasonal-exclusive{font-size:.34rem;color:#ffd36a;border:1px solid rgba(255,211,106,.4);border-radius:999px;padding:2px 6px;margin:5px 0;align-self:flex-start;}
+.seasonal-lock-note{font-size:.37rem;color:var(--text-muted);padding:9px;border:1px dashed var(--border);border-radius:var(--radius);margin-top:10px;line-height:1.65;}
+.musi-shop-owned-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;}
+.musi-shop-owned-actions .musi-shop-buy{width:auto;flex:1;min-width:92px;}
+.musi-shop-active-pill{font-size:.35rem;color:#6fffd9;border:1px solid rgba(91,255,211,.35);border-radius:999px;padding:2px 6px;margin:5px 0;align-self:flex-start;}
+.musi-shop-gift-form{display:grid;grid-template-columns:1fr 1fr;gap:8px;border:1px solid var(--border);background:var(--surface2);padding:12px;border-radius:var(--radius);margin-bottom:12px;}
+.musi-shop-gift-form label{font-size:.38rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;}
+.musi-shop-gift-form input,.musi-shop-gift-form select{width:100%;margin-top:5px;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:var(--radius);padding:8px;font-family:'Space Mono',monospace;font-size:.44rem;}
+.musi-shop-gift-form .musi-shop-buy{grid-column:1/-1;}
+.musi-shop-gift-row{display:grid;grid-template-columns:1fr auto;gap:3px 10px;padding:9px 2px;border-bottom:1px solid var(--border);font-size:.43rem;color:var(--text);}
+.musi-shop-gift-row small{color:var(--text-muted);font-size:.36rem;}
+.theme-dot.shop-theme{box-shadow:0 0 0 1px rgba(255,255,255,.22),0 0 10px rgba(210,90,255,.28);}
+.theme-dot[data-theme="aurora"]{background:linear-gradient(135deg,#70f0ff,#b56cff);}
+.theme-dot[data-theme="sunset"]{background:linear-gradient(135deg,#ffb14a,#ff5f78);}
+.theme-dot[data-theme="cyber-ice"]{background:linear-gradient(135deg,#67f5ff,#388bff);}
+.theme-dot[data-theme="rose-gold"]{background:linear-gradient(135deg,#f5b7a8,#d98493);}
+.theme-dot[data-theme="cosmic-pulse"]{background:linear-gradient(135deg,#d76cff,#53f5e4);animation:phase3DotPulse 2.2s ease-in-out infinite;}
+.theme-dot[data-theme="liquid-neon"]{background:linear-gradient(135deg,#00ffd5,#ff38d1);animation:phase3DotPulse 1.7s ease-in-out infinite;}
+.theme-dot[data-theme="holiday-signal"]{background:linear-gradient(135deg,#74f0a7,#ff6474,#ffd36a);animation:phase3DotPulse 2s ease-in-out infinite;}
+@keyframes phase3DotPulse{50%{filter:brightness(1.35);transform:scale(1.08);}}
+html[data-theme="cosmic-pulse"] body,html[data-theme="liquid-neon"] body,html[data-theme="holiday-signal"] body{background-size:220% 220%;animation:phase3ThemeDrift 14s ease infinite;}
+html[data-theme="cosmic-pulse"] body{background-image:radial-gradient(circle at 15% 20%,rgba(215,108,255,.18),transparent 34%),radial-gradient(circle at 85% 70%,rgba(83,245,228,.13),transparent 38%),linear-gradient(135deg,#050315,#090421);}
+html[data-theme="liquid-neon"] body{background-image:radial-gradient(circle at 20% 80%,rgba(0,255,213,.13),transparent 36%),radial-gradient(circle at 80% 20%,rgba(255,56,209,.14),transparent 35%),linear-gradient(135deg,#020207,#080817);}
+html[data-theme="holiday-signal"] body{background-image:radial-gradient(circle at 15% 20%,rgba(116,240,167,.13),transparent 33%),radial-gradient(circle at 80% 75%,rgba(255,100,116,.12),transparent 36%),linear-gradient(135deg,#07100d,#111b12);}
+@keyframes phase3ThemeDrift{0%,100%{background-position:0 50%;}50%{background-position:100% 50%;}}
+.profile-avatar[data-profile-frame]{position:relative;}
+.profile-avatar[data-profile-frame="neon-ring"]{border-color:#69f4ff;box-shadow:0 0 0 3px #a65cff,0 0 22px rgba(105,244,255,.72);}
+.profile-avatar[data-profile-frame="gold-crown"]{border-color:#ffd56a;box-shadow:0 0 0 3px #a96f14,0 0 20px rgba(255,213,106,.55);}
+.profile-avatar[data-profile-frame="gold-crown"]::after{content:'♛';position:absolute;top:-17px;right:-5px;color:#ffd56a;font-size:1rem;text-shadow:0 2px 6px #000;}
+.profile-avatar[data-profile-frame="holo-pulse"]{border-color:#75f7ff;box-shadow:0 0 0 3px #ff62de,0 0 24px rgba(117,247,255,.75);animation:phase3HoloPulse 1.8s ease-in-out infinite;}
+.profile-avatar[data-profile-frame="frostfire-signal"]{border-color:#74f0a7;box-shadow:0 0 0 3px #ff6474,0 0 28px rgba(255,211,106,.68);animation:phase4Frostfire 2s ease-in-out infinite;}
+@keyframes phase3HoloPulse{50%{box-shadow:0 0 0 4px #7c72ff,0 0 34px rgba(255,98,222,.9);}}
+@keyframes phase4Frostfire{50%{border-color:#ffd36a;box-shadow:0 0 0 4px #74f0a7,0 0 34px rgba(255,100,116,.78);}}
+.profile-cover[data-banner-effect="aurora-haze"]{overflow:hidden;}
+.profile-cover[data-banner-effect="aurora-haze"]::after{content:'';position:absolute;inset:-35%;background:linear-gradient(115deg,transparent 20%,rgba(71,255,213,.38),rgba(180,83,255,.42),transparent 78%);mix-blend-mode:screen;animation:phase3AuroraHaze 6s ease-in-out infinite alternate;pointer-events:none;}
+@keyframes phase3AuroraHaze{from{transform:translateX(-18%) rotate(-4deg);}to{transform:translateX(18%) rotate(5deg);}}
+.profile-cover[data-banner-effect="signal-snowfall"]{overflow:hidden;}
+.profile-cover[data-banner-effect="signal-snowfall"]::after{content:'';position:absolute;inset:-45% -10%;background-image:radial-gradient(circle,#fff 0 1px,transparent 1.7px),radial-gradient(circle,#74f0a7 0 1.2px,transparent 2px),linear-gradient(115deg,transparent 34%,rgba(255,100,116,.24),rgba(255,211,106,.25),transparent 68%);background-size:23px 23px,37px 37px,100% 100%;background-position:0 0,11px 14px,0 0;mix-blend-mode:screen;animation:phase4SignalSnow 7s linear infinite;pointer-events:none;}
+@keyframes phase4SignalSnow{from{transform:translateY(-18%);}to{transform:translateY(18%);}}
+.profile-cosmetic-badge{display:inline-flex;align-items:center;gap:5px;font-size:.4rem;color:#f1c4ff;background:rgba(204,88,255,.1);border:1px solid rgba(216,92,255,.34);border-radius:999px;padding:3px 8px;margin:0 0 7px 5px;letter-spacing:.04em;}
 @media(max-width:720px){.musi-shop-grid{grid-template-columns:1fr 1fr;}}
-@media(max-width:480px){.musi-shop-grid,.musi-shop-access{grid-template-columns:1fr;}}
+@media(max-width:480px){.musi-shop-grid,.musi-shop-access,.musi-shop-gift-form{grid-template-columns:1fr;}.musi-shop-gift-form .musi-shop-buy{grid-column:1;}}
 
 /* ─── Footer ──────────────────────────────────────────────────────── */
 footer{text-align:center;padding:7px;font-size:0.47rem;color:var(--text-muted);letter-spacing:0.12em;border-top:1px solid var(--border);background:var(--surface);position:relative;z-index:10;}
@@ -4328,6 +4424,7 @@ body.oled-mode {
         <div class="profile-avatar" id="userProfileAvatar"></div>
         <div style="flex:1;padding-bottom:4px;">
           <div id="userProfileArtistBadge" style="display:none;" class="profile-artist-badge">🎤 Artist</div>
+          <div id="userProfileCosmeticBadge" style="display:none;" class="profile-cosmetic-badge"></div>
         </div>
       </div>
       <div class="lyrics-title" id="userProfileName" style="margin-top:4px;">—</div>
@@ -5582,13 +5679,13 @@ body.oled-mode {
   </div>
 </div>
 
-<!-- ─── Musi-Shop · Phase 2 ────────────────────────────────────────────────
+<!-- ─── Musi-Shop · Phases 2–4 ─────────────────────────────────────────────
      Catalog values come from Supabase through the existing FREQ server.
      The browser never computes prices, changes balances, or grants access. -->
 <div class="lyrics-overlay" id="musiShopOverlay">
   <div class="lyrics-panel musi-shop-panel">
     <div class="lyrics-title">🛍 Musi-Shop</div>
-    <div class="lyrics-artist">Spend Musi-Pixels on DJ BOOM message packs and Radio Passes.</div>
+    <div class="lyrics-artist">Spend earned Musi-Pixels on access packs, themes, profile cosmetics, visualizers, and gifts.</div>
 
     <div class="musi-shop-wallet">
       <img src="ddda265d-0aee-44a4-a4b3-048300e58be0.png" alt="Musi-Pixels" onerror="this.style.display='none'" />
@@ -5606,25 +5703,51 @@ body.oled-mode {
 
     <div class="musi-shop-tabs">
       <button class="musi-shop-tab active" id="musiShopCatalogTab" onclick="setMusiShopTab('catalog')">Shop</button>
-      <button class="musi-shop-tab" id="musiShopHistoryTab" onclick="setMusiShopTab('history')">Transaction History</button>
+      <button class="musi-shop-tab" id="musiShopSeasonalTab" onclick="setMusiShopTab('seasonal')">Seasonal</button>
+      <button class="musi-shop-tab" id="musiShopOwnedTab" onclick="setMusiShopTab('owned')">Owned</button>
+      <button class="musi-shop-tab" id="musiShopGiftTab" onclick="setMusiShopTab('gift')">Gifts</button>
+      <button class="musi-shop-tab" id="musiShopHistoryTab" onclick="setMusiShopTab('history')">History</button>
     </div>
 
     <div id="musiShopCatalogPane">
       <div id="musiShopCatalog"><div class="empty-panel">Loading Musi-Shop…</div></div>
-      <div class="musi-shop-confirm" id="musiShopConfirm">
-        <div style="font-family:'Unbounded',sans-serif;font-size:.52rem;color:var(--text);" id="musiShopConfirmTitle">Confirm purchase</div>
-        <div style="font-size:.42rem;color:var(--text-muted);line-height:1.7;margin-top:6px;" id="musiShopConfirmText"></div>
-        <div class="musi-shop-confirm-actions">
-          <button class="pco-btn-secondary" style="margin:0;" onclick="cancelMusiShopPurchase()">Cancel</button>
-          <button class="musi-shop-buy" id="musiShopConfirmBtn" onclick="confirmMusiShopPurchase()">Buy</button>
-        </div>
+      <div style="font-size:.36rem;color:var(--text-muted);line-height:1.7;margin-top:12px;">Premium includes unlimited DJ BOOM and Real-Life Radio. Radio Pass time begins immediately; active passes extend. Owned cosmetics are permanent. Musi-Pixels cannot be purchased with real money.</div>
+    </div>
+
+    <div id="musiShopSeasonalPane" style="display:none;">
+      <div id="musiShopSeasonal"><div class="empty-panel">Loading seasonal collections…</div></div>
+    </div>
+
+    <div id="musiShopOwnedPane" style="display:none;">
+      <div id="musiShopOwned"><div class="empty-panel">Your owned cosmetics will appear here.</div></div>
+    </div>
+
+    <div id="musiShopGiftPane" style="display:none;">
+      <div class="musi-shop-gift-form">
+        <label>Recipient username
+          <input id="musiShopGiftRecipient" maxlength="32" autocomplete="off" placeholder="freq_username" />
+        </label>
+        <label>Shop item
+          <select id="musiShopGiftSku"></select>
+        </label>
+        <button class="musi-shop-buy" id="musiShopGiftBtn" onclick="sendMusiShopGift()">Send gift with MP</button>
       </div>
-      <div style="font-size:.36rem;color:var(--text-muted);line-height:1.7;margin-top:12px;">Premium includes unlimited DJ BOOM and Real-Life Radio. Radio Pass time begins immediately; active passes extend. DJ BOOM messages stack and do not expire.</div>
+      <div style="font-size:.37rem;color:var(--text-muted);line-height:1.6;margin-bottom:8px;">The server verifies the recipient, ownership, Premium access, price, and your MP balance before granting the gift.</div>
+      <div id="musiShopGifts"><div class="empty-panel">Open this tab to load sent and received gifts.</div></div>
     </div>
 
     <div id="musiShopHistoryPane" style="display:none;">
       <div id="musiShopHistory"><div class="empty-panel">Open this tab to load transactions.</div></div>
       <button class="pco-btn-secondary" id="musiShopHistoryMore" style="display:none;width:100%;" onclick="loadMusiShopHistory(true)">Load more</button>
+    </div>
+
+    <div class="musi-shop-confirm" id="musiShopConfirm">
+      <div style="font-family:'Unbounded',sans-serif;font-size:.52rem;color:var(--text);" id="musiShopConfirmTitle">Confirm purchase</div>
+      <div style="font-size:.42rem;color:var(--text-muted);line-height:1.7;margin-top:6px;" id="musiShopConfirmText"></div>
+      <div class="musi-shop-confirm-actions">
+        <button class="pco-btn-secondary" style="margin:0;" onclick="cancelMusiShopPurchase()">Cancel</button>
+        <button class="musi-shop-buy" id="musiShopConfirmBtn" onclick="confirmMusiShopPurchase()">Buy</button>
+      </div>
     </div>
 
     <button class="support-close-btn" onclick="closeMusiShop()" style="margin-top:16px;">Close</button>
@@ -6963,7 +7086,14 @@ const MP_STATE = {
 
 const MUSI_SHOP_STATE = {
   enabled: true,
+  seasonalEnabled: false,
+  seasonalPreviewEnabled: true,
+  seasonalCollections: [],
+  serverTimeOffsetMs: 0,
+  seasonalTimer: null,
   catalog: [],
+  ownedItems: [],
+  activeItems: [],
   entitlements: {
     premiumUnlimited: false,
     djBoomMessagesRemaining: 0,
@@ -6977,11 +7107,22 @@ const MUSI_SHOP_STATE = {
   selectedSku: null,
   pendingIdempotencyKey: null,
   purchaseInFlight: false,
+  activationInFlight: false,
+  giftInFlight: false,
+  pendingGiftKey: null,
+  pendingGiftSignature: null,
+  gifts: [],
+  giftsLoaded: false,
+  giftsLoading: false,
   history: [],
   historyLoaded: false,
   historyLoading: false,
   historyNextBefore: null,
 };
+
+const FREE_THEME_KEYS = new Set(['industrial','midnight','neon','vinyl','ghost','forest','glass']);
+const SHOP_THEME_KEYS = new Set(['aurora','sunset','cyber-ice','rose-gold','cosmic-pulse','liquid-neon','holiday-signal']);
+const FREE_VISUALIZER_KEYS = new Set(['bars','wave','circle','dots']);
 
 function formatMp(value) {
   return `${Math.max(0, Number(value) || 0).toLocaleString()} MP`;
@@ -7034,7 +7175,7 @@ async function refreshMpWallet(force = false) {
   return MP_STATE.loading;
 }
 
-// ─── Musi-Shop · Phase 2 ─────────────────────────────────────────────────
+// ─── Musi-Shop · Phases 2–3 ──────────────────────────────────────────────
 // The catalog is render-only client state. The server/database re-resolve
 // the SKU, price, balance, Premium status, and grant inside one transaction.
 function canUseDjBoom() {
@@ -7081,7 +7222,15 @@ function renderMusiShopAccess() {
 
 function resetMusiShopLocal() {
   MUSI_SHOP_STATE.enabled = true;
+  MUSI_SHOP_STATE.seasonalEnabled = false;
+  MUSI_SHOP_STATE.seasonalPreviewEnabled = true;
+  MUSI_SHOP_STATE.seasonalCollections = [];
+  MUSI_SHOP_STATE.serverTimeOffsetMs = 0;
+  if (MUSI_SHOP_STATE.seasonalTimer) clearInterval(MUSI_SHOP_STATE.seasonalTimer);
+  MUSI_SHOP_STATE.seasonalTimer = null;
   MUSI_SHOP_STATE.catalog = [];
+  MUSI_SHOP_STATE.ownedItems = [];
+  MUSI_SHOP_STATE.activeItems = [];
   MUSI_SHOP_STATE.entitlements = {
     premiumUnlimited: false, djBoomMessagesRemaining: 0, djBoomAccess: false,
     radioPassExpiresAt: null, radioPassActive: false, radioAccess: false,
@@ -7090,16 +7239,36 @@ function resetMusiShopLocal() {
   MUSI_SHOP_STATE.loading = null;
   MUSI_SHOP_STATE.selectedSku = null;
   MUSI_SHOP_STATE.pendingIdempotencyKey = null;
+  MUSI_SHOP_STATE.gifts = [];
+  MUSI_SHOP_STATE.giftsLoaded = false;
+  MUSI_SHOP_STATE.pendingGiftKey = null;
+  MUSI_SHOP_STATE.pendingGiftSignature = null;
   MUSI_SHOP_STATE.history = [];
   MUSI_SHOP_STATE.historyLoaded = false;
   MUSI_SHOP_STATE.historyNextBefore = null;
+  document.querySelectorAll('#themeDots .theme-dot.shop-theme').forEach(dot => dot.remove());
+  document.querySelectorAll('#aqVisStyle option.shop-visualizer').forEach(option => option.remove());
+  if (SHOP_THEME_KEYS.has(state.theme)) applyTheme('industrial', { sync: false });
+  if (!FREE_VISUALIZER_KEYS.has(AQ_DEFAULTS.visStyle)) {
+    AQ_DEFAULTS.visStyle = 'bars';
+    saveAQ();
+  }
   renderMusiShopAccess();
 }
 
 function applyMusiShopPayload(data, usernameAtStart = AUTH.username) {
   if (!data || !AUTH.loggedIn || AUTH.username !== usernameAtStart) return;
-  MUSI_SHOP_STATE.enabled = data.enabled !== false;
+  if (Object.prototype.hasOwnProperty.call(data, 'enabled')) MUSI_SHOP_STATE.enabled = data.enabled !== false;
+  if (Object.prototype.hasOwnProperty.call(data, 'seasonalEnabled')) MUSI_SHOP_STATE.seasonalEnabled = data.seasonalEnabled === true;
+  if (Object.prototype.hasOwnProperty.call(data, 'seasonalPreviewEnabled')) MUSI_SHOP_STATE.seasonalPreviewEnabled = data.seasonalPreviewEnabled !== false;
+  if (Array.isArray(data.seasonalCollections)) MUSI_SHOP_STATE.seasonalCollections = data.seasonalCollections;
+  if (data.serverTime) {
+    const serverTime = new Date(data.serverTime).getTime();
+    if (Number.isFinite(serverTime)) MUSI_SHOP_STATE.serverTimeOffsetMs = serverTime - Date.now();
+  }
   MUSI_SHOP_STATE.catalog = Array.isArray(data.catalog) ? data.catalog : MUSI_SHOP_STATE.catalog;
+  if (Array.isArray(data.ownedItems)) MUSI_SHOP_STATE.ownedItems = data.ownedItems;
+  if (Array.isArray(data.activeItems)) MUSI_SHOP_STATE.activeItems = data.activeItems;
   if (data.entitlements) MUSI_SHOP_STATE.entitlements = { ...MUSI_SHOP_STATE.entitlements, ...data.entitlements };
   if (data.wallet) {
     MP_STATE.balanceMp = Number(data.wallet.balanceMp) || 0;
@@ -7111,6 +7280,12 @@ function applyMusiShopPayload(data, usernameAtStart = AUTH.username) {
   renderMpWallet();
   renderMusiShopAccess();
   renderMusiShopCatalog();
+  renderSeasonalShop();
+  renderMusiShopOwned();
+  renderMusiShopGiftOptions();
+  renderOwnedThemeDots();
+  renderOwnedVisualizerOptions();
+  applyActiveMusiShopExperience();
 }
 
 async function refreshMusiShop(force = false) {
@@ -7151,15 +7326,26 @@ async function openMusiShop(tab = 'catalog') {
 function closeMusiShop() {
   $('musiShopOverlay')?.classList.remove('open');
   cancelMusiShopPurchase();
+  if (MUSI_SHOP_STATE.seasonalTimer) clearInterval(MUSI_SHOP_STATE.seasonalTimer);
+  MUSI_SHOP_STATE.seasonalTimer = null;
 }
 
 function setMusiShopTab(tab) {
-  const history = tab === 'history';
-  $('musiShopCatalogTab')?.classList.toggle('active', !history);
-  $('musiShopHistoryTab')?.classList.toggle('active', history);
-  if ($('musiShopCatalogPane')) $('musiShopCatalogPane').style.display = history ? 'none' : '';
-  if ($('musiShopHistoryPane')) $('musiShopHistoryPane').style.display = history ? '' : 'none';
-  if (history && !MUSI_SHOP_STATE.historyLoaded) loadMusiShopHistory(false);
+  const selected = ['catalog','seasonal','owned','gift','history'].includes(tab) ? tab : 'catalog';
+  ['catalog','seasonal','owned','gift','history'].forEach(name => {
+    const cap = name[0].toUpperCase() + name.slice(1);
+    $(`musiShop${cap}Tab`)?.classList.toggle('active', selected === name);
+    if ($(`musiShop${cap}Pane`)) $(`musiShop${cap}Pane`).style.display = selected === name ? '' : 'none';
+  });
+  if (MUSI_SHOP_STATE.seasonalTimer) clearInterval(MUSI_SHOP_STATE.seasonalTimer);
+  MUSI_SHOP_STATE.seasonalTimer = null;
+  if (selected === 'seasonal') {
+    renderSeasonalShop();
+    MUSI_SHOP_STATE.seasonalTimer = setInterval(updateSeasonalCountdowns, 1000);
+  }
+  if (selected === 'owned') renderMusiShopOwned();
+  if (selected === 'gift' && !MUSI_SHOP_STATE.giftsLoaded) loadMusiShopGifts();
+  if (selected === 'history' && !MUSI_SHOP_STATE.historyLoaded) loadMusiShopHistory(false);
 }
 
 function renderMusiShopCatalog() {
@@ -7173,30 +7359,392 @@ function renderMusiShopCatalog() {
     root.innerHTML = '<div class="empty-panel">No shop items are available right now.</div>';
     return;
   }
-  const labels = { dj_boom_pack: '🤖 DJ BOOM Message Packs', radio_pass: '📻 Radio Passes' };
+  const labels = {
+    dj_boom_pack: '🤖 DJ BOOM Message Packs', radio_pass: '📻 Radio Passes',
+    app_theme: '🎨 App Themes', profile_frame: '⭕ Profile Frames',
+    username_color: '✨ Username Colors', profile_badge: '🏅 Profile Badges',
+    profile_banner: '🌈 Animated Profile Banners', visualizer_pack: '🎵 Visualizer Packs',
+    seasonal_theme: '🎉 Seasonal Collection',
+  };
   const groups = new Map();
   MUSI_SHOP_STATE.catalog.forEach(item => {
     if (!groups.has(item.category)) groups.set(item.category, []);
     groups.get(item.category).push(item);
   });
-  root.innerHTML = [...groups.entries()].map(([category, items]) => `
+  const hasLiveSeason = MUSI_SHOP_STATE.seasonalCollections.some(collection => collection.state === 'live');
+  const seasonalMessage = MUSI_SHOP_STATE.seasonalCollections.length
+    ? `<div class="musi-shop-seasonal-lock"><strong>${hasLiveSeason ? '🎉 Seasonal event live' : '🔒 Seasonal Shop locked'}</strong><br>${hasLiveSeason ? 'A limited-time collection is broadcasting now.' : 'Limited-time collections stay locked until FREQ opens a holiday event.'}<br><button class="musi-shop-buy" onclick="setMusiShopTab('seasonal')">${hasLiveSeason ? 'Shop Event' : 'View Locked Preview'}</button></div>`
+    : '';
+  root.innerHTML = seasonalMessage + [...groups.entries()].map(([category, items]) => `
     <div class="musi-shop-section-title">${escapeHtml(labels[category] || category.replace(/_/g, ' '))}</div>
     <div class="musi-shop-grid">
       ${items.map(item => {
         const premiumIncluded = !!AUTH.isPremium && ['dj_boom_messages','radio_access'].includes(item.entitlementType);
+        const owned = item.entitlementType === 'owned_item' && MUSI_SHOP_STATE.ownedItems.some(row => row.sku === item.sku);
         const affordable = MP_STATE.balanceMp >= Number(item.priceMp);
-        const disabled = premiumIncluded || !affordable || MUSI_SHOP_STATE.purchaseInFlight;
-        const buttonText = premiumIncluded ? 'Included with Premium' : affordable ? 'Buy with MP' : `Need ${formatMp(Number(item.priceMp) - MP_STATE.balanceMp)}`;
+        const disabled = premiumIncluded || owned || !affordable || MUSI_SHOP_STATE.purchaseInFlight;
+        const buttonText = premiumIncluded ? 'Included with Premium' : owned ? 'Owned · Manage' : affordable ? 'Buy with MP' : `Need ${formatMp(Number(item.priceMp) - MP_STATE.balanceMp)}`;
         return `<div class="musi-shop-item">
           <div class="musi-shop-item-icon">${escapeHtml(item.icon || '🟣')}</div>
           <div class="musi-shop-item-name">${escapeHtml(item.name)}</div>
           ${item.badge ? `<span class="musi-shop-item-badge">${escapeHtml(item.badge)}</span>` : ''}
+          ${item.valueLabel ? `<span class="musi-shop-item-badge">${escapeHtml(item.valueLabel)}</span>` : ''}
           <div class="musi-shop-item-desc">${escapeHtml(item.description || '')}</div>
           <div class="musi-shop-item-price">${formatMp(item.priceMp)}</div>
           <button class="musi-shop-buy" data-shop-sku="${escapeHtml(item.sku)}" ${disabled ? 'disabled' : ''} onclick="beginMusiShopPurchase(this.dataset.shopSku)">${buttonText}</button>
         </div>`;
       }).join('')}
     </div>`).join('');
+}
+
+function seasonalShopNow() {
+  return Date.now() + (Number(MUSI_SHOP_STATE.serverTimeOffsetMs) || 0);
+}
+
+function formatSeasonalDuration(milliseconds) {
+  const total = Math.max(0, Math.floor(Number(milliseconds) / 1000));
+  const days = Math.floor(total / 86400);
+  const hours = Math.floor((total % 86400) / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = total % 60;
+  if (days > 0) return `${days}d ${hours}h ${minutes}m`;
+  if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`;
+  return `${minutes}m ${seconds}s`;
+}
+
+function seasonalStateLabel(collection) {
+  if (collection.state === 'live') return 'Live now';
+  if (collection.state === 'upcoming') return 'Coming soon';
+  if (collection.state === 'ended') return 'Event ended';
+  return 'Locked until event';
+}
+
+function updateSeasonalCountdowns() {
+  const now = seasonalShopNow();
+  let needsRefresh = false;
+  document.querySelectorAll('[data-season-change]').forEach(element => {
+    const target = new Date(element.dataset.seasonChange || '').getTime();
+    if (!Number.isFinite(target)) return;
+    const remaining = target - now;
+    if (remaining <= 0) {
+      element.textContent = 'Updating event status…';
+      needsRefresh = true;
+      return;
+    }
+    element.textContent = `${element.dataset.seasonPrefix || ''}${formatSeasonalDuration(remaining)}`;
+  });
+  if (needsRefresh && !MUSI_SHOP_STATE.loading) refreshMusiShop(true);
+}
+
+function renderSeasonalShop() {
+  const root = $('musiShopSeasonal');
+  if (!root) return;
+  const collections = MUSI_SHOP_STATE.seasonalCollections || [];
+  if (!collections.length) {
+    root.innerHTML = '<div class="empty-panel">🔒 No seasonal collection has been announced. This shop remains locked until an event or holiday.</div>';
+    return;
+  }
+  root.innerHTML = collections.map(collection => {
+    const live = collection.state === 'live';
+    const nextChange = collection.nextChangeAt ? new Date(collection.nextChangeAt).getTime() : null;
+    const countdownPrefix = collection.state === 'upcoming' ? 'Opens in ' : collection.state === 'live' ? 'Ends in ' : '';
+    const starts = collection.startsAt ? new Date(collection.startsAt) : null;
+    const ends = collection.endsAt ? new Date(collection.endsAt) : null;
+    const schedule = starts && ends && !Number.isNaN(starts.getTime()) && !Number.isNaN(ends.getTime())
+      ? `${starts.toLocaleString([], { month:'short', day:'numeric', year:'numeric', hour:'numeric', minute:'2-digit' })} – ${ends.toLocaleString([], { month:'short', day:'numeric', year:'numeric', hour:'numeric', minute:'2-digit' })}`
+      : 'Event dates have not been announced.';
+    return `<section class="seasonal-collection">
+      <div class="seasonal-hero" style="background:${escapeHtml(collection.heroGradient || 'linear-gradient(135deg,#6b2bd1,#ef5ec8)')};">
+        <div class="seasonal-hero-icon">${escapeHtml(collection.icon || '🎉')}</div>
+        <span class="seasonal-state ${escapeHtml(collection.state || 'locked')}">${escapeHtml(seasonalStateLabel(collection))}</span>
+        <div class="seasonal-hero-title">${escapeHtml(collection.name)}</div>
+        <div class="seasonal-hero-tagline">${escapeHtml(collection.tagline || '')}</div>
+      </div>
+      <div class="seasonal-body">
+        ${nextChange && ['upcoming','live'].includes(collection.state) ? `<div class="seasonal-countdown" data-season-change="${escapeHtml(collection.nextChangeAt)}" data-season-prefix="${escapeHtml(countdownPrefix)}">${escapeHtml(countdownPrefix)}${formatSeasonalDuration(nextChange - seasonalShopNow())}</div>` : ''}
+        <div class="seasonal-description">${escapeHtml(collection.description || '')}<br>${escapeHtml(schedule)}</div>
+        <div class="musi-shop-grid">${(collection.items || []).map(item => {
+          const owned = MUSI_SHOP_STATE.ownedItems.some(row => row.sku === item.sku);
+          const affordable = MP_STATE.balanceMp >= Number(item.priceMp);
+          const disabled = !live || owned || !affordable || MUSI_SHOP_STATE.purchaseInFlight;
+          const buttonText = !live
+            ? collection.state === 'ended' ? 'Event Ended' : '🔒 Event Locked'
+            : owned ? 'Owned · Manage'
+            : affordable ? 'Buy Limited Item'
+            : `Need ${formatMp(Number(item.priceMp) - MP_STATE.balanceMp)}`;
+          return `<div class="musi-shop-item seasonal-item ${live ? '' : 'locked'}">
+            <div class="musi-shop-item-icon">${escapeHtml(item.icon || '🎉')}</div>
+            <div class="musi-shop-item-name">${escapeHtml(item.name)}</div>
+            <span class="seasonal-exclusive">Event Exclusive</span>
+            ${item.badge ? `<span class="musi-shop-item-badge">${escapeHtml(item.badge)}</span>` : ''}
+            <div class="musi-shop-item-desc">${escapeHtml(item.description || '')}</div>
+            <div class="musi-shop-item-price">${formatMp(item.priceMp)}</div>
+            <button class="musi-shop-buy" data-shop-sku="${escapeHtml(item.sku)}" ${disabled ? 'disabled' : ''} onclick="beginMusiShopPurchase(this.dataset.shopSku)">${buttonText}</button>
+          </div>`;
+        }).join('')}</div>
+        <div class="seasonal-lock-note">${live ? 'The database closes purchases and gifts automatically when the countdown ends.' : 'Preview only. The server will reject purchases and gifts until this collection is explicitly opened and inside its scheduled window.'} Event cosmetics remain permanently owned after the collection closes.</div>
+      </div>
+    </section>`;
+  }).join('');
+  updateSeasonalCountdowns();
+}
+
+function getActiveShopItem(slot) {
+  return MUSI_SHOP_STATE.activeItems.find(row => row.slot === slot) || null;
+}
+
+function renderMusiShopOwned() {
+  const root = $('musiShopOwned');
+  if (!root) return;
+  const owned = MUSI_SHOP_STATE.ownedItems.filter(row => row?.item);
+  if (!owned.length) {
+    root.innerHTML = '<div class="empty-panel">No permanent cosmetics yet. Buy a theme, profile cosmetic, or visualizer pack to see it here.</div>';
+    return;
+  }
+  const labels = {
+    app_theme: '🎨 App Themes', profile_frame: '⭕ Profile Frames',
+    username_color: '✨ Username Colors', profile_badge: '🏅 Profile Badges',
+    profile_banner_effect: '🌈 Profile Banners', visualizer_style: '🎵 Visualizers',
+  };
+  const groups = new Map();
+  owned.forEach(row => {
+    const slot = row.item.slot;
+    if (!slot) return;
+    if (!groups.has(slot)) groups.set(slot, []);
+    groups.get(slot).push(row);
+  });
+  root.innerHTML = [...groups.entries()].map(([slot, rows]) => `
+    <div class="musi-shop-section-title">${escapeHtml(labels[slot] || slot.replace(/_/g, ' '))}</div>
+    <div class="musi-shop-grid">${rows.map(row => {
+      const item = row.item;
+      const active = getActiveShopItem(slot);
+      const selections = item.selections?.length ? item.selections : [item.assetKey].filter(Boolean);
+      const hasActiveSelection = active?.sku === item.sku;
+      return `<div class="musi-shop-item">
+        <div class="musi-shop-item-icon">${escapeHtml(item.icon || '🟣')}</div>
+        <div class="musi-shop-item-name">${escapeHtml(item.name)}</div>
+        ${hasActiveSelection ? `<span class="musi-shop-active-pill">Active${active.selectionKey ? ` · ${escapeHtml(item.selectionLabels?.[active.selectionKey] || active.selectionKey.replace(/-/g, ' '))}` : ''}</span>` : ''}
+        <div class="musi-shop-item-desc">${escapeHtml(item.description || '')}</div>
+        <div class="musi-shop-owned-actions">
+          ${selections.map(selection => {
+            const isActive = hasActiveSelection && active.selectionKey === selection;
+            const label = item.selectionLabels?.[selection] || (selections.length > 1 ? selection.replace(/-/g, ' ') : 'Use');
+            return `<button class="musi-shop-buy" data-shop-slot="${escapeHtml(slot)}" data-shop-sku="${escapeHtml(item.sku)}" data-shop-selection="${escapeHtml(selection)}" ${isActive || MUSI_SHOP_STATE.activationInFlight ? 'disabled' : ''} onclick="activateMusiShopItem(this.dataset.shopSlot,this.dataset.shopSku,this.dataset.shopSelection)">${isActive ? 'Equipped' : escapeHtml(label)}</button>`;
+          }).join('')}
+          ${hasActiveSelection ? `<button class="pco-btn-secondary" style="margin:0;flex:1;" data-shop-slot="${escapeHtml(slot)}" onclick="activateMusiShopItem(this.dataset.shopSlot,null,null)">Remove</button>` : ''}
+        </div>
+      </div>`;
+    }).join('')}</div>`
+  ).join('');
+}
+
+function renderOwnedThemeDots() {
+  const root = $('themeDots');
+  if (!root) return;
+  root.querySelectorAll('.theme-dot.shop-theme').forEach(dot => dot.remove());
+  MUSI_SHOP_STATE.ownedItems
+    .filter(row => row?.item?.slot === 'app_theme' && row.item.assetKey)
+    .forEach(row => {
+      const dot = document.createElement('div');
+      dot.className = 'theme-dot shop-theme';
+      dot.dataset.theme = row.item.assetKey;
+      dot.dataset.sku = row.sku;
+      dot.title = `${row.item.name} · Owned`;
+      dot.classList.toggle('active', state.theme === row.item.assetKey);
+      root.appendChild(dot);
+    });
+}
+
+function renderOwnedVisualizerOptions() {
+  const select = $('aqVisStyle');
+  if (!select) return;
+  select.querySelectorAll('option.shop-visualizer').forEach(option => option.remove());
+  MUSI_SHOP_STATE.ownedItems
+    .filter(row => row?.item?.slot === 'visualizer_style')
+    .forEach(row => {
+      (row.item.selections || []).forEach(selection => {
+        const option = document.createElement('option');
+        option.className = 'shop-visualizer';
+        option.value = selection;
+        option.dataset.sku = row.sku;
+        option.textContent = `${row.item.selectionLabels?.[selection] || selection} · Owned`;
+        select.appendChild(option);
+      });
+    });
+  select.value = AQ_DEFAULTS.visStyle;
+}
+
+function profileCosmeticsFromActiveItems() {
+  return MUSI_SHOP_STATE.activeItems
+    .filter(row => ['profile_frame','username_color','profile_badge','profile_banner_effect'].includes(row.slot))
+    .reduce((result, row) => { result[row.slot] = row; return result; }, {});
+}
+
+function applyProfileCosmeticsToView(cosmetics, { avatar, cover, name, badge } = {}) {
+  const frame = cosmetics?.profile_frame;
+  const banner = cosmetics?.profile_banner_effect;
+  const color = cosmetics?.username_color;
+  const profileBadge = cosmetics?.profile_badge;
+  if (avatar) {
+    const key = frame?.selectionKey || frame?.selection_key || null;
+    if (key) avatar.dataset.profileFrame = key;
+    else avatar.removeAttribute('data-profile-frame');
+  }
+  if (cover) {
+    const key = banner?.selectionKey || banner?.selection_key || null;
+    if (key) cover.dataset.bannerEffect = key;
+    else cover.removeAttribute('data-banner-effect');
+  }
+  if (name) name.style.color = color?.item?.color || color?.color || '';
+  if (badge) {
+    const icon = profileBadge?.item?.cosmeticIcon || profileBadge?.icon || '';
+    const label = profileBadge?.item?.cosmeticLabel || profileBadge?.label || '';
+    badge.textContent = profileBadge ? `${icon || '🏅'} ${label || profileBadge.item?.name || 'Profile Badge'}` : '';
+    badge.style.display = profileBadge ? 'inline-flex' : 'none';
+  }
+}
+
+function applyActiveMusiShopExperience() {
+  const theme = getActiveShopItem('app_theme');
+  if (theme?.selectionKey) applyTheme(theme.selectionKey, { sync: false, skipOwnership: true });
+  else if (SHOP_THEME_KEYS.has(state.theme)) applyTheme('industrial', { sync: false });
+
+  const visualizer = getActiveShopItem('visualizer_style');
+  if (visualizer?.selectionKey) {
+    AQ_DEFAULTS.visStyle = visualizer.selectionKey;
+    saveAQ();
+  } else if (!FREE_VISUALIZER_KEYS.has(AQ_DEFAULTS.visStyle)) {
+    AQ_DEFAULTS.visStyle = 'bars';
+    saveAQ();
+  }
+  if ($('aqVisStyle')) $('aqVisStyle').value = AQ_DEFAULTS.visStyle;
+  applyProfileCosmeticsToView(profileCosmeticsFromActiveItems(), {
+    avatar: $('myAvatarPreview'), cover: $('myCoverPreview'),
+  });
+}
+
+async function activateMusiShopItem(slot, sku = null, selectionKey = null) {
+  if (!AUTH.loggedIn || !AUTH.token || MUSI_SHOP_STATE.activationInFlight) return false;
+  MUSI_SHOP_STATE.activationInFlight = true;
+  renderMusiShopOwned();
+  try {
+    const res = await fetch('/api/mp/shop/activate', {
+      method: 'POST', headers: authHeaders(),
+      body: JSON.stringify({ slot, sku, selectionKey }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Could not activate this item.');
+    applyMusiShopPayload(data, AUTH.username);
+    showToast(sku ? 'Cosmetic equipped' : 'Cosmetic removed', sku ? 'Your selection is now active.' : 'The default style is active again.', 'success');
+    return true;
+  } catch (err) {
+    showToast('Could not update cosmetic', err.message || 'Please try again.', 'error');
+    return false;
+  } finally {
+    MUSI_SHOP_STATE.activationInFlight = false;
+    renderMusiShopOwned();
+  }
+}
+
+function renderMusiShopGiftOptions() {
+  const select = $('musiShopGiftSku');
+  if (!select) return;
+  const previous = select.value;
+  const items = MUSI_SHOP_STATE.catalog.filter(item => item.giftable !== false);
+  select.innerHTML = items.length
+    ? items.map(item => `<option value="${escapeHtml(item.sku)}">${escapeHtml(item.name)} · ${formatMp(item.priceMp)}</option>`).join('')
+    : '<option value="">No giftable items available</option>';
+  if (items.some(item => item.sku === previous)) select.value = previous;
+}
+
+function renderMusiShopGifts() {
+  const root = $('musiShopGifts');
+  if (!root) return;
+  if (!MUSI_SHOP_STATE.gifts.length) {
+    root.innerHTML = '<div class="empty-panel">No gifts sent or received yet.</div>';
+    return;
+  }
+  root.innerHTML = MUSI_SHOP_STATE.gifts.map(gift => {
+    const sent = gift.direction === 'sent';
+    const person = sent ? `to @${gift.recipientUsername}` : `from @${gift.senderUsername}`;
+    const when = new Date(gift.createdAt);
+    const dateLabel = Number.isNaN(when.getTime()) ? '' : when.toLocaleString([], { month:'short', day:'numeric', year:'numeric' });
+    return `<div class="musi-shop-gift-row">
+      <div>${sent ? '🎁 Sent' : '💜 Received'} · ${escapeHtml(gift.itemName)}</div>
+      <div>${sent ? `−${formatMp(gift.priceMp)}` : 'Gift'}</div>
+      <small>${escapeHtml(person)} · ${escapeHtml(dateLabel)}</small>
+    </div>`;
+  }).join('');
+}
+
+async function loadMusiShopGifts() {
+  if (!AUTH.loggedIn || !AUTH.token || MUSI_SHOP_STATE.giftsLoading) return;
+  MUSI_SHOP_STATE.giftsLoading = true;
+  if ($('musiShopGifts')) $('musiShopGifts').innerHTML = '<div class="empty-panel">Loading gifts…</div>';
+  try {
+    const res = await fetch('/api/mp/shop/gifts', { headers: authHeaders() });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Could not load gifts.');
+    MUSI_SHOP_STATE.gifts = Array.isArray(data.gifts) ? data.gifts : [];
+    MUSI_SHOP_STATE.giftsLoaded = true;
+    renderMusiShopGifts();
+  } catch (err) {
+    if ($('musiShopGifts')) $('musiShopGifts').innerHTML = `<div class="empty-panel">${escapeHtml(err.message || 'Could not load gifts.')}</div>`;
+  } finally {
+    MUSI_SHOP_STATE.giftsLoading = false;
+  }
+}
+
+async function sendMusiShopGift() {
+  if (!AUTH.loggedIn || !AUTH.token || MUSI_SHOP_STATE.giftInFlight) return;
+  const recipientUsername = String($('musiShopGiftRecipient')?.value || '').trim().toLowerCase();
+  const sku = String($('musiShopGiftSku')?.value || '');
+  const item = MUSI_SHOP_STATE.catalog.find(row => row.sku === sku && row.giftable !== false);
+  if (!recipientUsername || !item) {
+    showToast('Gift details required', 'Choose an item and enter the recipient username.', 'info');
+    return;
+  }
+  if (!window.confirm(`Send ${item.name} to @${recipientUsername} for ${formatMp(item.priceMp)}?`)) return;
+  const signature = `${recipientUsername}|${sku}`;
+  if (MUSI_SHOP_STATE.pendingGiftSignature !== signature || !MUSI_SHOP_STATE.pendingGiftKey) {
+    MUSI_SHOP_STATE.pendingGiftSignature = signature;
+    MUSI_SHOP_STATE.pendingGiftKey = newMusiShopIdempotencyKey();
+  }
+  MUSI_SHOP_STATE.giftInFlight = true;
+  const button = $('musiShopGiftBtn');
+  if (button) { button.disabled = true; button.textContent = 'Sending gift…'; }
+  try {
+    const res = await fetch('/api/mp/shop/gift', {
+      method: 'POST', headers: authHeaders(),
+      body: JSON.stringify({ recipientUsername, sku, idempotencyKey: MUSI_SHOP_STATE.pendingGiftKey }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw Object.assign(new Error(data.error || 'Gift could not be sent.'), { data });
+    if (data.wallet) {
+      MP_STATE.balanceMp = Number(data.wallet.balanceMp) || 0;
+      MP_STATE.lifetimeEarnedMp = Number(data.wallet.lifetimeEarnedMp) || 0;
+      MP_STATE.lifetimeSpentMp = Number(data.wallet.lifetimeSpentMp) || 0;
+      MP_STATE.loadedFor = AUTH.username;
+    }
+    MUSI_SHOP_STATE.pendingGiftKey = null;
+    MUSI_SHOP_STATE.pendingGiftSignature = null;
+    MUSI_SHOP_STATE.giftsLoaded = false;
+    MUSI_SHOP_STATE.historyLoaded = false;
+    if ($('musiShopGiftRecipient')) $('musiShopGiftRecipient').value = '';
+    renderMpWallet();
+    renderMusiShopCatalog();
+    await loadMusiShopGifts();
+    showToast('Gift sent', `${item.name} was delivered to @${recipientUsername}.`, 'success');
+  } catch (err) {
+    if (err.data && Number.isFinite(Number(err.data.balanceMp))) {
+      MP_STATE.balanceMp = Number(err.data.balanceMp);
+      renderMpWallet();
+    }
+    showToast('Gift not sent', err.message || 'Please try again.', 'error');
+  } finally {
+    MUSI_SHOP_STATE.giftInFlight = false;
+    if (button) { button.disabled = false; button.textContent = 'Send gift with MP'; }
+  }
 }
 
 function beginMusiShopPurchase(sku) {
@@ -7244,22 +7792,13 @@ async function confirmMusiShopPurchase() {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw Object.assign(new Error(data.error || 'Purchase failed.'), { data });
-    if (data.wallet) {
-      MP_STATE.balanceMp = Number(data.wallet.balanceMp) || 0;
-      MP_STATE.lifetimeEarnedMp = Number(data.wallet.lifetimeEarnedMp) || 0;
-      MP_STATE.lifetimeSpentMp = Number(data.wallet.lifetimeSpentMp) || 0;
-      MP_STATE.loadedFor = AUTH.username;
-    }
-    if (data.entitlements) MUSI_SHOP_STATE.entitlements = { ...MUSI_SHOP_STATE.entitlements, ...data.entitlements };
-    MUSI_SHOP_STATE.loadedFor = AUTH.username;
+    applyMusiShopPayload(data, AUTH.username);
     MUSI_SHOP_STATE.history = [];
     MUSI_SHOP_STATE.historyLoaded = false;
     MUSI_SHOP_STATE.historyNextBefore = null;
     MUSI_SHOP_STATE.selectedSku = null;
     MUSI_SHOP_STATE.pendingIdempotencyKey = null;
     $('musiShopConfirm')?.classList.remove('open');
-    renderMpWallet();
-    renderMusiShopAccess();
     showToast('Purchase complete', `${item.name} is ready. Balance: ${formatMp(MP_STATE.balanceMp)}`, 'success');
   } catch (err) {
     if (err.data && Number.isFinite(Number(err.data.balanceMp))) {
@@ -8371,6 +8910,12 @@ async function openUserProfile(username) {
     }
     const coverEl = $('userProfileCover');
     if (coverEl) coverEl.style.backgroundImage = data.coverImageUrl ? `url("${data.coverImageUrl}")` : 'none';
+    applyProfileCosmeticsToView(data.cosmetics || {}, {
+      avatar: avatarEl,
+      cover: coverEl,
+      name: $('userProfileName'),
+      badge: $('userProfileCosmeticBadge'),
+    });
 
     const joinEl = $('userProfileJoinDate');
     if (joinEl) joinEl.textContent = data.joinedAt ? `Joined ${formatJoinDate(data.joinedAt)}` : '';
@@ -17689,16 +18234,29 @@ function flexPlayAll() {
 }
 
 // ─── Theme ────────────────────────────────────────────────────────────────────
-function applyTheme(t) {
-  document.documentElement.setAttribute('data-theme', t);
-  document.querySelectorAll('.theme-dot').forEach(d => d.classList.toggle('active', d.dataset.theme === t));
-  state.theme = t;
-  localStorage.setItem('freq_theme', t);
+function applyTheme(t, { skipOwnership = false } = {}) {
+  let theme = String(t || 'industrial');
+  if (SHOP_THEME_KEYS.has(theme) && !skipOwnership) {
+    const owned = MUSI_SHOP_STATE.ownedItems.some(row => row?.item?.slot === 'app_theme' && row.item.assetKey === theme);
+    if (!owned) theme = 'industrial';
+  }
+  document.documentElement.setAttribute('data-theme', theme);
+  document.querySelectorAll('.theme-dot').forEach(d => d.classList.toggle('active', d.dataset.theme === theme));
+  state.theme = theme;
+  localStorage.setItem('freq_theme', theme);
 }
 applyTheme(state.theme);
-document.getElementById('themeDots').addEventListener('click', e => {
+document.getElementById('themeDots').addEventListener('click', async e => {
   const dot = e.target.closest('.theme-dot');
-  if (dot) applyTheme(dot.dataset.theme);
+  if (!dot) return;
+  if (dot.dataset.sku) {
+    await activateMusiShopItem('app_theme', dot.dataset.sku, dot.dataset.theme);
+    return;
+  }
+  applyTheme(dot.dataset.theme);
+  if (AUTH.loggedIn && getActiveShopItem('app_theme')) {
+    await activateMusiShopItem('app_theme', null, null);
+  }
 });
 
 // Custom accent
@@ -18001,7 +18559,20 @@ function initAQPanel() {
   bindAQSelect('aqVisStyle',     'visStyle');
   // Restart visualizer when style changes so canvas renders new mode
   const vsEl = $('aqVisStyle');
-  if (vsEl) vsEl.addEventListener('change', () => {
+  if (vsEl) vsEl.addEventListener('change', async () => {
+    const selectedOption = vsEl.options[vsEl.selectedIndex];
+    const selectedSku = selectedOption?.dataset?.sku || null;
+    if (AUTH.loggedIn && AUTH.token) {
+      const active = getActiveShopItem('visualizer_style');
+      const ok = selectedSku
+        ? await activateMusiShopItem('visualizer_style', selectedSku, vsEl.value)
+        : (active ? await activateMusiShopItem('visualizer_style', null, null) : true);
+      if (!ok) {
+        AQ_DEFAULTS.visStyle = active?.selectionKey || 'bars';
+        vsEl.value = AQ_DEFAULTS.visStyle;
+        saveAQ();
+      }
+    }
     if (AQ_DEFAULTS.visualizer && analyserNode) {
       if (visFAF) cancelAnimationFrame(visFAF);
       runVisualizer();
@@ -18480,6 +19051,108 @@ function runVisualizer() {
       ctx.fill();
       ctx.globalAlpha = 1;
     }
+  } else if (style === 'mirror') {
+    const count = Math.min(bufLen, 20);
+    const halfW = W / 2;
+    const barW = halfW / count;
+    for (let i = 0; i < count; i++) {
+      const idx = Math.floor(i * bufLen / count);
+      const energy = freqData[idx] / 255;
+      const barH = Math.max(1, energy * H * .92);
+      const grad = ctx.createLinearGradient(0, H, 0, H - barH);
+      grad.addColorStop(0, accent2);
+      grad.addColorStop(1, accent);
+      ctx.fillStyle = grad;
+      ctx.fillRect(halfW + i * barW + 1, H - barH, Math.max(1, barW - 2), barH);
+      ctx.fillRect(halfW - (i + 1) * barW + 1, H - barH, Math.max(1, barW - 2), barH);
+    }
+  } else if (style === 'radial') {
+    const cx = W / 2, cy = H / 2;
+    const base = Math.max(3, Math.min(W, H) * .16);
+    const count = Math.min(bufLen, 72);
+    ctx.lineWidth = 1.4;
+    for (let i = 0; i < count; i++) {
+      const energy = freqData[Math.floor(i * bufLen / count)] / 255;
+      const angle = i / count * Math.PI * 2 - Math.PI / 2;
+      const inner = base;
+      const outer = base + energy * Math.max(4, Math.min(W, H) * .38);
+      ctx.beginPath();
+      ctx.moveTo(cx + Math.cos(angle) * inner, cy + Math.sin(angle) * inner);
+      ctx.lineTo(cx + Math.cos(angle) * outer, cy + Math.sin(angle) * outer);
+      ctx.strokeStyle = i % 3 === 0 ? accent3 : accent;
+      ctx.globalAlpha = .45 + energy * .55;
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  } else if (style === 'orbits') {
+    const cx = W / 2, cy = H / 2;
+    const t = Date.now() / 850;
+    for (let ring = 0; ring < 4; ring++) {
+      const energy = freqData[Math.floor((ring + 1) * bufLen / 7)] / 255;
+      const rx = Math.max(8, W * (.08 + ring * .055));
+      const ry = Math.max(4, H * (.14 + ring * .08));
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, rx, ry, ring * .34, 0, Math.PI * 2);
+      ctx.strokeStyle = ring % 2 ? accent3 : accent2;
+      ctx.globalAlpha = .16 + energy * .34;
+      ctx.stroke();
+      const angle = t * (ring % 2 ? -1 : 1) * (1 + ring * .16) + ring;
+      const px = cx + Math.cos(angle) * rx;
+      const py = cy + Math.sin(angle) * ry;
+      ctx.beginPath();
+      ctx.arc(px, py, 1.7 + energy * 3.2, 0, Math.PI * 2);
+      ctx.fillStyle = ring % 2 ? accent3 : accent;
+      ctx.globalAlpha = .65 + energy * .35;
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  } else if (style === 'ribbon') {
+    const layers = [
+      { color: accent, offset: -H * .12, alpha: .8 },
+      { color: accent2, offset: 0, alpha: .62 },
+      { color: accent3, offset: H * .12, alpha: .48 },
+    ];
+    layers.forEach((layer, layerIndex) => {
+      ctx.beginPath();
+      for (let i = 0; i < bufLen; i += 3) {
+        const x = i / (bufLen - 1) * W;
+        const normalized = (timeData[i] - 128) / 128;
+        const y = H / 2 + layer.offset + normalized * H * (.24 + layerIndex * .04);
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.strokeStyle = layer.color;
+      ctx.lineWidth = 1.5 + layerIndex * .35;
+      ctx.globalAlpha = layer.alpha;
+      ctx.stroke();
+    });
+    ctx.globalAlpha = 1;
+  } else if (style === 'fireworks') {
+    const t = Date.now() / 900;
+    const colors = [accent, accent2, accent3, '#ffd36a', '#ffffff'];
+    for (let burst = 0; burst < 5; burst++) {
+      const energy = freqData[Math.floor((burst + 1) * bufLen / 7)] / 255;
+      const cx = W * (.14 + burst * .18) + Math.sin(t * .7 + burst) * W * .025;
+      const cy = H * (.32 + (burst % 2) * .28);
+      const radius = 3 + energy * Math.min(W, H) * .42;
+      const rays = 10 + burst * 2;
+      for (let ray = 0; ray < rays; ray++) {
+        const angle = ray / rays * Math.PI * 2 + t * (burst % 2 ? -.12 : .12);
+        const inner = radius * .28;
+        const outer = radius * (.72 + ((ray * 7) % 5) / 15);
+        ctx.beginPath();
+        ctx.moveTo(cx + Math.cos(angle) * inner, cy + Math.sin(angle) * inner);
+        ctx.lineTo(cx + Math.cos(angle) * outer, cy + Math.sin(angle) * outer);
+        ctx.strokeStyle = colors[(burst + ray) % colors.length];
+        ctx.lineWidth = .8 + energy * 1.5;
+        ctx.globalAlpha = .25 + energy * .72;
+        ctx.stroke();
+      }
+      ctx.beginPath();
+      ctx.arc(cx, cy, 1.5 + energy * 2.4, 0, Math.PI * 2);
+      ctx.fillStyle = colors[burst % colors.length];
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
   }
 
   visFAF = requestAnimationFrame(runVisualizer);
@@ -18519,21 +19192,49 @@ function runPlaylistVis() {
     analyserNode.getByteFrequencyData(freqData);
 
     ctx.clearRect(0, 0, W, H);
-    if (style === 'wave') {
+    if (style === 'wave' || style === 'ribbon') {
       const timeData = new Uint8Array(bufLen);
       analyserNode.getByteTimeDomainData(timeData);
-      ctx.beginPath();
-      const sliceW = W / bufLen;
-      let x = 0;
-      for (let i = 0; i < bufLen; i++) {
-        const v = timeData[i] / 128;
-        const y = (v * H) / 2;
-        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-        x += sliceW;
+      const layers = style === 'ribbon' ? [accent, accent2] : [accent];
+      layers.forEach((color, layer) => {
+        ctx.beginPath();
+        const sliceW = W / bufLen;
+        let x = 0;
+        for (let i = 0; i < bufLen; i++) {
+          const v = timeData[i] / 128;
+          const y = (v * H) / 2 + (layer ? 3 : 0);
+          if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+          x += sliceW;
+        }
+        ctx.strokeStyle = color;
+        ctx.globalAlpha = layer ? .55 : .9;
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
+      });
+      ctx.globalAlpha = 1;
+    } else if (style === 'mirror') {
+      const barCount = 9;
+      const barW = W / (barCount * 2);
+      for (let i = 0; i < barCount; i++) {
+        const energy = freqData[Math.floor(i * bufLen / barCount)] / 255;
+        const barH = energy * H;
+        ctx.fillStyle = i % 2 ? accent2 : accent;
+        ctx.fillRect(W / 2 + i * barW, H - barH, Math.max(1, barW - 1), barH);
+        ctx.fillRect(W / 2 - (i + 1) * barW, H - barH, Math.max(1, barW - 1), barH);
       }
-      ctx.strokeStyle = accent;
-      ctx.lineWidth = 1.2;
-      ctx.stroke();
+    } else if (style === 'radial' || style === 'orbits' || style === 'fireworks') {
+      const cx = W / 2, cy = H / 2;
+      const count = style === 'orbits' ? 12 : style === 'fireworks' ? 20 : 28;
+      const base = Math.min(W, H) * .16;
+      for (let i = 0; i < count; i++) {
+        const energy = freqData[Math.floor(i * bufLen / count)] / 255;
+        const angle = i / count * Math.PI * 2 + (style === 'orbits' || style === 'fireworks' ? Date.now() / 1400 : 0);
+        const radius = base + energy * Math.min(W, H) * .36;
+        ctx.beginPath();
+        ctx.arc(cx + Math.cos(angle) * radius, cy + Math.sin(angle) * radius, style === 'orbits' || style === 'fireworks' ? 1.6 : 1, 0, Math.PI * 2);
+        ctx.fillStyle = i % 2 ? accent2 : accent;
+        ctx.fill();
+      }
     } else {
       const barCount = 18;
       const barW = W / barCount;
