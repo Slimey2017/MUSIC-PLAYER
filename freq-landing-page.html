@@ -5,7 +5,7 @@
 <meta name="google-site-verification" content="SgCwMbtdlq6UNKqzVriNLzGYW8ddXi-uXNQufdlGwk4" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>FREQ — Universal Music Player</title>
-<meta name="description" content="FREQ pulls YouTube, Spotify, Tidal, SoundCloud, Apple Music, Amazon Music, Qobuz, Deezer, Last.fm and your local files into one deck — with artist pages, playlists, and a live feed on top." />
+<meta name="description" content="FREQ brings streaming links, local files, artist publishing, playlists, verified Listen to Earn, Musi-Pixels, Family Controls, and a moderated music community into one deck." />
     <link rel="icon" type="image/x-icon" href="Geometric Frequency Logo Emphasizing Modernity.ico" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link href="https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400&family=Unbounded:wght@300;400;700;900&display=swap" rel="stylesheet" />
@@ -97,6 +97,13 @@ section:last-of-type{ border-bottom:none; }
 .hero p.lede{ color:var(--text-dim); font-size:1rem; max-width:52ch; margin-bottom:32px; }
 .hero-ctas{ display:flex; align-items:center; gap:18px; flex-wrap:wrap; margin-bottom:28px; }
 .hero-fineprint{ font-size:.68rem; color:var(--text-mute); letter-spacing:.05em; }
+.trust-strip{ display:flex; flex-wrap:wrap; gap:8px; margin-top:18px; }
+.trust-badge{
+  display:inline-flex; align-items:center; gap:6px; padding:6px 10px; border:1px solid var(--border);
+  border-radius:20px; background:rgba(255,255,255,.025); color:var(--text-dim);
+  font-size:.59rem; letter-spacing:.04em; white-space:nowrap;
+}
+.trust-badge::before{ content:'✓'; color:var(--yellow); font-weight:700; }
 .hero-panel{
   border:1px solid var(--border); border-radius:8px; background:var(--surface);
   padding:22px; box-shadow:0 30px 60px -20px rgba(0,0,0,.6);
@@ -137,6 +144,25 @@ section:last-of-type{ border-bottom:none; }
 .card .ic{ font-size:1.1rem; color:var(--cyan); }
 .card h3{ font-size:.92rem; text-transform:uppercase; letter-spacing:.04em; }
 .card p{ font-size:.78rem; color:var(--text-dim); margin:0; }
+
+/* platform economy, artist tools, and trust */
+.section-intro{ max-width:68ch; color:var(--text-dim); margin:12px 0 36px; }
+.grid4{ display:grid; grid-template-columns:repeat(4,1fr); gap:1px; background:var(--border); border:1px solid var(--border); border-radius:8px; overflow:hidden; }
+.info-card{ background:var(--surface); padding:24px; min-height:180px; }
+.info-card .ic{ display:block; color:var(--cyan); font-size:1.1rem; margin-bottom:12px; }
+.info-card h3{ font-size:.82rem; text-transform:uppercase; letter-spacing:.04em; margin-bottom:8px; }
+.info-card p{ color:var(--text-dim); font-size:.76rem; margin:0; }
+.mp-section{ position:relative; overflow:hidden; }
+.mp-section::before{ content:''; position:absolute; inset:-20% auto auto -10%; width:520px; height:520px; background:radial-gradient(circle,rgba(211,92,255,.13),transparent 65%); pointer-events:none; }
+.mp-panel{ position:relative; padding:40px; border:1px solid rgba(218,104,255,.55); border-radius:10px; background:linear-gradient(135deg,rgba(93,24,133,.18),var(--surface) 58%); }
+.mp-label{ display:inline-flex; padding:5px 11px; border-radius:20px; border:1px solid rgba(218,104,255,.6); color:#ed91ff; font-size:.62rem; font-weight:700; letter-spacing:.14em; text-transform:uppercase; margin-bottom:16px; }
+.mp-panel h2{ font-size:2rem; margin-bottom:12px; }
+.mp-panel > p{ color:var(--text-dim); max-width:68ch; margin:0 0 28px; }
+.mp-grid{ display:grid; grid-template-columns:repeat(3,1fr); gap:14px; }
+.mp-card{ padding:20px; border:1px solid rgba(218,104,255,.2); border-radius:6px; background:rgba(10,10,10,.34); }
+.mp-card b{ display:block; color:#ed91ff; font-family:'Unbounded',sans-serif; font-size:.78rem; text-transform:uppercase; margin-bottom:7px; }
+.mp-card p{ color:var(--text-dim); font-size:.75rem; margin:0; }
+.plain-note{ margin-top:20px; padding:14px 18px; border-left:3px solid #d85cff; background:rgba(216,92,255,.06); color:var(--text-dim); font-size:.75rem; }
 
 /* premium */
 .premium-section{ position:relative; overflow:hidden; }
@@ -227,13 +253,17 @@ footer{ padding:56px 0 40px; }
   .hero h1{ font-size:2.3rem; }
   .split{ grid-template-columns:1fr; }
   .grid9{ grid-template-columns:1fr 1fr; }
+  .grid4{ grid-template-columns:1fr 1fr; }
+  .mp-grid{ grid-template-columns:1fr; }
   .shots{ grid-template-columns:1fr; }
   .log-row{ grid-template-columns:1fr; gap:4px; }
 }
 @media (max-width:520px){
   .grid9{ grid-template-columns:1fr; }
+  .grid4{ grid-template-columns:1fr; }
   .stat-block{ grid-template-columns:1fr 1fr; }
   .hero h1{ font-size:1.9rem; }
+  .mp-panel{ padding:26px; }
 }
 </style>
 </head>
@@ -246,10 +276,9 @@ footer{ padding:56px 0 40px; }
     <div class="logo">FREQ<span>Universal Music Player</span></div>
     <nav class="links">
       <a href="#features">Features</a>
+      <a href="#listen-to-earn">Earn MP</a>
+      <a href="#artists">Artists</a>
       <a href="#premium">Premium</a>
-      <a href="#screens">Screens</a>
-      <a href="#changelog">Changelog</a>
-      <a href="#rules">Rules</a>
       <a href="#faq">FAQ</a>
     </nav>
     <div class="nav-cta">
@@ -269,6 +298,13 @@ footer{ padding:56px 0 40px; }
         <a class="btn btn-ghost" href="#features">See what's inside ↓</a>
       </div>
       <div class="hero-fineprint">No install. No signup required to listen. Built and run by one developer.</div>
+      <div class="trust-strip" aria-label="FREQ trust and safety features">
+        <span class="trust-badge">Artist Verification</span>
+        <span class="trust-badge">Email Verification</span>
+        <span class="trust-badge">Secure Listen to Earn</span>
+        <span class="trust-badge">Family Controls</span>
+        <span class="trust-badge">Moderated Community</span>
+      </div>
     </div>
     <div class="hero-panel">
       <div class="hero-panel-top">
@@ -362,7 +398,7 @@ footer{ padding:56px 0 40px; }
       <div class="card">
         <span class="ic">⚡</span>
         <h3>Real-time activity feed</h3>
-        <p>Follows, likes, comments, and shares land in a live activity feed as they happen, so you know when someone engages with your tracks or posts.</p>
+        <p>Follows, likes, posts, and shares land in a live activity feed as they happen, so you know when someone engages with your tracks or profile.</p>
       </div>
       <div class="card">
         <span class="ic">⚑</span>
@@ -383,6 +419,66 @@ footer{ padding:56px 0 40px; }
   </div>
 </section>
 
+<section id="listen-to-earn">
+  <div class="wrap">
+    <div class="eyebrow"><span class="dot"></span> LISTEN TO EARN</div>
+    <h2 style="font-size:2.1rem;">Real listening. Verified rewards.</h2>
+    <p class="section-intro">Choose an eligible FREQ-published track from the Listen to Earn feed, listen normally, and earn Musi-Pixels when the session passes FREQ's eligibility and anti-abuse checks.</p>
+    <div class="grid4">
+      <div class="info-card"><span class="ic">▶</span><h3>Eligible tracks</h3><p>Rewards begin only from the dedicated Listen to Earn offers shown to a signed-in, eligible account.</p></div>
+      <div class="info-card"><span class="ic">⌁</span><h3>Verified progress</h3><p>Server-validated heartbeats compare real playback progress instead of trusting a timer running in the browser.</p></div>
+      <div class="info-card"><span class="ic">⚑</span><h3>Anti-cheat checks</h3><p>Automation, fake playback, abnormal heartbeat patterns, repeat abuse, and fraudulent accounts can be rejected.</p></div>
+      <div class="info-card"><span class="ic">◆</span><h3>MP rewards</h3><p>Qualifying listens credit your MP wallet and appear in your transaction history for use inside FREQ.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="musi-pixels" class="mp-section">
+  <div class="wrap">
+    <div class="mp-panel">
+      <span class="mp-label">Musi-Pixels · MP</span>
+      <h2>FREQ's in-app economy.</h2>
+      <p>Musi-Pixels are virtual points used only inside FREQ. Your wallet tracks what you earn and spend, while the Musi-Shop turns MP into access and customization.</p>
+      <div class="mp-grid">
+        <div class="mp-card"><b>Earn MP</b><p>Qualifying Listen to Earn sessions, plus any eligible events, challenges, or promotions FREQ makes available.</p></div>
+        <div class="mp-card"><b>Spend MP</b><p>Get DJ BOOM message packs, Radio Passes, app themes, profile cosmetics, visualizer packs, and available seasonal items.</p></div>
+        <div class="mp-card"><b>Track it</b><p>See your current balance, earned and spent totals, purchases, gifts, and MP ledger from your account and the Musi-Shop.</p></div>
+      </div>
+      <div class="plain-note"><strong>Musi-Pixels have no cash value.</strong> MP cannot be redeemed for money, exchanged for cryptocurrency, or sold outside FREQ.</div>
+    </div>
+  </div>
+</section>
+
+<section id="artists">
+  <div class="wrap">
+    <div class="eyebrow"><span class="dot"></span> FOR ARTISTS</div>
+    <h2 style="font-size:2.1rem;">Publish, prove it, and find your audience.</h2>
+    <p class="section-intro">FREQ's artist tools sit inside the same deck listeners use, so uploads, profiles, discovery, playlists, and performance data stay connected.</p>
+    <div class="grid9">
+      <div class="card"><span class="ic">↑</span><h3>Direct uploads</h3><p>Publish tracks, releases, artwork, and music videos to your FREQ artist page with content ratings and collaborator credits.</p></div>
+      <div class="card"><span class="ic">✓</span><h3>Artist verification</h3><p>Approved artists receive an official verification badge. Requests are reviewed and approval is never automatic.</p></div>
+      <div class="card"><span class="ic">▤</span><h3>Artist analytics</h3><p>Review plays over time, top tracks, releases, audience, activity, and engagement from the owner-only dashboard.</p></div>
+      <div class="card"><span class="ic">◎</span><h3>Discovery</h3><p>Published music can appear across FREQ search, discovery, charts, profiles, and social sharing surfaces.</p></div>
+      <div class="card"><span class="ic">♫</span><h3>Playlists</h3><p>Listeners can add FREQ tracks to public, private, saved, shared, and collaborative playlists.</p></div>
+      <div class="card"><span class="ic">📻</span><h3>Radio paths</h3><p>Radio and discovery tools give listeners more ways to move from a session into artists and tracks they have not explored yet.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="safety">
+  <div class="wrap">
+    <div class="eyebrow"><span class="dot"></span> SAFETY &amp; CONTROL</div>
+    <h2 style="font-size:2.1rem;">Built for listeners, artists, and families.</h2>
+    <p class="section-intro">Safety controls are part of the platform architecture: account verification, content labels, parental enforcement, moderation, and economy anti-abuse all work together.</p>
+    <div class="grid4">
+      <div class="info-card"><span class="ic">◑</span><h3>Content ratings</h3><p>Artists must label uploads Clean, Parental Guidance, or Adult, and FREQ can correct inaccurate ratings.</p></div>
+      <div class="info-card"><span class="ic">👪</span><h3>Family Controls</h3><p>Parents can manage rating limits, listening time, bedtime and allowed hours, blocked content, feature access, and child devices.</p></div>
+      <div class="info-card"><span class="ic">⚑</span><h3>Moderation</h3><p>Reports feed an admin review system that can remove content, warn or suspend accounts, and issue permanent bans.</p></div>
+      <div class="info-card"><span class="ic">⊛</span><h3>Verified accounts</h3><p>Email confirmation protects sensitive actions, while artist verification helps listeners identify approved official profiles.</p></div>
+    </div>
+  </div>
+</section>
+
 <section id="premium" class="premium-section">
   <div class="wrap">
     <div class="premium-panel">
@@ -390,7 +486,7 @@ footer{ padding:56px 0 40px; }
       <div class="premium-head">
         <div>
           <h2>Everything in FREQ, then more room to make things.</h2>
-          <p>An optional subscription on top of the free platform — more cloud storage, an AI assistant that knows your session, and a couple of things that just wouldn't make sense as defaults.</p>
+          <p>An optional subscription on top of the free platform — higher limits, Premium tools, and more room to customize how FREQ looks and works.</p>
         </div>
         <a class="btn btn-primary" href="https://music-player-0v87.onrender.com" target="_blank" rel="noopener">▶ Go Premium</a>
       </div>
@@ -412,12 +508,17 @@ footer{ padding:56px 0 40px; }
         </div>
         <div class="premium-item">
           <span class="ic">⚑</span>
-          <h4>Premium badge</h4>
-          <p>Shows on your profile and posts across the platform.</p>
+          <h4>More customization</h4>
+          <p>A Premium badge plus additional customization and higher feature limits as Premium evolves.</p>
+        </div>
+        <div class="premium-item">
+          <span class="ic">↓</span>
+          <h4>Offline Downloads</h4>
+          <p>A planned future Premium feature. It is not currently available and will be subject to content rights and platform rules.</p>
         </div>
       </div>
       <div class="premium-foot">
-        <span class="premium-billing">Billed and managed entirely through Gumroad — FREQ never sees your card details. Cancel any time from your Premium dashboard or Gumroad directly.</span>
+        <span class="premium-billing">Billed and managed entirely through Gumroad — FREQ never sees your card details. Cancel any time through Gumroad. Premium benefits and limits may change as the platform evolves.</span>
         <a class="btn btn-ghost" href="freq-tos.html#s4">Billing terms →</a>
       </div>
     </div>
@@ -464,6 +565,18 @@ footer{ padding:56px 0 40px; }
     <div class="log">
       <div class="log-row">
         <span class="log-tag"><span class="log-prompt">&gt;</span> latest</span>
+        <div><div class="log-title">Musi-Pixels + Musi-Shop</div><p class="log-desc">Server-verified Listen to Earn, MP wallets and ledgers, DJ BOOM message packs, Radio Passes, themes, profile cosmetics, visualizers, gifts, and seasonal collections.</p></div>
+      </div>
+      <div class="log-row">
+        <span class="log-tag"><span class="log-prompt">&gt;</span> latest</span>
+        <div><div class="log-title">Family Controls + content ratings</div><p class="log-desc">Required Clean, Parental Guidance, or Adult labels, plus parent-managed content limits, schedules, listening time, feature controls, playback history, and devices.</p></div>
+      </div>
+      <div class="log-row">
+        <span class="log-tag"><span class="log-prompt">&gt;</span> latest</span>
+        <div><div class="log-title">Account + artist verification</div><p class="log-desc">Email verification for protected actions and a reviewed artist-verification flow with official profile badges.</p></div>
+      </div>
+      <div class="log-row">
+        <span class="log-tag"><span class="log-prompt">&gt;</span> recent</span>
         <div><div class="log-title">FREQ Premium</div><p class="log-desc">An optional subscription tier — expanded cloud storage, the DJ BOOM assistant, Real-Life Radio, and a Premium badge — billed through Gumroad. Signing up now requires an email address to verify purchases and enable account recovery.</p></div>
       </div>
       <div class="log-row">
@@ -519,7 +632,7 @@ footer{ padding:56px 0 40px; }
       <div class="rule"><span class="rule-ic">◈</span><div><b>Own what you upload.</b><p>You need the rights to any audio, sample, or video you publish. FREQ responds to valid takedown notices and terminates repeat infringers.</p></div></div>
       <div class="rule"><span class="rule-ic">◑</span><div><b>Flag it honestly.</b><p>Clean, Parental Guidance, or Explicit (18+) at upload. Misflagged content can be removed or re-rated by FREQ.</p></div></div>
       <div class="rule"><span class="rule-ic">▲</span><div><b>No juicing the numbers.</b><p>Manipulating plays, chart position, or follower counts through artificial means is a bannable offense.</p></div></div>
-      <div class="rule"><span class="rule-ic">⌁</span><div><b>No bots or scraping.</b><p>Automated scripts or scrapers accessing the Platform or its API without authorization aren't allowed.</p></div></div>
+      <div class="rule"><span class="rule-ic">⌁</span><div><b>No bots or MP farming.</b><p>Automation, fake playback, fraudulent accounts, scraping, or other attempts to manufacture Musi-Pixel rewards are not allowed.</p></div></div>
       <div class="rule"><span class="rule-ic">⚉</span><div><b>13+ to sign up.</b><p>Accounts found to belong to users under 13 are deleted. Accounts aged 13–17 default to Clean-rated content only.</p></div></div>
       <div class="rule"><span class="rule-ic">⚑</span><div><b>Report anything that breaks these.</b><p>A report button sits on every post, profile, and release, and routes straight to an admin review queue.</p></div></div>
     </div>
@@ -546,11 +659,43 @@ footer{ padding:56px 0 40px; }
       </details>
       <details>
         <summary>Do I need an email address to sign up?</summary>
-        <p>Yes. A FREQ account needs a username, email address, display name, and password. The email is what lets you recover your account and verify a FREQ Premium purchase — passwords are hashed with PBKDF2-SHA256 and never stored in plain text, so we can't recover a lost password without one.</p>
+        <p>Yes. A FREQ account needs a username, email address, birthdate, country, and password; a display name is optional. Your email supports verification, account recovery, Premium purchase checks, and important account notices.</p>
+      </details>
+      <details>
+        <summary>What are Musi-Pixels?</summary>
+        <p>Musi-Pixels (MP) are FREQ's in-app virtual currency. Eligible users can earn MP through Listen to Earn and any available events, challenges, or promotions, then spend MP in the Musi-Shop.</p>
+      </details>
+      <details>
+        <summary>How does Listen to Earn work?</summary>
+        <p>Sign in, open the Listen to Earn feed, and play an eligible FREQ track from there. FREQ checks real playback progress through server-validated heartbeats and awards MP only when the session meets the current eligibility rules.</p>
+      </details>
+      <details>
+        <summary>Do Musi-Pixels have cash value?</summary>
+        <p>No. MP cannot be redeemed for money, exchanged for cryptocurrency, or sold outside FREQ. They are usable only for eligible in-app items and access.</p>
+      </details>
+      <details>
+        <summary>How do I become a verified artist?</summary>
+        <p>Create and manage a FREQ artist page, then submit the available verification request and evidence. FREQ reviews each request; approval is not guaranteed, and badges may be denied or revoked if verification is abused.</p>
+      </details>
+      <details>
+        <summary>Why verify my email?</summary>
+        <p>Email verification helps protect Artist Verification, Listen to Earn eligibility, Musi-Pixel rewards, Premium purchases, account recovery, and other sensitive account actions from impersonation and abuse.</p>
+      </details>
+      <details>
+        <summary>How are rewards protected against abuse?</summary>
+        <p>The browser reports playback observations, but the server decides eligibility and credits. Heartbeat validation, completion rules, earning limits, duplicate checks, device/session signals, and abuse detection can reject suspicious listens or remove improperly earned MP.</p>
+      </details>
+      <details>
+        <summary>Can parents restrict content?</summary>
+        <p>Yes. Family Controls let an adult account manage a linked child account's maximum content rating, blocked artists, tracks, and genres, listening limits and schedules, feature access, and recognized devices.</p>
+      </details>
+      <details>
+        <summary>Is Premium required?</summary>
+        <p>No. Core listening and account features remain available without Premium. Premium adds higher limits and Premium access, while some DJ BOOM and Real-Life Radio access can also be purchased with MP through message packs or Radio Passes.</p>
       </details>
       <details>
         <summary>What does FREQ Premium include, and how does billing work?</summary>
-        <p>Premium adds expanded cloud storage, the DJ BOOM assistant, Real-Life Radio, and a Premium badge. It's an optional recurring subscription billed and managed entirely through Gumroad — FREQ never sees your card details, and you can cancel any time directly on Gumroad.</p>
+        <p>Premium adds expanded cloud storage, the DJ BOOM assistant, Real-Life Radio, a Premium badge, higher limits, and additional customization. Offline Downloads is planned for the future but is not currently available. Premium is an optional recurring subscription billed and managed through Gumroad, so FREQ never sees your card details.</p>
       </details>
       <details>
         <summary>What can I upload as an artist?</summary>
@@ -561,8 +706,8 @@ footer{ padding:56px 0 40px; }
         <p>FREQ is a player and community platform, not a licensed distributor. You're responsible for owning or licensing what you publish. FREQ can't pre-screen every upload, but it responds to valid takedown notices and terminates repeat infringers.</p>
       </details>
       <details>
-        <summary>How does explicit content work?</summary>
-        <p>Everyone sees Clean content by default. Artists flag releases as Clean, Parental Guidance, or Explicit (18+) at upload, and listeners must be 18+ to enable explicit visibility in their own settings. Sexually explicit audio or video isn't allowed under any flag.</p>
+        <summary>How do content ratings work?</summary>
+        <p>Artists must label uploads Clean, Parental Guidance, or Adult (18+). Listeners can control allowed ratings, parent-managed accounts follow Family Controls, and FREQ can correct a rating that was applied inaccurately. Sexually explicit audio or video isn't allowed under any rating.</p>
       </details>
       <details>
         <summary>Who moderates the platform?</summary>
@@ -570,7 +715,7 @@ footer{ padding:56px 0 40px; }
       </details>
       <details>
         <summary>What data does FREQ actually store about me?</summary>
-        <p>Your account record is username, email, display name, hashed password, and (if you're a Premium subscriber) your subscription status — never your card details, which Gumroad holds. Things like your queue, play history, theme, and player settings stay in your browser's local storage and are never sent to FREQ's servers unless a specific synced feature (like cloud playlists) needs them.</p>
+        <p>FREQ stores account details, birthdate and age-group information, published content and profile data, synced features, play and analytics events, Family Control records, Premium status, and MP wallet, earning, purchase, and ledger records. Local queue, favorites, theme, playback preferences, and similar device settings remain in browser storage. Gumroad, not FREQ, holds payment-card details.</p>
       </details>
       <details>
         <summary>Can I delete my account and everything in it?</summary>
