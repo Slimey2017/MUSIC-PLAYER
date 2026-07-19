@@ -7082,6 +7082,8 @@ const MP_STATE = {
   activeEarn: null, // { sessionId, trackId, mpPerTrack, intervalMs, finalizing }
   heartbeatTimer: null,
   heartbeatInFlight: false,
+  heartbeatTimeupdateHandler: null,
+  lastHeartbeatFiredAt: 0,
   // Bumped by every playItem() call and stamped onto that call's logPlay/
   // start-session round trip. If a second playItem() fires before the
   // first's /api/plays response lands (double-click, re-render, offer
@@ -7890,6 +7892,39 @@ function openListenToEarn() {
 function clearMpEarnTimer() {
   if (MP_STATE.heartbeatTimer) clearInterval(MP_STATE.heartbeatTimer);
   MP_STATE.heartbeatTimer = null;
+  if (MP_STATE.heartbeatTimeupdateHandler) {
+    localAudio.removeEventListener('timeupdate', MP_STATE.heartbeatTimeupdateHandler);
+    MP_STATE.heartbeatTimeupdateHandler = null;
+  }
+  MP_STATE.lastHeartbeatFiredAt = 0;
+}
+
+// Backgrounded/hidden tabs get their setInterval throttled by the browser
+// (Chrome can stretch a 12s interval out to 60s+, some mobile browsers
+// suspend timers almost entirely) — but audio itself keeps decoding and
+// firing 'timeupdate' in the background, since media playback gets a
+// separate exemption from that throttling. Driving heartbeats off
+// 'timeupdate' (with a wall-clock throttle so it still only actually
+// sends roughly every intervalMs) means Listen to Earn keeps accruing
+// correctly while the tab is in the background or the screen is off,
+// instead of silently going quiet the moment focus leaves the tab. The
+// setInterval is kept running alongside this as a fallback for the rare
+// case timeupdate itself stalls without an error/pause event, not as the
+// primary driver anymore.
+function startMpEarnScheduler(intervalMs) {
+  clearMpEarnTimer();
+  MP_STATE.lastHeartbeatFiredAt = Date.now();
+  MP_STATE.heartbeatTimeupdateHandler = () => {
+    if (Date.now() - MP_STATE.lastHeartbeatFiredAt < intervalMs) return;
+    MP_STATE.lastHeartbeatFiredAt = Date.now();
+    sendMpEarnHeartbeat();
+  };
+  localAudio.addEventListener('timeupdate', MP_STATE.heartbeatTimeupdateHandler);
+  MP_STATE.heartbeatTimer = setInterval(() => {
+    if (Date.now() - MP_STATE.lastHeartbeatFiredAt < intervalMs) return;
+    MP_STATE.lastHeartbeatFiredAt = Date.now();
+    sendMpEarnHeartbeat();
+  }, intervalMs);
 }
 
 function stopMpEarnSession({ notifyServer = true } = {}) {
@@ -7922,6 +7957,19 @@ async function sendMpEarnHeartbeat({ final = false, positionOverride = null } = 
     return;
   }
   if (!final && (!localAudio || localAudio.paused || localAudio.ended)) return;
+  // A resolved play() sets .paused = false the instant playback starts
+  // buffering, not the instant currentTime actually begins advancing —
+  // readyState can still be HAVE_NOTHING/HAVE_METADATA while paused is
+  // already false. A heartbeat that fires during that window reports
+  // currentTime as a real, non-stale 0, which the server correctly logs
+  // as zero progress. If that stall lasts across several heartbeat
+  // intervals (slow signed-URL fetch, network hiccup, momentary CDN
+  // slowness), every one of those heartbeats was previously counted as a
+  // real observation, burning heartbeat_count on 0-progress calls instead
+  // of just waiting for playback to genuinely start. Requiring
+  // HAVE_FUTURE_DATA (readyState >= 3) here means "actually able to play
+  // right now", which is what a heartbeat is supposed to be observing.
+  if (!final && localAudio.readyState < 3) return;
   const item = state.queue[state.activeIndex];
   if (!final && (!item || (item.freqTrackId || item.id) !== active.trackId)) return;
 
@@ -7999,7 +8047,6 @@ function beginMpEarnSession(start, item) {
     return;
   }
   if (MP_STATE.activeEarn && MP_STATE.activeEarn.sessionId !== start.sessionId) stopMpEarnSession();
-  clearMpEarnTimer();
   const intervalMs = Math.max(10_000, Math.min(15_000, (Number(start.heartbeatIntervalSeconds) || 12) * 1000));
   MP_STATE.activeEarn = {
     sessionId: start.sessionId,
@@ -8008,7 +8055,7 @@ function beginMpEarnSession(start, item) {
     intervalMs,
     finalizing: false,
   };
-  MP_STATE.heartbeatTimer = setInterval(() => sendMpEarnHeartbeat(), intervalMs);
+  startMpEarnScheduler(intervalMs);
   showToast('Listen to Earn started', `Finish this track to earn ${formatMp(start.mpPerTrack || 150)}.`, 'success');
 }
 
@@ -20461,6 +20508,16 @@ localAudio.addEventListener('loadedmetadata', function fixInfiniteDuration() {
 // local blob: URL that's gone) is left to surface as a real error.
 let _expiredUrlRetried = false;
 localAudio.addEventListener('error', async () => {
+  // TEMP DIAGNOSTIC — remove once Listen to Earn accrual is confirmed
+  // working. Confirms whether this recovery path (which resets
+  // currentTime to 0 via .src reassignment) is actually firing during
+  // Listen to Earn sessions, since repeated 0-position heartbeats would
+  // be fully explained by this running more than once per session.
+  console.log('[MP/audio error debug]', {
+    code: localAudio.error?.code, message: localAudio.error?.message,
+    currentTime: localAudio.currentTime, src: localAudio.src?.slice(0, 80),
+    earnActive: !!MP_STATE.activeEarn, alreadyRetried: _expiredUrlRetried,
+  });
   const item = state.queue[state.activeIndex];
   if (!item || (!item.freqTrackId && !item.cloudFileId) || _expiredUrlRetried) {
     if (item) showToast('Playback error', 'This track could not be played.', 'error');
@@ -20468,6 +20525,16 @@ localAudio.addEventListener('error', async () => {
   }
   _expiredUrlRetried = true;
   const resumeAt = localAudio.currentTime || 0;
+  // A Listen to Earn heartbeat firing while this recovery is mid-flight
+  // would read currentTime either right before the .src reassignment
+  // (stale, about to be thrown away) or right after (freshly reset to 0,
+  // not yet seeked back to resumeAt) — either way it's not a real
+  // observation of where playback actually is. Pausing the timer for the
+  // duration of the recovery, rather than leaving the paused/readyState
+  // guards to filter it out on a best-effort basis, removes the race
+  // entirely instead of narrowing its window.
+  const earnWasActive = !!MP_STATE.activeEarn;
+  if (earnWasActive) clearMpEarnTimer();
   const ok = item.freqTrackId
     ? await refreshPublishedTrackUrl(item)
     : await (async () => {
@@ -20488,6 +20555,14 @@ localAudio.addEventListener('error', async () => {
     localAudio.removeEventListener('loadedmetadata', resumeOnce);
     localAudio.currentTime = resumeAt;
     PlaybackManager.requestPlay();
+    // Only resume heartbeats once currentTime has actually been restored
+    // to resumeAt and a fresh play() has been requested — not on the
+    // 'playing' event alone, which can fire before the seek above has
+    // taken effect in some browsers.
+    if (earnWasActive && MP_STATE.activeEarn) {
+      const intervalMs = MP_STATE.activeEarn.intervalMs || 12000;
+      startMpEarnScheduler(intervalMs);
+    }
   });
 });
 // Reset the one-shot retry guard every time a *new* play actually starts,
