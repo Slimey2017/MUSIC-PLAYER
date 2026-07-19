@@ -9116,6 +9116,11 @@ app.post('/api/mp/listen-to-earn/heartbeat', rateLimit, async (req, res) => {
   const { sessionId, currentTimeSeconds, playbackRate, mpDeviceId } = req.body || {};
   const position = Number(currentTimeSeconds);
   const rate = Number(playbackRate);
+  // TEMP DIAGNOSTIC — remove once Listen to Earn accrual is confirmed
+  // working. Confirms the raw wire value the server received for
+  // currentTimeSeconds, to rule out any client/server mismatch now that
+  // the RPC itself has been verified correct via a direct manual call.
+  console.log('[MP heartbeat debug] received', { sessionId, currentTimeSeconds, position, rate, username: sess.username });
   if (!UUID_RE.test(String(sessionId || '')) || !Number.isFinite(position) || position < 0 ||
       !Number.isFinite(rate) || rate < 0.25 || rate > 16) {
     return res.status(400).json({ error: 'Invalid Listen to Earn heartbeat.' });
