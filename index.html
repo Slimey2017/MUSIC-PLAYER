@@ -129,6 +129,12 @@
   --text:#f3fff7;--text-dim:#6d9d82;--text-muted:#466a55;
   --glow:0 0 30px rgba(116,240,167,.25);--scanlines:0;
 }
+[data-theme="prestige-cosmic"] {
+  --bg:#03010c;--surface:rgba(12,6,32,.95);--surface2:rgba(25,10,54,.93);--surface3:rgba(46,19,79,.9);
+  --border:#b987ff;--accent:#ffe783;--accent2:#b16cff;--accent3:#6dfff1;
+  --text:#fffaf0;--text-dim:#a98bc7;--text-muted:#6d5987;
+  --glow:0 0 38px rgba(255,231,131,.28);--scanlines:0;
+}
 
 :root { --radius:4px; --font-scale:1; }
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
@@ -1125,6 +1131,7 @@ body.local-player-active #embedContainer{display:none;}
 .theme-dot[data-theme="cosmic-pulse"]{background:linear-gradient(135deg,#d76cff,#53f5e4);animation:phase3DotPulse 2.2s ease-in-out infinite;}
 .theme-dot[data-theme="liquid-neon"]{background:linear-gradient(135deg,#00ffd5,#ff38d1);animation:phase3DotPulse 1.7s ease-in-out infinite;}
 .theme-dot[data-theme="holiday-signal"]{background:linear-gradient(135deg,#74f0a7,#ff6474,#ffd36a);animation:phase3DotPulse 2s ease-in-out infinite;}
+.theme-dot[data-theme="prestige-cosmic"]{background:linear-gradient(135deg,#ffe783,#b16cff,#6dfff1);animation:phase3DotPulse 1.5s ease-in-out infinite;}
 @keyframes phase3DotPulse{50%{filter:brightness(1.35);transform:scale(1.08);}}
 html[data-theme="cosmic-pulse"] body,html[data-theme="liquid-neon"] body,html[data-theme="holiday-signal"] body{background-size:220% 220%;animation:phase3ThemeDrift 14s ease infinite;}
 html[data-theme="cosmic-pulse"] body{background-image:radial-gradient(circle at 15% 20%,rgba(215,108,255,.18),transparent 34%),radial-gradient(circle at 85% 70%,rgba(83,245,228,.13),transparent 38%),linear-gradient(135deg,#050315,#090421);}
@@ -1146,8 +1153,37 @@ html[data-theme="holiday-signal"] body{background-image:radial-gradient(circle a
 .profile-cover[data-banner-effect="signal-snowfall"]::after{content:'';position:absolute;inset:-45% -10%;background-image:radial-gradient(circle,#fff 0 1px,transparent 1.7px),radial-gradient(circle,#74f0a7 0 1.2px,transparent 2px),linear-gradient(115deg,transparent 34%,rgba(255,100,116,.24),rgba(255,211,106,.25),transparent 68%);background-size:23px 23px,37px 37px,100% 100%;background-position:0 0,11px 14px,0 0;mix-blend-mode:screen;animation:phase4SignalSnow 7s linear infinite;pointer-events:none;}
 @keyframes phase4SignalSnow{from{transform:translateY(-18%);}to{transform:translateY(18%);}}
 .profile-cosmetic-badge{display:inline-flex;align-items:center;gap:5px;font-size:.4rem;color:#f1c4ff;background:rgba(204,88,255,.1);border:1px solid rgba(216,92,255,.34);border-radius:999px;padding:3px 8px;margin:0 0 7px 5px;letter-spacing:.04em;}
+.musi-shop-preview-btn{width:100%;background:none;border:1px solid rgba(216,92,255,.42);color:#ed91ff;font-family:'Space Mono',monospace;font-size:.38rem;padding:7px;border-radius:var(--radius);cursor:pointer;margin-bottom:6px;}
+.musi-shop-preview-btn:hover{background:rgba(216,92,255,.08);}
+.musi-shop-rarity{font-size:.34rem;text-transform:uppercase;letter-spacing:.08em;margin:5px 0;align-self:flex-start;}
+.musi-shop-rarity.common{color:#a9b1bd}.musi-shop-rarity.rare{color:#55c6ff}.musi-shop-rarity.epic{color:#d86fff}.musi-shop-rarity.legendary{color:#ffd36a;text-shadow:0 0 10px rgba(255,211,106,.38)}
+.musi-shop-rotation-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border:1px solid rgba(216,92,255,.35);border-radius:var(--radius);background:linear-gradient(135deg,rgba(112,35,165,.18),rgba(255,83,193,.05));margin-bottom:10px;}
+.musi-shop-rotation-head strong{font-family:'Unbounded',sans-serif;font-size:.58rem;color:var(--text)}
+.musi-shop-rotation-timer{font-family:'Space Mono',monospace;font-size:.4rem;color:#ed91ff;white-space:nowrap}
+.musi-shop-deal-price s{font-size:.4rem;color:var(--text-muted);font-weight:400;margin-left:5px}.musi-shop-deal-tag{color:#ffdf70!important;border-color:rgba(255,223,112,.5)!important}
+.musi-shop-crates{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}.musi-shop-crate{padding:12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface2);text-align:center}.musi-shop-crate-icon{font-size:1.6rem;margin-bottom:5px}.musi-shop-crate strong{display:block;font-family:'Unbounded',sans-serif;font-size:.46rem;margin-bottom:5px}.musi-shop-crate small{display:block;font-size:.35rem;color:var(--text-muted);line-height:1.5;margin-bottom:8px}
+.musi-shop-achievement{display:grid;grid-template-columns:auto 1fr auto;gap:8px 10px;align-items:center;padding:10px;border-bottom:1px solid var(--border)}.musi-shop-achievement-icon{font-size:1.25rem}.musi-shop-achievement-title{font-family:'Unbounded',sans-serif;font-size:.46rem}.musi-shop-achievement-desc{font-size:.36rem;color:var(--text-muted);line-height:1.5;margin-top:3px}.musi-shop-achievement-progress{font-size:.37rem;color:#ed91ff;text-align:right}.musi-shop-achievement-bar{grid-column:2/4;height:4px;background:var(--surface3);border-radius:99px;overflow:hidden}.musi-shop-achievement-bar span{display:block;height:100%;background:linear-gradient(90deg,#b94eff,#ff69d7);border-radius:inherit}.musi-shop-achievement.unlocked .musi-shop-achievement-progress{color:#6fffd9}
+.musi-shop-preview{display:none;position:sticky;top:0;z-index:12;border:1px solid rgba(216,92,255,.55);border-radius:10px;background:rgba(10,5,18,.97);box-shadow:0 18px 50px rgba(0,0,0,.5);padding:12px;margin-bottom:12px}.musi-shop-preview.open{display:block}.musi-shop-preview-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px}.musi-shop-preview-head strong{font-family:'Unbounded',sans-serif;font-size:.55rem}.musi-shop-preview-close{background:none;border:none;color:var(--text-muted);font-size:1rem;cursor:pointer}.musi-shop-preview-stage{min-height:175px;border:1px solid var(--border);border-radius:8px;background:linear-gradient(145deg,#130a22,#06050b);display:flex;align-items:center;justify-content:center;padding:18px;overflow:hidden}.musi-shop-preview-profile{width:min(360px,100%);border:1px solid rgba(255,255,255,.16);border-radius:9px;background:#0c0a12;overflow:hidden}.musi-shop-preview-cover{height:76px}.musi-shop-preview-body{padding:0 12px 12px}.musi-shop-preview-avatar{width:58px!important;height:58px!important;margin-top:-29px}.musi-shop-preview-name{font-family:'Unbounded',sans-serif;font-size:.72rem;margin-top:7px;display:inline-block}.musi-shop-preview-bubble{font-size:.42rem;line-height:1.6;padding:8px 10px;margin-top:10px;border:1px solid var(--border);border-radius:10px;background:var(--surface2)}.musi-shop-preview-player{margin-top:10px;padding:9px;border:1px solid var(--border);border-radius:var(--radius);font-size:.4rem;color:var(--text-muted)}
+
+/* Musi-Shop v5 cosmetic renderers */
+html[data-theme="prestige-cosmic"] body{background-image:radial-gradient(circle at 15% 15%,rgba(255,231,131,.16),transparent 28%),radial-gradient(circle at 82% 72%,rgba(109,255,241,.13),transparent 35%),linear-gradient(135deg,#03010c,#16072d);background-size:220% 220%;animation:phase3ThemeDrift 12s ease infinite}
+.profile-avatar[data-profile-frame="verification-signal"]{border-color:#58bfff;box-shadow:0 0 0 3px #146cff,0 0 25px rgba(88,191,255,.72)}
+.profile-avatar[data-profile-frame="verification-signal"]::after{content:'◇';position:absolute;right:-7px;bottom:-6px;width:19px;height:19px;border-radius:50%;background:#146cff;color:#fff;display:grid;place-items:center;font-size:.7rem;box-shadow:0 2px 8px #000}
+.profile-avatar[data-profile-frame="diamond-prestige"]{border-color:#e9ffff;box-shadow:0 0 0 4px #54dcff,0 0 30px rgba(157,107,255,.9);animation:v5DiamondFrame 1.6s ease-in-out infinite}.profile-avatar[data-profile-frame="void-lantern"]{border-color:#ff7a21;box-shadow:0 0 0 4px #6f20a9,0 0 32px rgba(255,106,0,.85);animation:v5VoidFrame 1.4s ease-in-out infinite}@keyframes v5DiamondFrame{50%{filter:hue-rotate(55deg);transform:scale(1.03)}}@keyframes v5VoidFrame{50%{box-shadow:0 0 0 5px #ff6a00,0 0 38px rgba(123,34,184,.95)}}
+.profile-cover[data-profile-background]{overflow:hidden}.profile-cover[data-profile-background]::before{content:'';position:absolute;inset:0;pointer-events:none;z-index:0}.profile-cover[data-profile-background="starfield"]::before{background-image:radial-gradient(circle,#fff 0 1px,transparent 1.5px),radial-gradient(circle,#a775ff 0 1.2px,transparent 1.8px),linear-gradient(135deg,#050313,#1d0b3c);background-size:22px 22px,37px 37px,100% 100%;animation:v5Stars 12s linear infinite}.profile-cover[data-profile-background="sunset-grid"]::before{background:linear-gradient(transparent 65%,rgba(255,111,174,.28)),repeating-linear-gradient(90deg,transparent 0 28px,rgba(102,231,255,.22) 29px),repeating-linear-gradient(0deg,transparent 0 18px,rgba(102,231,255,.2) 19px),linear-gradient(#32114d,#fd5c7a)}.profile-cover[data-profile-background="gold-profile"]::before{background:radial-gradient(circle at 25% 25%,rgba(255,255,255,.5),transparent 12%),linear-gradient(135deg,#4f2d00,#ffca45,#6d3c00);animation:v5Gold 4s ease-in-out infinite}.profile-cover[data-profile-background="summer-sunset"]::before{background:radial-gradient(circle at 78% 25%,#fff4a2 0 9%,transparent 10%),linear-gradient(#ff5f94,#ff9b47 60%,#4d4cff);animation:v5Summer 7s ease-in-out infinite alternate}.profile-cover[data-profile-background="heartwave"]::before{background:radial-gradient(circle at 20% 30%,rgba(255,255,255,.25),transparent 10%),linear-gradient(135deg,#5f102e,#ff3f87,#ff9fbd);animation:v5Heart 1.8s ease-in-out infinite}@keyframes v5Stars{to{background-position:44px 44px,74px 74px,0 0}}@keyframes v5Gold{50%{filter:brightness(1.25)}}@keyframes v5Summer{to{filter:hue-rotate(22deg)}}@keyframes v5Heart{50%{filter:brightness(1.22)}}
+[data-username-effect="glow"]{text-shadow:0 0 8px currentColor,0 0 18px currentColor}[data-username-effect="rainbow"]{color:transparent!important;background:linear-gradient(90deg,#ff5d8f,#ffd36a,#66ffd4,#67a8ff,#d66bff,#ff5d8f);background-size:250% 100%;background-clip:text;-webkit-background-clip:text;animation:v5RainbowName 3s linear infinite}[data-username-effect="neon"]{color:#fff!important;text-shadow:0 0 4px #fff,0 0 10px #ff48da,0 0 22px #38e8ff;animation:v5NeonName 1.9s steps(2,end) infinite}[data-username-effect="legendary"]{color:#ffe783!important;text-shadow:0 0 6px #fff,0 0 16px #ffd36a,0 0 30px #b16cff;animation:v5LegendName 2s ease-in-out infinite}@keyframes v5RainbowName{to{background-position:250% 0}}@keyframes v5NeonName{48%{opacity:1}50%{opacity:.65}52%{opacity:1}}@keyframes v5LegendName{50%{filter:brightness(1.35);transform:translateY(-1px)}}
+html[data-chat-bubble-theme="synth-glass"] .djboom-msg,html[data-chat-bubble-theme="synth-glass"] .party-chat-bubble{background:linear-gradient(135deg,rgba(80,225,255,.14),rgba(198,84,255,.18));border:1px solid rgba(115,224,255,.42)!important;border-radius:14px!important;box-shadow:0 7px 18px rgba(62,16,103,.24);padding:7px 9px!important}html[data-chat-bubble-theme="pixel-pop"] .djboom-msg,html[data-chat-bubble-theme="pixel-pop"] .party-chat-bubble{background:#21123c;border:2px solid #e779ff!important;border-radius:2px!important;box-shadow:4px 4px 0 #43d9ff;padding:7px 9px!important}html[data-chat-bubble-theme="poolside"] .djboom-msg,html[data-chat-bubble-theme="poolside"] .party-chat-bubble{background:linear-gradient(135deg,#0e6073,#1148a3);border:1px solid #6ffff3!important;border-radius:18px!important;padding:7px 10px!important}html[data-chat-bubble-theme="haunted"] .djboom-msg,html[data-chat-bubble-theme="haunted"] .party-chat-bubble{background:rgba(42,9,57,.86);border:1px solid #b85dff!important;border-radius:12px!important;box-shadow:0 0 18px rgba(123,34,184,.55);animation:v5Haunted 2.4s ease-in-out infinite;padding:7px 9px!important}@keyframes v5Haunted{50%{border-color:#ff7d35;filter:brightness(1.2)}}
+.musi-shop-preview-stage[data-chat-bubble-theme="synth-glass"] .party-chat-bubble{background:linear-gradient(135deg,rgba(80,225,255,.14),rgba(198,84,255,.18));border-color:#73e0ff;border-radius:14px;box-shadow:0 7px 18px rgba(62,16,103,.4)}.musi-shop-preview-stage[data-chat-bubble-theme="pixel-pop"] .party-chat-bubble{background:#21123c;border:2px solid #e779ff;border-radius:2px;box-shadow:4px 4px 0 #43d9ff}.musi-shop-preview-stage[data-chat-bubble-theme="poolside"] .party-chat-bubble{background:linear-gradient(135deg,#0e6073,#1148a3);border-color:#6ffff3;border-radius:18px}.musi-shop-preview-stage[data-chat-bubble-theme="haunted"] .party-chat-bubble{background:rgba(42,9,57,.86);border-color:#b85dff;box-shadow:0 0 18px rgba(123,34,184,.75);animation:v5Haunted 2.4s ease-in-out infinite}
+.musi-shop-preview-stage[data-player-skin="vinyl-deck"] .musi-shop-preview-player{background:#24170f;border-color:#d88a42;color:#ffd8a5}.musi-shop-preview-stage[data-player-skin="cassette-deck"] .musi-shop-preview-player{background:#171717;border:2px solid #8a8a8a;border-radius:2px}.musi-shop-preview-stage[data-player-skin="retro-mp3"] .musi-shop-preview-player{background:linear-gradient(135deg,#d9e2e7,#667a8a);border-color:#bceeff;color:#06131e}.musi-shop-preview-stage[data-radio-theme="midnight-radio"]{background:linear-gradient(145deg,#08091e,#151040)}.musi-shop-preview-stage[data-radio-theme="festival-radio"]{background:radial-gradient(circle at 15% 10%,rgba(255,214,82,.2),transparent 27%),radial-gradient(circle at 85% 25%,rgba(255,70,189,.19),transparent 28%),linear-gradient(145deg,#1b0822,#081b25)}
+html[data-loading-screen="cosmic-gate"] #freqIntro{background:radial-gradient(circle at 50% 50%,#39135f,#080313 58%,#000);animation:v5LoadingGate 5s ease-in-out infinite}html[data-loading-screen="cosmic-gate"] #introTitleText{color:#f6c9ff;text-shadow:0 0 35px #c85bff,0 0 80px #43eaff}html[data-loading-screen="cosmic-gate"] #introBarFill{background:linear-gradient(90deg,#b54fff,#43eaff)}@keyframes v5LoadingGate{50%{filter:hue-rotate(28deg)}}
+html[data-cursor-theme="neon-comet"],html[data-cursor-theme="neon-comet"] *{cursor:crosshair!important}html[data-cursor-theme="vinyl"],html[data-cursor-theme="vinyl"] *{cursor:cell!important}html[data-cursor-theme] button,html[data-cursor-theme] a,html[data-cursor-theme] [onclick]{cursor:pointer!important}
+html[data-equalizer-skin="fireline"] #aqVisualizer{border-color:#ff7138!important;filter:sepia(.25) saturate(1.8) hue-rotate(325deg);box-shadow:0 0 20px rgba(255,113,56,.26)}html[data-equalizer-skin="icewave"] #aqVisualizer{border-color:#55e6ff!important;filter:saturate(1.4) hue-rotate(145deg);box-shadow:0 0 20px rgba(85,230,255,.25)}
+html[data-player-skin="vinyl-deck"] #freqPlayerBar{background:linear-gradient(135deg,#2b1c12,#100b08);border-color:#d88a42;box-shadow:inset 0 0 0 2px rgba(255,194,112,.08)}html[data-player-skin="cassette-deck"] #freqPlayerBar{background:linear-gradient(#2b2b2b,#111);border:2px solid #8a8a8a;border-radius:2px;box-shadow:inset 0 0 0 3px #191919}html[data-player-skin="retro-mp3"] #freqPlayerBar{background:linear-gradient(135deg,#d9e2e7,#667a8a);color:#06131e;border:2px solid #bceeff;box-shadow:0 0 18px rgba(65,220,255,.3)}
+#radioOverlay[data-radio-theme="midnight-radio"] .lyrics-panel{background:linear-gradient(145deg,#08091e,#151040);border-color:#5a66ff}#radioOverlay[data-radio-theme="festival-radio"] .lyrics-panel{background:radial-gradient(circle at 15% 10%,rgba(255,214,82,.2),transparent 27%),radial-gradient(circle at 85% 25%,rgba(255,70,189,.19),transparent 28%),linear-gradient(145deg,#1b0822,#081b25);border-color:#ff65d4}
+.profile-cover[data-banner-effect="signal-wave"]::after{content:'';position:absolute;inset:0;background:repeating-radial-gradient(ellipse at 0 50%,transparent 0 15px,rgba(97,238,255,.34) 16px 18px,transparent 19px 32px);mix-blend-mode:screen;animation:v5SignalWave 4s linear infinite;pointer-events:none}@keyframes v5SignalWave{to{transform:translateX(32px)}}
 @media(max-width:720px){.musi-shop-grid{grid-template-columns:1fr 1fr;}}
-@media(max-width:480px){.musi-shop-grid,.musi-shop-access,.musi-shop-gift-form{grid-template-columns:1fr;}.musi-shop-gift-form .musi-shop-buy{grid-column:1;}}
+@media(max-width:720px){.musi-shop-crates{grid-template-columns:1fr 1fr}}
+@media(max-width:480px){.musi-shop-grid,.musi-shop-access,.musi-shop-gift-form,.musi-shop-crates{grid-template-columns:1fr;}.musi-shop-gift-form .musi-shop-buy{grid-column:1;}.musi-shop-tabs{overflow-x:auto}.musi-shop-tab{min-width:78px}}
 
 /* ─── Footer ──────────────────────────────────────────────────────── */
 footer{text-align:center;padding:7px;font-size:0.47rem;color:var(--text-muted);letter-spacing:0.12em;border-top:1px solid var(--border);background:var(--surface);position:relative;z-index:10;}
@@ -5702,11 +5738,21 @@ body.oled-mode {
     </div>
 
     <div class="musi-shop-tabs">
-      <button class="musi-shop-tab active" id="musiShopCatalogTab" onclick="setMusiShopTab('catalog')">Shop</button>
+      <button class="musi-shop-tab active" id="musiShopCatalogTab" onclick="setMusiShopTab('catalog')">Daily</button>
       <button class="musi-shop-tab" id="musiShopSeasonalTab" onclick="setMusiShopTab('seasonal')">Seasonal</button>
       <button class="musi-shop-tab" id="musiShopOwnedTab" onclick="setMusiShopTab('owned')">Owned</button>
+      <button class="musi-shop-tab" id="musiShopAchievementsTab" onclick="setMusiShopTab('achievements')">Awards</button>
       <button class="musi-shop-tab" id="musiShopGiftTab" onclick="setMusiShopTab('gift')">Gifts</button>
       <button class="musi-shop-tab" id="musiShopHistoryTab" onclick="setMusiShopTab('history')">History</button>
+    </div>
+
+    <div class="musi-shop-preview" id="musiShopPreview">
+      <div class="musi-shop-preview-head">
+        <strong id="musiShopPreviewTitle">Cosmetic preview</strong>
+        <button class="musi-shop-preview-close" onclick="closeMusiShopPreview()" aria-label="Close preview">✕</button>
+      </div>
+      <div class="musi-shop-preview-stage" id="musiShopPreviewStage"></div>
+      <div style="font-size:.37rem;color:var(--text-muted);line-height:1.6;margin-top:8px;" id="musiShopPreviewNote">Preview only. Your active cosmetics have not changed.</div>
     </div>
 
     <div id="musiShopCatalogPane">
@@ -5720,6 +5766,10 @@ body.oled-mode {
 
     <div id="musiShopOwnedPane" style="display:none;">
       <div id="musiShopOwned"><div class="empty-panel">Your owned cosmetics will appear here.</div></div>
+    </div>
+
+    <div id="musiShopAchievementsPane" style="display:none;">
+      <div id="musiShopAchievements"><div class="empty-panel">Loading achievements and Prestige…</div></div>
     </div>
 
     <div id="musiShopGiftPane" style="display:none;">
@@ -7109,6 +7159,9 @@ const MUSI_SHOP_STATE = {
   seasonalCollections: [],
   serverTimeOffsetMs: 0,
   seasonalTimer: null,
+  dailyShop: { rotationDate: null, expiresAt: null, items: [] },
+  dailyTimer: null,
+  achievements: [],
   catalog: [],
   ownedItems: [],
   activeItems: [],
@@ -7127,6 +7180,9 @@ const MUSI_SHOP_STATE = {
   purchaseInFlight: false,
   activationInFlight: false,
   giftInFlight: false,
+  crateInFlight: false,
+  pendingCrateKey: null,
+  pendingCrateTier: null,
   pendingGiftKey: null,
   pendingGiftSignature: null,
   gifts: [],
@@ -7139,7 +7195,7 @@ const MUSI_SHOP_STATE = {
 };
 
 const FREE_THEME_KEYS = new Set(['industrial','midnight','neon','vinyl','ghost','forest','glass']);
-const SHOP_THEME_KEYS = new Set(['aurora','sunset','cyber-ice','rose-gold','cosmic-pulse','liquid-neon','holiday-signal']);
+const SHOP_THEME_KEYS = new Set(['aurora','sunset','cyber-ice','rose-gold','cosmic-pulse','liquid-neon','holiday-signal','prestige-cosmic']);
 const FREE_VISUALIZER_KEYS = new Set(['bars','wave','circle','dots']);
 
 function formatMp(value) {
@@ -7246,6 +7302,10 @@ function resetMusiShopLocal() {
   MUSI_SHOP_STATE.serverTimeOffsetMs = 0;
   if (MUSI_SHOP_STATE.seasonalTimer) clearInterval(MUSI_SHOP_STATE.seasonalTimer);
   MUSI_SHOP_STATE.seasonalTimer = null;
+  if (MUSI_SHOP_STATE.dailyTimer) clearInterval(MUSI_SHOP_STATE.dailyTimer);
+  MUSI_SHOP_STATE.dailyTimer = null;
+  MUSI_SHOP_STATE.dailyShop = { rotationDate: null, expiresAt: null, items: [] };
+  MUSI_SHOP_STATE.achievements = [];
   MUSI_SHOP_STATE.catalog = [];
   MUSI_SHOP_STATE.ownedItems = [];
   MUSI_SHOP_STATE.activeItems = [];
@@ -7261,6 +7321,8 @@ function resetMusiShopLocal() {
   MUSI_SHOP_STATE.giftsLoaded = false;
   MUSI_SHOP_STATE.pendingGiftKey = null;
   MUSI_SHOP_STATE.pendingGiftSignature = null;
+  MUSI_SHOP_STATE.pendingCrateKey = null;
+  MUSI_SHOP_STATE.pendingCrateTier = null;
   MUSI_SHOP_STATE.history = [];
   MUSI_SHOP_STATE.historyLoaded = false;
   MUSI_SHOP_STATE.historyNextBefore = null;
@@ -7271,6 +7333,11 @@ function resetMusiShopLocal() {
     AQ_DEFAULTS.visStyle = 'bars';
     saveAQ();
   }
+  ['chatBubbleTheme','appIcon','loadingScreen','cursorTheme','equalizerSkin','playerSkin'].forEach(key => {
+    delete document.documentElement.dataset[key];
+  });
+  $('radioOverlay')?.removeAttribute('data-radio-theme');
+  closeMusiShopPreview();
   renderMusiShopAccess();
 }
 
@@ -7285,6 +7352,8 @@ function applyMusiShopPayload(data, usernameAtStart = AUTH.username) {
     if (Number.isFinite(serverTime)) MUSI_SHOP_STATE.serverTimeOffsetMs = serverTime - Date.now();
   }
   MUSI_SHOP_STATE.catalog = Array.isArray(data.catalog) ? data.catalog : MUSI_SHOP_STATE.catalog;
+  if (data.dailyShop && Array.isArray(data.dailyShop.items)) MUSI_SHOP_STATE.dailyShop = data.dailyShop;
+  if (Array.isArray(data.achievements)) MUSI_SHOP_STATE.achievements = data.achievements;
   if (Array.isArray(data.ownedItems)) MUSI_SHOP_STATE.ownedItems = data.ownedItems;
   if (Array.isArray(data.activeItems)) MUSI_SHOP_STATE.activeItems = data.activeItems;
   if (data.entitlements) MUSI_SHOP_STATE.entitlements = { ...MUSI_SHOP_STATE.entitlements, ...data.entitlements };
@@ -7300,6 +7369,7 @@ function applyMusiShopPayload(data, usernameAtStart = AUTH.username) {
   renderMusiShopCatalog();
   renderSeasonalShop();
   renderMusiShopOwned();
+  renderMusiShopAchievements();
   renderMusiShopGiftOptions();
   renderOwnedThemeDots();
   renderOwnedVisualizerOptions();
@@ -7344,24 +7414,36 @@ async function openMusiShop(tab = 'catalog') {
 function closeMusiShop() {
   $('musiShopOverlay')?.classList.remove('open');
   cancelMusiShopPurchase();
+  closeMusiShopPreview();
   if (MUSI_SHOP_STATE.seasonalTimer) clearInterval(MUSI_SHOP_STATE.seasonalTimer);
   MUSI_SHOP_STATE.seasonalTimer = null;
+  if (MUSI_SHOP_STATE.dailyTimer) clearInterval(MUSI_SHOP_STATE.dailyTimer);
+  MUSI_SHOP_STATE.dailyTimer = null;
 }
 
 function setMusiShopTab(tab) {
-  const selected = ['catalog','seasonal','owned','gift','history'].includes(tab) ? tab : 'catalog';
-  ['catalog','seasonal','owned','gift','history'].forEach(name => {
+  const selected = ['catalog','seasonal','owned','achievements','gift','history'].includes(tab) ? tab : 'catalog';
+  ['catalog','seasonal','owned','achievements','gift','history'].forEach(name => {
     const cap = name[0].toUpperCase() + name.slice(1);
     $(`musiShop${cap}Tab`)?.classList.toggle('active', selected === name);
     if ($(`musiShop${cap}Pane`)) $(`musiShop${cap}Pane`).style.display = selected === name ? '' : 'none';
   });
   if (MUSI_SHOP_STATE.seasonalTimer) clearInterval(MUSI_SHOP_STATE.seasonalTimer);
   MUSI_SHOP_STATE.seasonalTimer = null;
+  if (MUSI_SHOP_STATE.dailyTimer) clearInterval(MUSI_SHOP_STATE.dailyTimer);
+  MUSI_SHOP_STATE.dailyTimer = null;
+  closeMusiShopPreview();
+  if (selected === 'catalog') {
+    renderMusiShopCatalog();
+    updateMusiShopDailyCountdown();
+    MUSI_SHOP_STATE.dailyTimer = setInterval(updateMusiShopDailyCountdown, 1000);
+  }
   if (selected === 'seasonal') {
     renderSeasonalShop();
     MUSI_SHOP_STATE.seasonalTimer = setInterval(updateSeasonalCountdowns, 1000);
   }
   if (selected === 'owned') renderMusiShopOwned();
+  if (selected === 'achievements') renderMusiShopAchievements();
   if (selected === 'gift' && !MUSI_SHOP_STATE.giftsLoaded) loadMusiShopGifts();
   if (selected === 'history' && !MUSI_SHOP_STATE.historyLoaded) loadMusiShopHistory(false);
 }
@@ -7373,46 +7455,86 @@ function renderMusiShopCatalog() {
     root.innerHTML = '<div class="empty-panel">Musi-Shop is temporarily closed.</div>';
     return;
   }
-  if (!MUSI_SHOP_STATE.catalog.length) {
-    root.innerHTML = '<div class="empty-panel">No shop items are available right now.</div>';
-    return;
-  }
-  const labels = {
-    dj_boom_pack: '🤖 DJ BOOM Message Packs', radio_pass: '📻 Radio Passes',
-    app_theme: '🎨 App Themes', profile_frame: '⭕ Profile Frames',
-    username_color: '✨ Username Colors', profile_badge: '🏅 Profile Badges',
-    profile_banner: '🌈 Animated Profile Banners', visualizer_pack: '🎵 Visualizer Packs',
-    seasonal_theme: '🎉 Seasonal Collection',
-  };
-  const groups = new Map();
-  MUSI_SHOP_STATE.catalog.forEach(item => {
-    if (!groups.has(item.category)) groups.set(item.category, []);
-    groups.get(item.category).push(item);
-  });
+  const daily = MUSI_SHOP_STATE.dailyShop?.items || [];
+  const dailyItems = daily.filter(item => item.placement === 'daily');
+  const legendaryItems = daily.filter(item => item.placement === 'legendary');
+  const dealItems = daily.filter(item => item.placement === 'deal');
+  const accessItems = MUSI_SHOP_STATE.catalog.filter(item =>
+    ['dj_boom_pack', 'radio_pass'].includes(item.category)
+  );
   const hasLiveSeason = MUSI_SHOP_STATE.seasonalCollections.some(collection => collection.state === 'live');
   const seasonalMessage = MUSI_SHOP_STATE.seasonalCollections.length
     ? `<div class="musi-shop-seasonal-lock"><strong>${hasLiveSeason ? '🎉 Seasonal event live' : '🔒 Seasonal Shop locked'}</strong><br>${hasLiveSeason ? 'A limited-time collection is broadcasting now.' : 'Limited-time collections stay locked until FREQ opens a holiday event.'}<br><button class="musi-shop-buy" onclick="setMusiShopTab('seasonal')">${hasLiveSeason ? 'Shop Event' : 'View Locked Preview'}</button></div>`
     : '';
-  root.innerHTML = seasonalMessage + [...groups.entries()].map(([category, items]) => `
-    <div class="musi-shop-section-title">${escapeHtml(labels[category] || category.replace(/_/g, ' '))}</div>
-    <div class="musi-shop-grid">
-      ${items.map(item => {
-        const premiumIncluded = !!AUTH.isPremium && ['dj_boom_messages','radio_access'].includes(item.entitlementType);
-        const owned = item.entitlementType === 'owned_item' && MUSI_SHOP_STATE.ownedItems.some(row => row.sku === item.sku);
-        const affordable = MP_STATE.balanceMp >= Number(item.priceMp);
-        const disabled = premiumIncluded || owned || !affordable || MUSI_SHOP_STATE.purchaseInFlight;
-        const buttonText = premiumIncluded ? 'Included with Premium' : owned ? 'Owned · Manage' : affordable ? 'Buy with MP' : `Need ${formatMp(Number(item.priceMp) - MP_STATE.balanceMp)}`;
-        return `<div class="musi-shop-item">
-          <div class="musi-shop-item-icon">${escapeHtml(item.icon || '🟣')}</div>
-          <div class="musi-shop-item-name">${escapeHtml(item.name)}</div>
-          ${item.badge ? `<span class="musi-shop-item-badge">${escapeHtml(item.badge)}</span>` : ''}
-          ${item.valueLabel ? `<span class="musi-shop-item-badge">${escapeHtml(item.valueLabel)}</span>` : ''}
-          <div class="musi-shop-item-desc">${escapeHtml(item.description || '')}</div>
-          <div class="musi-shop-item-price">${formatMp(item.priceMp)}</div>
-          <button class="musi-shop-buy" data-shop-sku="${escapeHtml(item.sku)}" ${disabled ? 'disabled' : ''} onclick="beginMusiShopPurchase(this.dataset.shopSku)">${buttonText}</button>
-        </div>`;
-      }).join('')}
-    </div>`).join('');
+  const rotationHead = `<div class="musi-shop-rotation-head"><div><strong>📅 Daily Shop</strong><div style="font-size:.36rem;color:var(--text-muted);margin-top:3px;">Fresh cosmetics every 24 hours</div></div><div class="musi-shop-rotation-timer" id="musiShopDailyCountdown">Updating…</div></div>`;
+  const section = (title, items) => items.length ? `
+    <div class="musi-shop-section-title">${title}</div>
+    <div class="musi-shop-grid">${items.map(renderMusiShopItemCard).join('')}</div>` : '';
+  root.innerHTML = rotationHead
+    + seasonalMessage
+    + (daily.length ? '' : '<div class="empty-panel">Daily rotation is loading…</div>')
+    + section('🛒 Featured Items', dailyItems)
+    + section('💎 Legendary Collection', legendaryItems)
+    + section('⭐ Daily Deal · 25% Off', dealItems)
+    + section('🤖 DJ BOOM & 📻 Radio Access', accessItems)
+    + renderMusiShopCrates();
+  updateMusiShopDailyCountdown();
+}
+
+function renderMusiShopItemCard(item) {
+  const premiumIncluded = !!AUTH.isPremium && ['dj_boom_messages','radio_access'].includes(item.entitlementType);
+  const owned = item.entitlementType === 'owned_item' && MUSI_SHOP_STATE.ownedItems.some(row => row.sku === item.sku);
+  const affordable = MP_STATE.balanceMp >= Number(item.priceMp);
+  const disabled = premiumIncluded || (!owned && !affordable) || MUSI_SHOP_STATE.purchaseInFlight;
+  const buttonText = premiumIncluded ? 'Included with Premium'
+    : owned ? 'Owned · Change'
+      : affordable ? 'Buy with MP'
+        : `Need ${formatMp(Number(item.priceMp) - MP_STATE.balanceMp)}`;
+  const buttonAction = owned
+    ? "setMusiShopTab('owned')"
+    : 'beginMusiShopPurchase(this.dataset.shopSku)';
+  const rarity = ['common','rare','epic','legendary'].includes(item.rarity) ? item.rarity : 'common';
+  const deal = Number(item.discountPercent) > 0;
+  return `<div class="musi-shop-item">
+    <div class="musi-shop-item-icon">${escapeHtml(item.icon || '🟣')}</div>
+    <div class="musi-shop-item-name">${escapeHtml(item.name)}</div>
+    <span class="musi-shop-rarity ${rarity}">${escapeHtml(rarity)}</span>
+    ${item.badge ? `<span class="musi-shop-item-badge">${escapeHtml(item.badge)}</span>` : ''}
+    ${deal ? `<span class="musi-shop-item-badge musi-shop-deal-tag">${Number(item.discountPercent)}% OFF</span>` : ''}
+    ${item.valueLabel ? `<span class="musi-shop-item-badge">${escapeHtml(item.valueLabel)}</span>` : ''}
+    <div class="musi-shop-item-desc">${escapeHtml(item.description || '')}</div>
+    <div class="musi-shop-item-price ${deal ? 'musi-shop-deal-price' : ''}">${formatMp(item.priceMp)}${deal ? ` <s>${formatMp(item.originalPriceMp)}</s>` : ''}</div>
+    ${item.slot ? `<button class="musi-shop-preview-btn" data-shop-sku="${escapeHtml(item.sku)}" onclick="previewMusiShopItem(this.dataset.shopSku)">Preview</button>` : ''}
+    <button class="musi-shop-buy" data-shop-sku="${escapeHtml(item.sku)}" ${disabled ? 'disabled' : ''} onclick="${buttonAction}">${buttonText}</button>
+  </div>`;
+}
+
+function renderMusiShopCrates() {
+  const crates = [
+    ['common','📦',350], ['rare','🔷',800], ['epic','🟣',1500], ['legendary','👑',3000],
+  ];
+  return `<div class="musi-shop-section-title">🎲 Mystery Crates · Cosmetics Only</div>
+    <div class="musi-shop-crates">${crates.map(([tier, icon, price]) => `
+      <div class="musi-shop-crate">
+        <div class="musi-shop-crate-icon">${icon}</div>
+        <strong>${tier[0].toUpperCase() + tier.slice(1)}</strong>
+        <small>One unowned ${tier} cosmetic. No gameplay advantages or duplicates.</small>
+        <button class="musi-shop-buy" data-crate-tier="${tier}" ${MUSI_SHOP_STATE.crateInFlight || MP_STATE.balanceMp < price ? 'disabled' : ''} onclick="openMusiShopCrate(this.dataset.crateTier)">${formatMp(price)}</button>
+      </div>`).join('')}</div>`;
+}
+
+function updateMusiShopDailyCountdown() {
+  const element = $('musiShopDailyCountdown');
+  if (!element) return;
+  const target = new Date(MUSI_SHOP_STATE.dailyShop?.expiresAt || '').getTime();
+  if (!Number.isFinite(target)) { element.textContent = 'Every 24 hours'; return; }
+  const remaining = target - seasonalShopNow();
+  if (remaining <= 0) {
+    element.textContent = 'Refreshing…';
+    if (!MUSI_SHOP_STATE.loading) refreshMusiShop(true);
+    return;
+  }
+  element.textContent = `Refreshes in ${formatSeasonalDuration(remaining)}`;
 }
 
 function seasonalShopNow() {
@@ -7495,8 +7617,10 @@ function renderSeasonalShop() {
             <div class="musi-shop-item-name">${escapeHtml(item.name)}</div>
             <span class="seasonal-exclusive">Event Exclusive</span>
             ${item.badge ? `<span class="musi-shop-item-badge">${escapeHtml(item.badge)}</span>` : ''}
+            <span class="musi-shop-rarity ${escapeHtml(item.rarity || 'common')}">${escapeHtml(item.rarity || 'common')}</span>
             <div class="musi-shop-item-desc">${escapeHtml(item.description || '')}</div>
             <div class="musi-shop-item-price">${formatMp(item.priceMp)}</div>
+            ${item.slot ? `<button class="musi-shop-preview-btn" data-shop-sku="${escapeHtml(item.sku)}" onclick="previewMusiShopItem(this.dataset.shopSku)">Preview</button>` : ''}
             <button class="musi-shop-buy" data-shop-sku="${escapeHtml(item.sku)}" ${disabled ? 'disabled' : ''} onclick="beginMusiShopPurchase(this.dataset.shopSku)">${buttonText}</button>
           </div>`;
         }).join('')}</div>
@@ -7521,8 +7645,17 @@ function renderMusiShopOwned() {
   }
   const labels = {
     app_theme: '🎨 App Themes', profile_frame: '⭕ Profile Frames',
-    username_color: '✨ Username Colors', profile_badge: '🏅 Profile Badges',
-    profile_banner_effect: '🌈 Profile Banners', visualizer_style: '🎵 Visualizers',
+    profile_background: '🌌 Profile Backgrounds',
+    username_color: '✨ Username Colors', username_effect: '⚡ Username Effects',
+    profile_badge: '🏅 Profile Badges', profile_banner_effect: '🌈 Profile Banners',
+    status_emoji: '😀 Status Emojis', favorite_genre_badge: '🎶 Genre Badges',
+    milestone_badge: '🌟 Milestone Badges', achievement_showcase: '🏆 Achievement Showcases',
+    chat_bubble_theme: '💬 Chat Bubble Themes', app_icon: '📱 App Icon Packs',
+    loading_screen: '⏳ Loading Screens', cursor_theme: '🖱 Cursor Themes',
+    equalizer_skin: '🎚 Equalizer Skins', player_skin: '🎵 Player UIs',
+    playlist_cover_template: '🖼 Playlist Cover Templates',
+    radio_station_icon: '📻 Station Icons', radio_theme: '📡 Radio Themes',
+    dj_boom_style: '🤖 DJ BOOM Styles', visualizer_style: '🎵 Visualizers',
   };
   const groups = new Map();
   owned.forEach(row => {
@@ -7543,10 +7676,12 @@ function renderMusiShopOwned() {
         <div class="musi-shop-item-name">${escapeHtml(item.name)}</div>
         ${hasActiveSelection ? `<span class="musi-shop-active-pill">Active${active.selectionKey ? ` · ${escapeHtml(item.selectionLabels?.[active.selectionKey] || active.selectionKey.replace(/-/g, ' '))}` : ''}</span>` : ''}
         <div class="musi-shop-item-desc">${escapeHtml(item.description || '')}</div>
+        <button class="musi-shop-preview-btn" data-shop-sku="${escapeHtml(item.sku)}" onclick="previewMusiShopItem(this.dataset.shopSku)">Preview</button>
         <div class="musi-shop-owned-actions">
           ${selections.map(selection => {
             const isActive = hasActiveSelection && active.selectionKey === selection;
-            const label = item.selectionLabels?.[selection] || (selections.length > 1 ? selection.replace(/-/g, ' ') : 'Use');
+            const selectionLabel = item.selectionLabels?.[selection] || selection.replace(/-/g, ' ');
+            const label = selections.length > 1 ? `Change · ${selectionLabel}` : (active ? 'Change' : 'Apply');
             return `<button class="musi-shop-buy" data-shop-slot="${escapeHtml(slot)}" data-shop-sku="${escapeHtml(item.sku)}" data-shop-selection="${escapeHtml(selection)}" ${isActive || MUSI_SHOP_STATE.activationInFlight ? 'disabled' : ''} onclick="activateMusiShopItem(this.dataset.shopSlot,this.dataset.shopSku,this.dataset.shopSelection)">${isActive ? 'Equipped' : escapeHtml(label)}</button>`;
           }).join('')}
           ${hasActiveSelection ? `<button class="pco-btn-secondary" style="margin:0;flex:1;" data-shop-slot="${escapeHtml(slot)}" onclick="activateMusiShopItem(this.dataset.shopSlot,null,null)">Remove</button>` : ''}
@@ -7554,6 +7689,155 @@ function renderMusiShopOwned() {
       </div>`;
     }).join('')}</div>`
   ).join('');
+}
+
+function findMusiShopItem(sku) {
+  return MUSI_SHOP_STATE.dailyShop?.items?.find(item => item.sku === sku)
+    || MUSI_SHOP_STATE.catalog.find(item => item.sku === sku)
+    || MUSI_SHOP_STATE.ownedItems.find(row => row.sku === sku)?.item
+    || MUSI_SHOP_STATE.seasonalCollections
+      .flatMap(collection => collection.items || [])
+      .find(item => item.sku === sku)
+    || null;
+}
+
+function previewMusiShopItem(sku, requestedSelection = null) {
+  const item = findMusiShopItem(sku);
+  const root = $('musiShopPreview');
+  const stage = $('musiShopPreviewStage');
+  if (!item || !root || !stage) {
+    showToast('Preview unavailable', 'This cosmetic could not be previewed.', 'error');
+    return;
+  }
+  const selections = item.selections?.length ? item.selections : [item.assetKey].filter(Boolean);
+  const selection = selections.includes(requestedSelection) ? requestedSelection : (selections[0] || item.assetKey || 'default');
+  const selectionLabel = item.selectionLabels?.[selection] || selection.replace(/-/g, ' ');
+  if ($('musiShopPreviewTitle')) $('musiShopPreviewTitle').textContent = `${item.icon || '✨'} ${item.name}`;
+  stage.removeAttribute('data-theme');
+  stage.removeAttribute('data-chat-bubble-theme');
+  stage.removeAttribute('data-player-skin');
+  stage.removeAttribute('data-radio-theme');
+  stage.innerHTML = `<div class="musi-shop-preview-profile">
+    <div class="profile-cover musi-shop-preview-cover" id="musiShopPreviewCover"></div>
+    <div class="musi-shop-preview-body">
+      <div class="profile-avatar musi-shop-preview-avatar" id="musiShopPreviewAvatar">F</div>
+      <div><span class="musi-shop-preview-name" id="musiShopPreviewName">FREQ Listener</span></div>
+      <div class="musi-shop-preview-bubble party-chat-bubble" id="musiShopPreviewBubble">This is how your new signal looks in chat.</div>
+      <div class="musi-shop-preview-player" id="musiShopPreviewPlayer">▶ NOW PLAYING · ${escapeHtml(selectionLabel)}</div>
+    </div>
+  </div>`;
+  const avatar = $('musiShopPreviewAvatar');
+  const cover = $('musiShopPreviewCover');
+  const name = $('musiShopPreviewName');
+  const bubble = $('musiShopPreviewBubble');
+  const player = $('musiShopPreviewPlayer');
+  if (item.slot === 'app_theme') stage.dataset.theme = selection;
+  if (item.slot === 'profile_frame') avatar.dataset.profileFrame = selection;
+  if (item.slot === 'profile_background') cover.dataset.profileBackground = selection;
+  if (item.slot === 'profile_banner_effect') cover.dataset.bannerEffect = selection;
+  if (item.slot === 'username_color') name.style.color = item.color || '#ed91ff';
+  if (item.slot === 'username_effect') name.dataset.usernameEffect = selection;
+  if (item.slot === 'chat_bubble_theme') stage.dataset.chatBubbleTheme = selection;
+  if (item.slot === 'player_skin') stage.dataset.playerSkin = selection;
+  if (item.slot === 'radio_theme') stage.dataset.radioTheme = selection;
+  if (item.slot === 'equalizer_skin') player.style.boxShadow = selection === 'fireline' ? '0 0 18px #ff7138' : '0 0 18px #55e6ff';
+  if (item.slot === 'app_icon') {
+    avatar.textContent = selection === 'cassette' ? '📼' : selection === 'anniversary-gold' ? '🏆' : '〰';
+    avatar.style.fontSize = '1.5rem';
+  }
+  if (item.slot === 'cursor_theme') stage.style.cursor = selection === 'vinyl' ? 'cell' : 'crosshair';
+  else stage.style.removeProperty('cursor');
+  if (['profile_badge','status_emoji','favorite_genre_badge','milestone_badge','achievement_showcase'].includes(item.slot)) {
+    bubble.textContent = `${item.cosmeticIcon || item.icon || '🏆'} ${item.selectionLabels?.[selection] || item.cosmeticLabel || selectionLabel}`;
+  }
+  if (item.slot === 'playlist_cover_template') {
+    cover.style.background = 'linear-gradient(135deg,#b44cff,#36d9ff)';
+    cover.textContent = selectionLabel;
+    cover.style.display = 'grid';
+    cover.style.placeItems = 'center';
+    cover.style.fontFamily = "'Unbounded',sans-serif";
+  }
+  const optionButtons = selections.length > 1
+    ? `<div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:8px;">${selections.map(key => `<button class="musi-shop-preview-btn" style="width:auto;margin:0;" data-preview-sku="${escapeHtml(item.sku)}" data-preview-selection="${escapeHtml(key)}" onclick="previewMusiShopItem(this.dataset.previewSku,this.dataset.previewSelection)">${escapeHtml(item.selectionLabels?.[key] || key.replace(/-/g, ' '))}</button>`).join('')}</div>`
+    : '';
+  if ($('musiShopPreviewNote')) $('musiShopPreviewNote').innerHTML = `Preview only · ${escapeHtml(selectionLabel)}. Your active cosmetics have not changed.${optionButtons}`;
+  root.classList.add('open');
+  root.scrollIntoView({ behavior:'smooth', block:'nearest' });
+}
+
+function closeMusiShopPreview() {
+  $('musiShopPreview')?.classList.remove('open');
+}
+
+function formatAchievementProgress(achievement, value) {
+  const amount = Math.max(0, Number(value) || 0);
+  if (achievement.metric === 'verified_listen_seconds') {
+    return `${Math.floor(amount / 3600).toLocaleString()}h`;
+  }
+  if (achievement.metric === 'lifetime_earned_mp') return formatMp(amount);
+  if (achievement.metric === 'listening_streak_days') return `${amount.toLocaleString()}d`;
+  return amount.toLocaleString();
+}
+
+function renderMusiShopAchievements() {
+  const root = $('musiShopAchievements');
+  if (!root) return;
+  const achievements = MUSI_SHOP_STATE.achievements || [];
+  if (!achievements.length) {
+    root.innerHTML = '<div class="empty-panel">No achievements are available right now.</div>';
+    return;
+  }
+  root.innerHTML = `<div class="musi-shop-section-title">🏆 Achievements & ⭐ Prestige</div>`
+    + achievements.map(achievement => {
+      const progress = Math.max(0, Number(achievement.progress) || 0);
+      const target = Math.max(1, Number(achievement.target) || 1);
+      const unlocked = !!achievement.unlockedAt || progress >= target;
+      const percent = Math.min(100, Math.round(progress / target * 100));
+      const rewardOwned = achievement.rewardSku && MUSI_SHOP_STATE.ownedItems.some(row => row.sku === achievement.rewardSku);
+      return `<div class="musi-shop-achievement ${unlocked ? 'unlocked' : ''}">
+        <div class="musi-shop-achievement-icon">${escapeHtml(achievement.icon || '🏆')}</div>
+        <div><div class="musi-shop-achievement-title">${escapeHtml(achievement.name)}</div><div class="musi-shop-achievement-desc">${escapeHtml(achievement.description || '')}</div></div>
+        <div class="musi-shop-achievement-progress">${unlocked ? '✓ Unlocked' : `${formatAchievementProgress(achievement, progress)} / ${formatAchievementProgress(achievement, target)}`}${rewardOwned ? `<br><button class="musi-shop-preview-btn" style="width:auto;margin-top:5px;" data-shop-sku="${escapeHtml(achievement.rewardSku)}" onclick="previewMusiShopItem(this.dataset.shopSku)">View reward</button>` : ''}</div>
+        <div class="musi-shop-achievement-bar"><span style="width:${percent}%"></span></div>
+      </div>`;
+    }).join('');
+}
+
+async function openMusiShopCrate(tier) {
+  if (!AUTH.loggedIn || !AUTH.token || MUSI_SHOP_STATE.crateInFlight) return;
+  const prices = { common:350, rare:800, epic:1500, legendary:3000 };
+  const price = prices[tier];
+  if (!price) return;
+  if (!window.confirm(`Open a ${tier} cosmetic crate for ${formatMp(price)}? You will receive one unowned cosmetic.`)) return;
+  if (MUSI_SHOP_STATE.pendingCrateTier !== tier || !MUSI_SHOP_STATE.pendingCrateKey) {
+    MUSI_SHOP_STATE.pendingCrateTier = tier;
+    MUSI_SHOP_STATE.pendingCrateKey = newMusiShopIdempotencyKey();
+  }
+  MUSI_SHOP_STATE.crateInFlight = true;
+  renderMusiShopCatalog();
+  try {
+    const res = await fetch('/api/mp/shop/crate/open', {
+      method: 'POST', headers: authHeaders(),
+      body: JSON.stringify({ tier, idempotencyKey: MUSI_SHOP_STATE.pendingCrateKey }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw Object.assign(new Error(data.error || 'Mystery crate could not be opened.'), { data });
+    applyMusiShopPayload(data, AUTH.username);
+    MUSI_SHOP_STATE.pendingCrateTier = null;
+    MUSI_SHOP_STATE.pendingCrateKey = null;
+    MUSI_SHOP_STATE.historyLoaded = false;
+    showToast('Mystery crate opened', `${data.reward?.itemIcon || '🎁'} ${data.reward?.itemName || 'New cosmetic'} unlocked!`, 'success');
+    if (data.reward?.sku) previewMusiShopItem(data.reward.sku);
+  } catch (err) {
+    if (err.data && Number.isFinite(Number(err.data.balanceMp))) {
+      MP_STATE.balanceMp = Number(err.data.balanceMp);
+      renderMpWallet();
+    }
+    showToast('Crate not opened', err.message || 'Please try again.', 'error');
+  } finally {
+    MUSI_SHOP_STATE.crateInFlight = false;
+    renderMusiShopCatalog();
+  }
 }
 
 function renderOwnedThemeDots() {
@@ -7594,14 +7878,20 @@ function renderOwnedVisualizerOptions() {
 
 function profileCosmeticsFromActiveItems() {
   return MUSI_SHOP_STATE.activeItems
-    .filter(row => ['profile_frame','username_color','profile_badge','profile_banner_effect'].includes(row.slot))
+    .filter(row => [
+      'profile_frame','profile_background','username_color','username_effect',
+      'profile_badge','profile_banner_effect','status_emoji',
+      'favorite_genre_badge','milestone_badge','achievement_showcase',
+    ].includes(row.slot))
     .reduce((result, row) => { result[row.slot] = row; return result; }, {});
 }
 
 function applyProfileCosmeticsToView(cosmetics, { avatar, cover, name, badge } = {}) {
   const frame = cosmetics?.profile_frame;
+  const background = cosmetics?.profile_background;
   const banner = cosmetics?.profile_banner_effect;
   const color = cosmetics?.username_color;
+  const usernameEffect = cosmetics?.username_effect;
   const profileBadge = cosmetics?.profile_badge;
   if (avatar) {
     const key = frame?.selectionKey || frame?.selection_key || null;
@@ -7609,17 +7899,49 @@ function applyProfileCosmeticsToView(cosmetics, { avatar, cover, name, badge } =
     else avatar.removeAttribute('data-profile-frame');
   }
   if (cover) {
+    const backgroundKey = background?.selectionKey || background?.selection_key || background?.assetKey || null;
+    if (backgroundKey) cover.dataset.profileBackground = backgroundKey;
+    else cover.removeAttribute('data-profile-background');
     const key = banner?.selectionKey || banner?.selection_key || null;
     if (key) cover.dataset.bannerEffect = key;
     else cover.removeAttribute('data-banner-effect');
   }
-  if (name) name.style.color = color?.item?.color || color?.color || '';
-  if (badge) {
-    const icon = profileBadge?.item?.cosmeticIcon || profileBadge?.icon || '';
-    const label = profileBadge?.item?.cosmeticLabel || profileBadge?.label || '';
-    badge.textContent = profileBadge ? `${icon || '🏅'} ${label || profileBadge.item?.name || 'Profile Badge'}` : '';
-    badge.style.display = profileBadge ? 'inline-flex' : 'none';
+  if (name) {
+    name.style.color = color?.item?.color || color?.color || '';
+    const effectKey = usernameEffect?.selectionKey || usernameEffect?.selection_key || usernameEffect?.assetKey || null;
+    if (effectKey) name.dataset.usernameEffect = effectKey;
+    else name.removeAttribute('data-username-effect');
   }
+  if (badge) {
+    const badgeSlots = ['profile_badge','status_emoji','favorite_genre_badge','milestone_badge','achievement_showcase'];
+    const labels = badgeSlots.map(slot => {
+      const cosmetic = cosmetics?.[slot];
+      if (!cosmetic) return null;
+      const icon = cosmetic.item?.cosmeticIcon || cosmetic.icon || cosmetic.item?.icon || '🏅';
+      const label = cosmetic.item?.selectionLabels?.[cosmetic.selectionKey]
+        || cosmetic.item?.cosmeticLabel || cosmetic.label
+        || cosmetic.item?.name || cosmetic.name || slot.replace(/_/g, ' ');
+      return `${icon} ${label}`;
+    }).filter(Boolean);
+    badge.textContent = labels.join(' · ');
+    badge.style.display = labels.length ? 'inline-flex' : 'none';
+  }
+}
+
+function applyMusiShopAppIcon(key) {
+  const favicon = document.querySelector('link[rel="icon"]');
+  if (!favicon) return;
+  if (!favicon.dataset.defaultHref) favicon.dataset.defaultHref = favicon.getAttribute('href') || '';
+  if (!key) {
+    favicon.setAttribute('href', favicon.dataset.defaultHref);
+    favicon.setAttribute('type', 'image/x-icon');
+    return;
+  }
+  const icon = key === 'cassette' ? '📼' : key === 'anniversary-gold' ? '🏆' : '〰';
+  const background = key === 'anniversary-gold' ? '#5a3700' : key === 'cassette' ? '#1d1d25' : '#5f20b8';
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="${background}"/><text x="32" y="43" text-anchor="middle" font-size="34">${icon}</text></svg>`;
+  favicon.setAttribute('type', 'image/svg+xml');
+  favicon.setAttribute('href', `data:image/svg+xml,${encodeURIComponent(svg)}`);
 }
 
 function applyActiveMusiShopExperience() {
@@ -7636,6 +7958,26 @@ function applyActiveMusiShopExperience() {
     saveAQ();
   }
   if ($('aqVisStyle')) $('aqVisStyle').value = AQ_DEFAULTS.visStyle;
+  const root = document.documentElement;
+  const globalSlots = {
+    chatBubbleTheme: 'chat_bubble_theme',
+    loadingScreen: 'loading_screen',
+    cursorTheme: 'cursor_theme',
+    equalizerSkin: 'equalizer_skin',
+    playerSkin: 'player_skin',
+    playlistCoverTemplate: 'playlist_cover_template',
+    djBoomStyle: 'dj_boom_style',
+  };
+  Object.entries(globalSlots).forEach(([datasetKey, slot]) => {
+    const active = getActiveShopItem(slot);
+    const key = active?.selectionKey || null;
+    if (key) root.dataset[datasetKey] = key;
+    else delete root.dataset[datasetKey];
+  });
+  const radioTheme = getActiveShopItem('radio_theme');
+  if (radioTheme?.selectionKey) $('radioOverlay')?.setAttribute('data-radio-theme', radioTheme.selectionKey);
+  else $('radioOverlay')?.removeAttribute('data-radio-theme');
+  applyMusiShopAppIcon(getActiveShopItem('app_icon')?.selectionKey || null);
   applyProfileCosmeticsToView(profileCosmeticsFromActiveItems(), {
     avatar: $('myAvatarPreview'), cover: $('myCoverPreview'),
   });
@@ -7766,7 +8108,7 @@ async function sendMusiShopGift() {
 }
 
 function beginMusiShopPurchase(sku) {
-  const item = MUSI_SHOP_STATE.catalog.find(row => row.sku === sku);
+  const item = findMusiShopItem(sku);
   if (!item || MUSI_SHOP_STATE.purchaseInFlight) return;
   if (MUSI_SHOP_STATE.selectedSku !== sku || !MUSI_SHOP_STATE.pendingIdempotencyKey) {
     MUSI_SHOP_STATE.pendingIdempotencyKey = newMusiShopIdempotencyKey();
@@ -7796,7 +8138,7 @@ function newMusiShopIdempotencyKey() {
 
 async function confirmMusiShopPurchase() {
   const sku = MUSI_SHOP_STATE.selectedSku;
-  const item = MUSI_SHOP_STATE.catalog.find(row => row.sku === sku);
+  const item = findMusiShopItem(sku);
   if (!item || MUSI_SHOP_STATE.purchaseInFlight) return;
   MUSI_SHOP_STATE.purchaseInFlight = true;
   const btn = $('musiShopConfirmBtn');
@@ -7841,7 +8183,7 @@ function renderMusiShopHistory() {
   }
   const labels = {
     listen_to_earn: 'Listen to Earn', shop_purchase: 'Musi-Shop purchase',
-    gift_sent: 'Gift sent', gift_received: 'Gift received', admin_grant: 'MP grant',
+    mystery_crate: 'Mystery Crate', gift_sent: 'Gift sent', gift_received: 'Gift received', admin_grant: 'MP grant',
     admin_deduction: 'MP adjustment', refund: 'Refund',
   };
   root.innerHTML = MUSI_SHOP_STATE.history.map(tx => {
@@ -9935,6 +10277,11 @@ function setRadioTab(tab) {
 
 // ─── Rendering ──────────────────────────────────────────────────────────
 function radioFaviconHtml(station) {
+  const customKey = getActiveShopItem('radio_station_icon')?.selectionKey;
+  const customIcons = { 'radio-wave':'〰', 'radio-bolt':'⚡', 'radio-star':'★', 'radio-vinyl':'💿' };
+  if (customKey && customIcons[customKey]) {
+    return `<div class="radio-station-favicon-fallback">${customIcons[customKey]}</div>`;
+  }
   if (station.faviconUrl) {
     return `<img class="radio-station-favicon" src="${escapeHtml(station.faviconUrl)}" alt="" onerror="this.outerHTML='<div class=&quot;radio-station-favicon-fallback&quot;>📡</div>';">`;
   }
@@ -16502,7 +16849,7 @@ function renderPartyChat() {
   if (!list || !currentParty) return;
   const chat = currentParty.chat || [];
   list.innerHTML = chat.map(c => `
-    <div style="font-size:0.44rem;color:var(--text-muted);"><span style="color:var(--text-main);">@${escapeHtml(c.username)}</span> ${escapeHtml(c.message)}</div>
+    <div class="party-chat-bubble" style="font-size:0.44rem;color:var(--text-muted);"><span style="color:var(--text-main);">@${escapeHtml(c.username)}</span> ${escapeHtml(c.message)}</div>
   `).join('') || '<div class="empty-panel">No messages yet.</div>';
   list.scrollTop = list.scrollHeight;
 }
@@ -19271,6 +19618,25 @@ function runVisualizer() {
       ctx.stroke();
     });
     ctx.globalAlpha = 1;
+  } else if (style === 'galaxy') {
+    const t = Date.now() / 1200;
+    const cx = W / 2, cy = H / 2;
+    const colors = ['#ffe783', accent, accent2, accent3, '#ffffff'];
+    for (let arm = 0; arm < 4; arm++) {
+      for (let i = 0; i < 24; i++) {
+        const energy = freqData[Math.floor(i * bufLen / 24)] / 255;
+        const radius = (i / 24) * Math.min(W, H) * .78 * (.55 + energy * .45);
+        const angle = arm * Math.PI / 2 + i * .28 + t * (.16 + energy * .08);
+        const x = cx + Math.cos(angle) * radius * (W / Math.max(H, 1));
+        const y = cy + Math.sin(angle) * radius;
+        ctx.beginPath();
+        ctx.arc(x, y, .8 + energy * 2.2, 0, Math.PI * 2);
+        ctx.fillStyle = colors[(arm + i) % colors.length];
+        ctx.globalAlpha = .3 + energy * .7;
+        ctx.fill();
+      }
+    }
+    ctx.globalAlpha = 1;
   } else if (style === 'fireworks') {
     const t = Date.now() / 900;
     const colors = [accent, accent2, accent3, '#ffd36a', '#ffffff'];
@@ -19367,16 +19733,16 @@ function runPlaylistVis() {
         ctx.fillRect(W / 2 + i * barW, H - barH, Math.max(1, barW - 1), barH);
         ctx.fillRect(W / 2 - (i + 1) * barW, H - barH, Math.max(1, barW - 1), barH);
       }
-    } else if (style === 'radial' || style === 'orbits' || style === 'fireworks') {
+    } else if (style === 'radial' || style === 'orbits' || style === 'fireworks' || style === 'galaxy') {
       const cx = W / 2, cy = H / 2;
-      const count = style === 'orbits' ? 12 : style === 'fireworks' ? 20 : 28;
+      const count = style === 'orbits' ? 12 : (style === 'fireworks' || style === 'galaxy') ? 20 : 28;
       const base = Math.min(W, H) * .16;
       for (let i = 0; i < count; i++) {
         const energy = freqData[Math.floor(i * bufLen / count)] / 255;
-        const angle = i / count * Math.PI * 2 + (style === 'orbits' || style === 'fireworks' ? Date.now() / 1400 : 0);
+        const angle = i / count * Math.PI * 2 + (style === 'orbits' || style === 'fireworks' || style === 'galaxy' ? Date.now() / 1400 : 0);
         const radius = base + energy * Math.min(W, H) * .36;
         ctx.beginPath();
-        ctx.arc(cx + Math.cos(angle) * radius, cy + Math.sin(angle) * radius, style === 'orbits' || style === 'fireworks' ? 1.6 : 1, 0, Math.PI * 2);
+        ctx.arc(cx + Math.cos(angle) * radius, cy + Math.sin(angle) * radius, style === 'orbits' || style === 'fireworks' || style === 'galaxy' ? 1.6 : 1, 0, Math.PI * 2);
         ctx.fillStyle = i % 2 ? accent2 : accent;
         ctx.fill();
       }
