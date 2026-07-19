@@ -2133,6 +2133,38 @@ const MP_CONFIG_DEFAULTS = Object.freeze({
 });
 let mpConfigCache = { value: MP_CONFIG_DEFAULTS, expiresAt: 0 };
 
+// The browser starts /api/plays requests without blocking audio. If two track
+// selections overlap, the older request can finish last; the start RPC replaces
+// the user's active session, so that stale request would otherwise expire the
+// newer, correct session before the client-side playToken could reject it.
+// Track the newest token for each page lifetime and re-check it immediately
+// before calling the replacement RPC.
+const mpLatestPlayAttempts = new Map(); // `${username}|${pageId}` -> { token, seenAt }
+function registerMpPlayAttempt(username, pageId, token) {
+  const safePageId = typeof pageId === 'string' && /^[A-Za-z0-9_-]{8,128}$/.test(pageId)
+    ? pageId
+    : null;
+  const safeToken = Number.isSafeInteger(token) && token > 0 ? token : null;
+  if (!safePageId || !safeToken) return null;
+  const key = `${username}|${safePageId}`;
+  const current = mpLatestPlayAttempts.get(key);
+  if (!current || safeToken > current.token) {
+    mpLatestPlayAttempts.set(key, { token: safeToken, seenAt: Date.now() });
+  } else {
+    current.seenAt = Date.now();
+  }
+  return { key, token: safeToken };
+}
+function isLatestMpPlayAttempt(attempt) {
+  return !attempt || mpLatestPlayAttempts.get(attempt.key)?.token === attempt.token;
+}
+setInterval(() => {
+  const cutoff = Date.now() - 60 * 60 * 1000;
+  for (const [key, attempt] of mpLatestPlayAttempts) {
+    if (attempt.seenAt < cutoff) mpLatestPlayAttempts.delete(key);
+  }
+}, 10 * 60 * 1000);
+
 function mpConfigNumber(value, fallback, min, max) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return fallback;
@@ -8722,7 +8754,7 @@ app.get('/api/playlists/:id', async (req, res) => {
 app.post('/api/plays', rateLimit, async (req, res) => {
   const {
     originalUrl, platform, title, artist, token, trackId, source, previousPlay,
-    listenToEarn, mpDeviceId,
+    listenToEarn, mpDeviceId, mpPlayPageId, mpPlayToken,
   } = req.body || {};
   if (!originalUrl || typeof originalUrl !== 'string') {
     return res.status(400).json({ error: '"originalUrl" is required.' });
@@ -8741,6 +8773,9 @@ app.post('/api/plays', rateLimit, async (req, res) => {
   try {
     const sess = token ? await dbGetSession(token) : null;
     const listenerKey = sess ? sess.username : (req.ip || req.connection.remoteAddress || 'unknown');
+    const mpPlayAttempt = listenToEarn === true && sess
+      ? registerMpPlayAttempt(sess.username, mpPlayPageId, mpPlayToken)
+      : null;
 
     // For cloud: URLs (published FREQ tracks), the artist name is already on
     // the tracks row. If the caller didn't supply it (the frontend only
@@ -8810,18 +8845,25 @@ app.post('/api/plays', rateLimit, async (req, res) => {
         listenToEarnResult = { eligible: false, reason: 'missing_track_id', message: 'Listen to Earn could not start (track id).' };
       } else {
         const identity = mpRequestIdentity(req, sess.username, mpDeviceId);
-        const { data: earnData, error: earnError } = await supabase.rpc('start_listen_to_earn_session', {
-          p_username: sess.username,
-          p_track_id: publishedTrackId,
-          p_play_row_id: result.playRowId || null,
-          p_device_hash: identity.deviceHash,
-          p_ip_hash: identity.ipHash,
-        });
-        if (earnError) {
-          console.error('[mp listen start] rpc error', earnError.message);
-          listenToEarnResult = { eligible: false, reason: 'unavailable', message: 'Listen to Earn could not start.' };
+        if (!isLatestMpPlayAttempt(mpPlayAttempt)) {
+          // The listener selected another track while this request was doing
+          // its play-log lookups. Do not let the stale RPC replace that newer
+          // session; the client also suppresses the stale response's toast.
+          listenToEarnResult = { eligible: false, reason: 'stale_play_attempt' };
         } else {
-          listenToEarnResult = earnData || { eligible: false, reason: 'unavailable' };
+          const { data: earnData, error: earnError } = await supabase.rpc('start_listen_to_earn_session', {
+            p_username: sess.username,
+            p_track_id: publishedTrackId,
+            p_play_row_id: result.playRowId || null,
+            p_device_hash: identity.deviceHash,
+            p_ip_hash: identity.ipHash,
+          });
+          if (earnError) {
+            console.error('[mp listen start] rpc error', earnError.message);
+            listenToEarnResult = { eligible: false, reason: 'unavailable', message: 'Listen to Earn could not start.' };
+          } else {
+            listenToEarnResult = earnData || { eligible: false, reason: 'unavailable' };
+          }
         }
       }
     }
@@ -9132,15 +9174,18 @@ app.post('/api/mp/listen-to-earn/heartbeat', rateLimit, async (req, res) => {
   const sess = await dbGetSession(token);
   if (!sess) return res.status(401).json({ error: 'Authentication required.' });
   const { sessionId, currentTimeSeconds, playbackRate, mpDeviceId } = req.body || {};
-  const position = Number(currentTimeSeconds);
-  const rate = Number(playbackRate);
+  // Require actual JSON numbers. Number(null) and Number('') are both 0 and
+  // previously allowed malformed clients to create valid-looking zero beats.
+  const position = currentTimeSeconds;
+  const rate = playbackRate;
   // TEMP DIAGNOSTIC — remove once Listen to Earn accrual is confirmed
   // working. Confirms the raw wire value the server received for
   // currentTimeSeconds, to rule out any client/server mismatch now that
   // the RPC itself has been verified correct via a direct manual call.
   console.log('[MP heartbeat debug] received', { sessionId, currentTimeSeconds, position, rate, username: sess.username });
-  if (!UUID_RE.test(String(sessionId || '')) || !Number.isFinite(position) || position < 0 ||
-      !Number.isFinite(rate) || rate < 0.25 || rate > 16) {
+  if (!UUID_RE.test(String(sessionId || '')) ||
+      typeof position !== 'number' || !Number.isFinite(position) || position < 0 ||
+      typeof rate !== 'number' || !Number.isFinite(rate) || rate < 0.25 || rate > 16) {
     return res.status(400).json({ error: 'Invalid Listen to Earn heartbeat.' });
   }
   try {
