@@ -2331,12 +2331,101 @@ async function dbGetMusiShopCatalog({ liveSeasonKeys = new Set() } = {}) {
   }).map(shapeMusiShopItem);
 }
 
+// ─── Daily Musi-Shop rotation window ─────────────────────────────────────────
+// The Daily Shop rotates once every 24 hours at 8:00 AM America/New_York.
+// This must stay DST-safe (EST is UTC-5, EDT is UTC-4) and must never use a
+// fixed UTC offset, since that would drift by an hour twice a year. We derive
+// the boundary using Intl.DateTimeFormat against the IANA zone, which resolves
+// the correct offset for any given instant automatically.
+const MUSI_SHOP_ROTATION_TZ = 'America/New_York';
+const MUSI_SHOP_ROTATION_HOUR = 8; // 8:00 AM local time in MUSI_SHOP_ROTATION_TZ
+
+// Formats a UTC instant into its America/New_York wall-clock parts.
+function zonedParts(date, timeZone) {
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hour12: false,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  });
+  const parts = {};
+  for (const { type, value } of fmt.formatToParts(date)) {
+    if (type !== 'literal') parts[type] = value;
+  }
+  // Intl reports hour '24' at local midnight in some environments; normalize to 0.
+  if (parts.hour === '24') parts.hour = '00';
+  return {
+    year: Number(parts.year), month: Number(parts.month), day: Number(parts.day),
+    hour: Number(parts.hour), minute: Number(parts.minute), second: Number(parts.second),
+  };
+}
+
+// Given a UTC instant, finds the UTC instant of the next MUSI_SHOP_ROTATION_HOUR
+// (00 minutes) wall-clock time in MUSI_SHOP_ROTATION_TZ that is <= that instant
+// (the "rotation boundary this cycle started at"), by binary-searching the
+// tz offset. We can't just construct `${y}-${m}-${d}T08:00:00` and slap on a
+// fixed offset, since the EST/EDT offset for that local date is exactly the
+// unknown we're solving for -- so instead we search for the UTC instant whose
+// zoned wall-clock reads 08:00:00 on the intended local calendar day.
+function findRotationBoundaryUtc(localYear, localMonth, localDay) {
+  // Start from a guess assuming UTC-5 (EST); binary search converges regardless.
+  let lo = Date.UTC(localYear, localMonth - 1, localDay, MUSI_SHOP_ROTATION_HOUR + 3, 0, 0, 0);
+  let hi = Date.UTC(localYear, localMonth - 1, localDay, MUSI_SHOP_ROTATION_HOUR + 6, 0, 0, 0);
+  // Widen until the zoned hour brackets MUSI_SHOP_ROTATION_HOUR correctly.
+  for (let guard = 0; guard < 4; guard++) {
+    const loParts = zonedParts(new Date(lo), MUSI_SHOP_ROTATION_TZ);
+    if (loParts.hour <= MUSI_SHOP_ROTATION_HOUR && loParts.day === localDay) break;
+    lo -= 3600000;
+  }
+  for (let guard = 0; guard < 4; guard++) {
+    const hiParts = zonedParts(new Date(hi), MUSI_SHOP_ROTATION_TZ);
+    if (hiParts.hour >= MUSI_SHOP_ROTATION_HOUR && hiParts.day === localDay) break;
+    hi += 3600000;
+  }
+  for (let i = 0; i < 40; i++) {
+    const mid = Math.floor((lo + hi) / 2);
+    const parts = zonedParts(new Date(mid), MUSI_SHOP_ROTATION_TZ);
+    const midMinutes = parts.hour * 60 + parts.minute + parts.second / 60;
+    const targetMinutes = MUSI_SHOP_ROTATION_HOUR * 60;
+    if (parts.day < localDay || (parts.day === localDay && midMinutes < targetMinutes)) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  return hi;
+}
+
+// Returns { rotationDate, expiresAt } for the Daily Shop cycle containing `date`.
+// rotationDate is the America/New_York calendar date (YYYY-MM-DD) the current
+// cycle's 8:00 AM boundary falls on -- this is what's stored in
+// musi_shop_daily_rotation.rotation_date (a plain `date` column, so it must
+// stay a calendar date, not a timestamp). expiresAt is the UTC instant of the
+// *next* 8:00 AM America/New_York rotation, used by the frontend countdown.
+function musiShopRotationWindow(date = new Date()) {
+  const local = zonedParts(date, MUSI_SHOP_ROTATION_TZ);
+  const todayBoundaryUtc = findRotationBoundaryUtc(local.year, local.month, local.day);
+  const nowMs = date.getTime();
+
+  let boundaryUtc = todayBoundaryUtc;
+  let rotationLocal = local;
+  if (nowMs < todayBoundaryUtc) {
+    // We're before today's 8 AM ET rotation, so the *active* rotation is
+    // still yesterday's. Step the local calendar date back by one.
+    const prevDay = new Date(Date.UTC(local.year, local.month - 1, local.day - 1, 12, 0, 0));
+    const prevParts = zonedParts(prevDay, MUSI_SHOP_ROTATION_TZ);
+    boundaryUtc = findRotationBoundaryUtc(prevParts.year, prevParts.month, prevParts.day);
+    rotationLocal = prevParts;
+  }
+  const nextBoundaryUtc = boundaryUtc + 24 * 60 * 60 * 1000;
+
+  const rotationDate = `${rotationLocal.year}-${String(rotationLocal.month).padStart(2, '0')}-${String(rotationLocal.day).padStart(2, '0')}`;
+  return { rotationDate, expiresAt: new Date(nextBoundaryUtc).toISOString() };
+}
+
+// Legacy name kept as an alias so any other call sites (if present) keep working.
 function musiShopUtcDay(date = new Date()) {
-  const day = new Date(date);
-  const rotationDate = day.toISOString().slice(0, 10);
-  const expiresAt = new Date(`${rotationDate}T00:00:00.000Z`);
-  expiresAt.setUTCDate(expiresAt.getUTCDate() + 1);
-  return { rotationDate, expiresAt: expiresAt.toISOString() };
+  return musiShopRotationWindow(date);
 }
 
 function seededMusiShopOrder(items, seed) {
@@ -2347,8 +2436,73 @@ function seededMusiShopOrder(items, seed) {
   });
 }
 
+// Builds the daily/legendary/deal rotation rows for a given rotationDate from
+// the live catalog, using a seed derived from that date so the same date
+// always reproduces the same picks (stable across repeated calls the same
+// day, e.g. multiple app instances or retries).
+function buildMusiShopRotationRows(catalog, rotationDate) {
+  const cosmetics = (catalog || []).filter(item =>
+    item.entitlementType === 'owned_item'
+    && item.slot
+    && MUSI_SHOP_COSMETIC_SLOTS.has(item.slot)
+    && !item.seasonal
+    && !item.unlockOnly
+  );
+  const legendary = cosmetics.filter(item => item.rarity === 'legendary' || item.rarity === 'animated_legendary');
+  const regular = cosmetics.filter(item => item.rarity !== 'legendary' && item.rarity !== 'animated_legendary');
+  const dailyItems = seededMusiShopOrder(regular.length >= 6 ? regular : cosmetics, `${rotationDate}|daily`).slice(0, 6);
+  const used = new Set(dailyItems.map(item => item.sku));
+  const legendaryItem = seededMusiShopOrder(
+    legendary.filter(item => !used.has(item.sku)),
+    `${rotationDate}|legendary`
+  )[0];
+  if (legendaryItem) used.add(legendaryItem.sku);
+  const dealItem = seededMusiShopOrder(
+    cosmetics.filter(item => !used.has(item.sku)),
+    `${rotationDate}|deal`
+  )[0];
+
+  return [
+    ...dailyItems.map((item, index) => ({
+      rotation_date: rotationDate,
+      placement: 'daily',
+      sort_order: index,
+      sku: item.sku,
+      discount_percent: 0,
+    })),
+    ...(legendaryItem ? [{
+      rotation_date: rotationDate,
+      placement: 'legendary',
+      sort_order: 0,
+      sku: legendaryItem.sku,
+      discount_percent: 0,
+    }] : []),
+    ...(dealItem ? [{
+      rotation_date: rotationDate,
+      placement: 'deal',
+      sort_order: 0,
+      sku: dealItem.sku,
+      discount_percent: 25,
+    }] : []),
+  ];
+}
+
+// Writes rotation rows for rotationDate, replacing any existing rows for that
+// date. Previous *other* dates are always left untouched, so purchase history
+// (musi_shop_purchases references the sku, not the rotation row) stays intact
+// and past rotations remain queryable in musi_shop_daily_rotation.
+async function writeMusiShopRotationRows(rotationDate, generated) {
+  const { error: deleteError } = await supabase.from('musi_shop_daily_rotation')
+    .delete().eq('rotation_date', rotationDate);
+  if (deleteError) throw new Error(deleteError.message);
+  if (!generated.length) return;
+  const { error: upsertError } = await supabase.from('musi_shop_daily_rotation')
+    .upsert(generated, { onConflict: 'rotation_date,placement,sort_order' });
+  if (upsertError) throw new Error(upsertError.message);
+}
+
 async function dbGetMusiShopDailyRotation(catalog) {
-  const { rotationDate, expiresAt } = musiShopUtcDay();
+  const { rotationDate, expiresAt } = musiShopRotationWindow();
   let { data: rows, error } = await supabase.from('musi_shop_daily_rotation')
     .select('rotation_date, placement, sort_order, sku, discount_percent')
     .eq('rotation_date', rotationDate)
@@ -2356,58 +2510,14 @@ async function dbGetMusiShopDailyRotation(catalog) {
     .order('sort_order', { ascending: true });
   if (error) throw new Error(error.message);
 
+  // Only generate if today's rotation doesn't already exist. This is what
+  // makes the rotation stable across server restarts and repeated requests:
+  // rows are keyed by (rotation_date, placement, sort_order), so once today's
+  // 8 rows exist, every subsequent read this cycle just re-reads them.
   if ((rows || []).length < 8) {
-    const cosmetics = (catalog || []).filter(item =>
-      item.entitlementType === 'owned_item'
-      && item.slot
-      && MUSI_SHOP_COSMETIC_SLOTS.has(item.slot)
-      && !item.seasonal
-      && !item.unlockOnly
-    );
-    const legendary = cosmetics.filter(item => item.rarity === 'legendary');
-    const regular = cosmetics.filter(item => item.rarity !== 'legendary');
-    const dailyItems = seededMusiShopOrder(regular.length >= 6 ? regular : cosmetics, `${rotationDate}|daily`).slice(0, 6);
-    const used = new Set(dailyItems.map(item => item.sku));
-    const legendaryItem = seededMusiShopOrder(
-      legendary.filter(item => !used.has(item.sku)),
-      `${rotationDate}|legendary`
-    )[0];
-    if (legendaryItem) used.add(legendaryItem.sku);
-    const dealItem = seededMusiShopOrder(
-      cosmetics.filter(item => !used.has(item.sku)),
-      `${rotationDate}|deal`
-    )[0];
-
-    const generated = [
-      ...dailyItems.map((item, index) => ({
-        rotation_date: rotationDate,
-        placement: 'daily',
-        sort_order: index,
-        sku: item.sku,
-        discount_percent: 0,
-      })),
-      ...(legendaryItem ? [{
-        rotation_date: rotationDate,
-        placement: 'legendary',
-        sort_order: 0,
-        sku: legendaryItem.sku,
-        discount_percent: 0,
-      }] : []),
-      ...(dealItem ? [{
-        rotation_date: rotationDate,
-        placement: 'deal',
-        sort_order: 0,
-        sku: dealItem.sku,
-        discount_percent: 25,
-      }] : []),
-    ];
+    const generated = buildMusiShopRotationRows(catalog, rotationDate);
     if (generated.length) {
-      const { error: deleteError } = await supabase.from('musi_shop_daily_rotation')
-        .delete().eq('rotation_date', rotationDate);
-      if (deleteError) throw new Error(deleteError.message);
-      const { error: upsertError } = await supabase.from('musi_shop_daily_rotation')
-        .upsert(generated, { onConflict: 'rotation_date,placement,sort_order' });
-      if (upsertError) throw new Error(upsertError.message);
+      await writeMusiShopRotationRows(rotationDate, generated);
       rows = generated;
     }
   }
@@ -2436,6 +2546,32 @@ async function dbGetMusiShopDailyRotation(catalog) {
     .filter(Boolean)
     .sort((a, b) => a.placementOrder - b.placementOrder || a.rotationOrder - b.rotationOrder);
   return { rotationDate, expiresAt, items };
+}
+
+// Admin-only: force today's Daily Shop rotation to regenerate immediately,
+// independent of the 8 AM ET schedule. Reuses the exact same generation path
+// as the lazy auto-generate above (buildMusiShopRotationRows), so results are
+// shaped identically -- this just skips the "only if missing" guard. Historical
+// rotations for other dates are untouched (writeMusiShopRotationRows only
+// deletes rows for the target rotationDate), so past purchase history stays
+// intact. Logs the action to musi_shop_admin_actions for auditability.
+async function dbResetMusiShopDailyRotation(actorUsername, catalog) {
+  const { rotationDate, expiresAt } = musiShopRotationWindow();
+  const generated = buildMusiShopRotationRows(catalog, rotationDate);
+  await writeMusiShopRotationRows(rotationDate, generated);
+
+  const { error: logError } = await supabase.from('musi_shop_admin_actions').insert({
+    actor: actorUsername,
+    action: 'daily_shop_manual_reset',
+    detail: {
+      rotation_date: rotationDate,
+      item_count: generated.length,
+      skus: generated.map(row => row.sku),
+    },
+  });
+  if (logError) throw new Error(logError.message);
+
+  return { rotationDate, expiresAt, itemCount: generated.length };
 }
 
 async function dbGetMusiShopAchievements(username) {
@@ -12815,6 +12951,28 @@ app.post('/api/admin/recount-artist-followers', rateLimit, requireAdmin, async (
     return res.json({ recount: true, artistsUpdated: updated });
   } catch (err) {
     return res.status(500).json({ error: 'Recount failed.' });
+  }
+});
+
+// Admin-only: force the Daily Musi-Shop rotation to regenerate right now,
+// instead of waiting for the next 8:00 AM America/New_York cycle. Uses the
+// same generation path as the automatic rotation, so item-selection rules
+// (category diversity via seeded shuffle, 6 daily + 1 legendary + 1 deal, no
+// duplicate SKUs within the rotation) are identical. Only replaces *today's*
+// rotation_date rows -- every other date's rows (and every purchase made
+// against them) are left alone, so purchase history stays intact.
+app.post('/api/admin/musi-shop/reset-daily', rateLimit, requireAdmin, async (req, res) => {
+  try {
+    const seasonalCollections = await dbGetMusiShopCollections(await dbGetMusiShopSettings());
+    const liveSeasonKeys = new Set(
+      seasonalCollections.filter(collection => collection.purchasable).map(collection => collection.collectionKey)
+    );
+    const catalog = await dbGetMusiShopCatalog({ liveSeasonKeys });
+    const result = await dbResetMusiShopDailyRotation(req._adminSession.username, catalog);
+    return res.json({ reset: true, ...result });
+  } catch (err) {
+    console.error('[admin musi-shop reset]', err);
+    return res.status(500).json({ error: 'Could not reset the Daily Shop rotation.' });
   }
 });
 
