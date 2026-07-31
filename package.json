@@ -1,0 +1,25 @@
+{
+  "name": "freq-music-player",
+  "version": "1.1.0",
+  "description": "FREQ music platform with modular copyright and recording-rights protection",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "check": "node --check server.js && node --check lib/rightsProtection.js",
+    "test": "node --test tests/*.test.js"
+  },
+  "keywords": ["music", "player", "youtube", "spotify", "tidal", "soundcloud"],
+  "author": "Slimey2017",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@google/generative-ai": "0.24.1",
+    "@supabase/supabase-js": "2.111.0",
+    "cors": "2.8.6",
+    "express": "4.22.1",
+    "multer": "2.2.0"
+  }
+}
