@@ -1,0 +1,19 @@
+FREQ Track Finder — YouTube Data API setup
+
+1. In Google Cloud, enable YouTube Data API v3 for your project.
+2. Create an API key. Restrict the key appropriately for your server/deployment.
+3. Set this SERVER environment variable (do not put the key in index.html):
+
+   YOUTUBE_API_KEY=your_key_here
+
+4. Restart/redeploy the FREQ server.
+
+Behavior:
+- Playlist URL + YOUTUBE_API_KEY configured -> YouTube Data API v3 is the primary resolver.
+- Playlist URL + no API key -> existing safe HTML parser is used as fallback.
+- Single-video URLs continue to use the existing page parser path.
+- Private playlists still require user authorization; an API key does not bypass private access.
+
+Optional developer diagnostics:
+   TRACK_FINDER_DEBUG=1
+Then call /api/yt/tracks?debug=1 as an admin/developer test. The API key is never included in debug output.
